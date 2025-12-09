@@ -1,0 +1,43 @@
+name: napari-flopa
+display_name: Flopa
+# use 'hidden' to remove plugin from napari hub search results
+visibility: public
+# see https://napari.org/stable/plugins/technical_references/manifest.html#fields for valid categories
+# categories: []
+contributions:
+  commands:
+    - id: napari-flopa.make_sample_data
+      python_name: napari_flopa._sample_data:make_sample_data
+      title: Load sample data from Flopa
+    - id: napari-flopa.make_container_widget
+      python_name: napari_flopa:ImageThreshold
+      title: Make threshold Container widget
+    - id: napari-flopa.make_magic_widget
+      python_name: napari_flopa:threshold_magic_widget
+      title: Make threshold magic widget
+    - id: napari-flopa.make_function_widget
+      python_name: napari_flopa:threshold_autogenerate_widget
+      title: Make threshold function widget
+    - id: napari-flopa.make_qwidget
+      python_name: napari_flopa:ExampleQWidget
+      title: Make example QWidget
+  sample_data:
+    - command: napari-flopa.make_sample_data
+      display_name: Flopa
+      key: unique_id.1
+  widgets:
+    - command: napari-flopa.make_container_widget
+      display_name: Container Threshold
+    - command: napari-flopa.make_magic_widget
+      display_name: Magic Threshold
+    - command: napari-flopa.make_function_widget
+      autogenerate: true
+      display_name: Autogenerate Threshold
+    - command: napari-flopa.make_qwidget
+      display_name: Example QWidget
+  menus:
+    napari/layers/segment:
+      - command: napari-flopa.make_container_widget
+      - command: napari-flopa.make_magic_widget
+      - command: napari-flopa.make_function_widget
+      - command: napari-flopa.make_qwidget
