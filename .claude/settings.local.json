@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/IMCF-Biocev/FLOPA/main/src/flopa/widgets/histogram_slider.py\")",
+      "Bash(python -c \"from napari_flopa.widgets.ptu_panel import PtuPanel; print\\(''OK''\\)\")",
+      "Bash(python -c \"import sys; sys.path.insert\\(0,''src''\\); from napari_flopa.widgets.ptu_panel import PtuPanel; print\\(''OK''\\)\")",
+      "Bash(python -m py_compile src/napari_flopa/widgets/ptu_panel.py)",
+      "Bash(python -m py_compile \"c:/Users/zuzka/Documents/GitHub/zuzka/napari-flopa/src/napari_flopa/widgets/flim_view_panel.py\")",
+      "Bash(python -m py_compile \"c:/Users/zuzka/Documents/GitHub/zuzka/napari-flopa/src/napari_flopa/widgets/histogram_slider.py\")",
+      "Bash(python -m py_compile src/napari_flopa/widgets/flim_view_panel.py src/napari_flopa/widgets/phasor_panel.py src/napari_flopa/widgets/decay_panel.py src/napari_flopa/widgets/main_widget.py src/napari_flopa/processing/image_utils.py src/napari_flopa/state.py)",
+      "Bash(python -m py_compile src/napari_flopa/widgets/phasor_panel.py)",
+      "Bash(find /c/Users/zuzka/Documents/GitHub/zuzka/tttrkit -type f \\\\\\(-name *.py -o -name *.md \\\\\\))",
+      "Bash(find /c/Users/zuzka/Documents/GitHub -type f -name *.py)",
+      "Bash(xargs grep:*)",
+      "Bash(find /c/Users/zuzka/Documents/GitHub -name *.py -exec grep -l \"complex\\\\|calibrat\" {})",
+      "Bash(2)",
+      "Bash(find c:/Users/zuzka/Documents/GitHub -name phasor* -o -name *flopa*)",
+      "Bash(find c:/Users/zuzka/AppData/Local/Napari/flopa-d_24abf9ee35261731df58786f9d4440da901801df -name *.py)",
+      "Bash(find c:/Users/zuzka/miniforge3 -path */flopa*/*.py)",
+      "Bash(find c:/Users/zuzka/miniforge3/envs/flopa-d/Lib/site-packages/ -name *.py -path *flopa*)",
+      "Bash(find c:/Users/zuzka/miniforge3/envs/flopa-d/Lib/site-packages/ -name *.py)",
+      "Bash(find c:/Users/zuzka/miniforge3/envs/flopa/Lib/site-packages/ -name *.py)",
+      "Bash(find c:/Users/zuzka/ -name *.py)",
+      "Bash(grep -r \"label.*color\\\\|get_color\\\\|colormap\\\\|label_colors\" c:/Users/zuzka/Documents/GitHub/zuzka/tttrkit --include=*.py -l)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(e.get\\(''''timestamp'''',''''''''\\),e.get\\(''''id'''',''''''''\\)\\) for e in d.get\\(''''entries'''',[]\\)]\")"
+    ]
+  }
+}

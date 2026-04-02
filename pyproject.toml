@@ -33,6 +33,11 @@ dependencies = [
     "magicgui",
     "qtpy",
     "scikit-image",
+    "xarray",
+    "scipy",
+    "h5netcdf",
+    "matplotlib",
+    "superqt",
 ]
 
 [project.optional-dependencies]
