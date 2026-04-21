@@ -2,6 +2,12 @@ import json
 import traceback
 from pathlib import Path
 
+# ── optional TOML support ────────────────────────────────────────────────
+try:
+    import tomli_w  # pip install tomli-w
+except ImportError:
+    tomli_w = None
+
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
 )
@@ -34,7 +40,6 @@ from napari_flopa.io.loader import (
     analyze_marker_distribution,
     format_ptu_header,
     get_markers,
-    load_h5_dataset,
     read_ptu_file,
 )
 from napari_flopa.io.ptuio.reconstructor import ScanConfig
@@ -49,6 +54,7 @@ except ImportError:
 from napari_flopa.processing.logger import ProgressLogger
 from napari_flopa.processing.reconstruction import reconstruct_ptu_to_dataset
 from napari_flopa.state import AppState
+from napari_flopa.widgets.style import SS, apply_style
 from napari_flopa.widgets.utils.threading import Worker
 
 
@@ -82,23 +88,18 @@ class PtuPanel(QWidget):
 
         # --- File loading ---
         file_group = QGroupBox("Load Data")
+        apply_style(file_group, SS.GROUP_A)
         file_layout = QVBoxLayout(file_group)
         self.file_label = QLabel("No file selected.")
         btn_row = QHBoxLayout()
-        self.select_ptu_btn = QPushButton("Read PTU File...")
+        self.select_ptu_btn = QPushButton("Read PTU file...")
         self.select_ptu_btn.clicked.connect(self._select_ptu_file)
-        self.select_h5_btn = QPushButton("Load H5...")
-        self.select_h5_btn.setToolTip(
-            "Load a previously exported FLOPA HDF5 dataset."
-        )
-        self.select_h5_btn.clicked.connect(self._on_load_h5)
-        self.load_demo_btn = QPushButton("Load Demo")
+        self.load_demo_btn = QPushButton("Load Demo file...")
         self.load_demo_btn.setToolTip(
             "Load the bundled demo PTU file with preset scan parameters"
         )
         self.load_demo_btn.clicked.connect(self._on_load_demo)
         btn_row.addWidget(self.select_ptu_btn)
-        btn_row.addWidget(self.select_h5_btn)
         btn_row.addWidget(self.load_demo_btn)
         file_layout.addWidget(self.file_label)
         file_layout.addLayout(btn_row)
@@ -106,6 +107,7 @@ class PtuPanel(QWidget):
 
         # --- Header info (summary only, full header via button) ---
         self.header_group = QGroupBox("Header Info")
+        apply_style(self.header_group, SS.GROUP_A)
         header_layout = QVBoxLayout(self.header_group)
         self.header_info = QTextEdit()
         self.header_info.setReadOnly(True)
@@ -130,6 +132,8 @@ class PtuPanel(QWidget):
         header_layout.addLayout(marker_row)
 
         self.markers_output.setFixedHeight(60)
+        self.markers_output.setVisible(False)
+        apply_style(self.markers_output, SS.LOG)
         header_layout.addWidget(self.markers_output)
         main_layout.addWidget(self.header_group)
         self.header_group.setVisible(False)
@@ -141,6 +145,7 @@ class PtuPanel(QWidget):
 
         # --- Reconstruction ---
         self.recon_group = QGroupBox("Reconstruction")
+        apply_style(self.recon_group, SS.GROUP_A)
         recon_layout = QVBoxLayout(self.recon_group)
 
         output_row = QHBoxLayout()
@@ -166,6 +171,8 @@ class PtuPanel(QWidget):
         self.log_text.setReadOnly(True)
         self.log_text.setFont(QFont("Courier", 8))
         self.log_text.setFixedHeight(100)
+        self.log_text.setVisible(False)
+        apply_style(self.log_text, SS.LOG)
         recon_layout.addWidget(self.log_text)
 
         main_layout.addWidget(self.recon_group)
@@ -175,6 +182,7 @@ class PtuPanel(QWidget):
 
     def _build_config_group(self) -> QGroupBox:
         group = QGroupBox("Scan Configuration")
+        apply_style(group, SS.GROUP_A)
         main_layout = QVBoxLayout(group)
 
         grid = QGridLayout()
@@ -228,7 +236,7 @@ class PtuPanel(QWidget):
             "Used for phasor calibration and lifetime calculation."
         )
         self.frep_spin.valueChanged.connect(lambda v: self.state.set_frep(v))
-        rf.addRow("f_rep:", self.frep_spin)
+        rf.addRow("Rep. rate (MHz):", self.frep_spin)
 
         self.sequences_spin = QSpinBox()
         self.sequences_spin.setRange(1, 16)
@@ -248,7 +256,7 @@ class PtuPanel(QWidget):
         self.accu_container_layout.setSpacing(2)
         self.accu_scroll.setWidget(self.accu_container)
         self.accu_spinboxes = []
-        accu_label = QLabel("Accu:")
+        accu_label = QLabel("Accumulations")
         accu_label.setToolTip("Number of line accumulations per sequence")
         rf.addRow(accu_label, self.accu_scroll)
 
@@ -257,6 +265,8 @@ class PtuPanel(QWidget):
 
         # Bidirectional
         self.bidir_group = QGroupBox("Bidirectional Scan")
+        self.bidir_group.setObjectName("plain") 
+        apply_style(self.bidir_group, SS.GROUP_A)
         self.bidir_group.setCheckable(True)
         self.bidir_group.setChecked(False)
         bidir_layout = QHBoxLayout(self.bidir_group)
@@ -281,7 +291,17 @@ class PtuPanel(QWidget):
         bidir_layout.addWidget(self.plot_shift_btn)
         bidir_layout.addStretch()
 
-        main_layout.addWidget(self.bidir_group)
+        self.save_config_btn = QPushButton("Save\nConfig")
+        self.save_config_btn.setToolTip("Save scan parameters to a TOML file")
+        self.save_config_btn.setMinimumHeight(48)
+        self.save_config_btn.setStyleSheet("text-align: center;")
+        self.save_config_btn.clicked.connect(self._on_save_config_toml)
+
+        bidir_row = QHBoxLayout()
+        bidir_row.setContentsMargins(0, 0, 0, 0)
+        bidir_row.addWidget(self.bidir_group)
+        bidir_row.addWidget(self.save_config_btn, alignment=Qt.AlignVCenter)
+        main_layout.addLayout(bidir_row)
 
         self._update_accumulation_widgets()
         return group
@@ -334,21 +354,6 @@ class PtuPanel(QWidget):
         except Exception as e:
             QMessageBox.critical(
                 self, "Error", f"Failed to read PTU header:\n{e}"
-            )
-
-    def _on_load_h5(self):
-        filepath, _ = QFileDialog.getOpenFileName(
-            self, "Load FLOPA HDF5 Dataset", "", "HDF5 Files (*.h5)"
-        )
-        if not filepath:
-            return
-        try:
-            ds = load_h5_dataset(Path(filepath))
-            ds.attrs["source_filename"] = Path(filepath).name
-            self._on_reconstruction_result(ds, scan_config=None)
-        except Exception as e:
-            QMessageBox.critical(
-                self, "H5 Load Error", f"Failed to load HDF5:\n{e}"
             )
 
     def _on_load_demo(self):
@@ -444,6 +449,7 @@ class PtuPanel(QWidget):
         dlg.exec_()
 
     def _show_markers(self):
+        self.markers_output.setVisible(True)
         if not self.ptu_data:
             self.markers_output.setPlainText("No file loaded.")
             return
@@ -501,6 +507,7 @@ class PtuPanel(QWidget):
         self.shift_plot_data = None
         self.plot_shift_btn.setEnabled(False)
         self.estimate_btn.setText("Estimating...")
+        self.log_text.setVisible(True)
         self.log_text.appendPlainText("Estimating bidirectional shift...")
         QApplication.processEvents()
 
@@ -579,6 +586,42 @@ class PtuPanel(QWidget):
             return ["photon_count", "mean_arrival_time"]
         return None  # all
 
+    def _on_save_config_toml(self):
+        if tomli_w is None:
+            QMessageBox.warning(
+                self,
+                "Missing dependency",
+                "tomli-w not available — pip install tomli-w",
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save scan config", "scan_config.toml", "TOML (*.toml)"
+        )
+        if not path:
+            return
+        accumulations = [s.value() for s in self.accu_spinboxes] or [1]
+        cfg = {
+            "scan": dict(
+                frames=self.frames_spin.value(),
+                lines=self.lines_spin.value(),
+                pixels=self.pixels_spin.value(),
+                sequences=self.sequences_spin.value(),
+                accum_per_seq=" ".join(str(a) for a in accumulations),
+                max_detector=self.max_detector_spin.value(),
+                bidirectional=self.bidir_group.isChecked(),
+                bidirectional_phase_shift=self.bidir_phase_spin.value(),
+            ),
+            "calibration": dict(
+                f_rep_mhz=float(self.frep_spin.value()),
+                factor="1+0j",
+            ),
+        }
+        try:
+            with open(path, "wb") as f:
+                tomli_w.dump(cfg, f)
+        except Exception as e:
+            QMessageBox.critical(self, "Save error", str(e))
+
     def _build_scan_config(self) -> ScanConfig:
         accumulations = tuple(s.value() for s in self.accu_spinboxes) or (1,)
         return ScanConfig(
@@ -600,6 +643,7 @@ class PtuPanel(QWidget):
                 self, "No Data", "Please load a PTU file first."
             )
             return
+        self.log_text.setVisible(True)
         self.log_text.clear()
         self.reconstruct_btn.setEnabled(False)
         self.log_text.appendPlainText("Starting reconstruction...")

@@ -57,6 +57,7 @@ from qtpy.QtWidgets import (
 )
 
 from napari_flopa.state import AppState
+from napari_flopa.widgets.style import SS, apply_style
 
 # ── optional TOML support ────────────────────────────────────────────────
 try:
@@ -77,15 +78,6 @@ _ERR = '<span style="color:#ff6060">{}</span>'
 _OK = '<span style="color:#60cc60">{}</span>'
 _INFO = '<span style="color:#aaaaaa">{}</span>'
 
-_SECTION_STYLE = (
-    "QGroupBox { border: 1px solid #444; border-radius: 3px; "
-    "margin-top: 8px; padding-top: 4px; font-weight: bold; color: #ccc; }"
-    "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }"
-)
-_LOG_STYLE = (
-    "QPlainTextEdit { background: #1a1a1a; color: #aaa; "
-    "border: 1px solid #333; font-family: monospace; font-size: 9px; }"
-)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -177,7 +169,7 @@ class _AggRow(QWidget):
 def _vsep() -> QFrame:
     f = QFrame()
     f.setFrameShape(QFrame.VLine)
-    f.setStyleSheet("color: #444;")
+    f.setStyleSheet(SS.SEPARATOR)
     return f
 
 
@@ -196,7 +188,7 @@ class _ExportSection(QGroupBox):
         super().__init__(title, parent)
         self.setCheckable(True)
         self.setChecked(False)
-        self.setStyleSheet(_SECTION_STYLE)
+        apply_style(self, SS.GROUP_A)
         self._kind = kind
         self._rows: list[_AggRow] = []
 
@@ -208,13 +200,13 @@ class _ExportSection(QGroupBox):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("color: #333;")
+        sep.setStyleSheet(SS.SEPARATOR)
         lay.addWidget(sep)
 
         hint = QLabel(
             "Aggregation passes — one export per row  (F=Frames S=Seq D=Det):"
         )
-        hint.setStyleSheet("color: #777; font-size: 9px; font-weight: normal;")
+        hint.setStyleSheet(SS.HINT)
         lay.addWidget(hint)
 
         self._rows_widget = QWidget()
@@ -283,7 +275,7 @@ class _ImagesSection(_ExportSection):
         # FLIM RGB colormap + contrast
         row2 = QHBoxLayout()
         lbl2 = QLabel("Colormap:")
-        lbl2.setStyleSheet("font-weight: normal; color: #aaa;")
+        lbl2.setStyleSheet(SS.MUTED)
         row2.addWidget(lbl2)
         self._cmap_combo = QComboBox()
         self._cmap_combo.addItems(["rainbow", "hsv", "viridis"])
@@ -292,7 +284,7 @@ class _ImagesSection(_ExportSection):
         row2.addWidget(self._cmap_combo)
         row2.addSpacing(8)
         lbl3 = QLabel("LT range (ns):")
-        lbl3.setStyleSheet("font-weight: normal; color: #aaa;")
+        lbl3.setStyleSheet(SS.MUTED)
         row2.addWidget(lbl3)
         self._lt_lo = QLineEdit()
         self._lt_lo.setMaximumWidth(55)
@@ -411,7 +403,7 @@ class _PhasorSection(_ExportSection):
             "⚠  Per-pixel tables can have millions of rows per file."
         )
         self._warn.setStyleSheet(
-            "color: #ffaa44; font-size: 9px; font-weight: normal;"
+            SS.WARNING
         )
         self._warn.setVisible(False)
         lay.addWidget(self._warn)
@@ -1065,7 +1057,8 @@ class BatchPanel(QWidget):
 
         # ── 1. Directories ─────────────────────────────────────────────
         dir_box = QGroupBox("Directories")
-        dir_box.setStyleSheet(_SECTION_STYLE)
+        apply_style(dir_box, SS.GROUP_A)
+        dir_box.setStyleSheet(SS.GROUP_A)
         dg = QGridLayout(dir_box)
         dg.setSpacing(4)
         dg.addWidget(QLabel("PTU folder:"), 0, 0)
@@ -1092,7 +1085,8 @@ class BatchPanel(QWidget):
 
         # ── 2. Scan config + calibration ───────────────────────────────
         cfg_box = QGroupBox("Scan Config && Calibration")
-        cfg_box.setStyleSheet(_SECTION_STYLE)
+        apply_style(cfg_box, SS.GROUP_A)
+        cfg_box.setStyleSheet(SS.GROUP_A)
         cfg_hlay = QHBoxLayout(cfg_box)
         cfg_hlay.setSpacing(8)
         cfg_hlay.setContentsMargins(6, 4, 6, 6)
@@ -1171,11 +1165,11 @@ class BatchPanel(QWidget):
 
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.HLine)
-        sep1.setStyleSheet("color:#444;")
+        sep1.setStyleSheet(SS.SEPARATOR)
         cg.addWidget(sep1, 3, 0, 1, 6)
 
         cal_lbl = QLabel("Calibration")
-        cal_lbl.setStyleSheet("color:#bbb;")
+        cal_lbl.setStyleSheet(SS.MUTED)
         cg.addWidget(cal_lbl, 4, 0, 1, 6)
 
         self._cal_frep = QLineEdit("40.0")
@@ -1217,18 +1211,18 @@ class BatchPanel(QWidget):
         )
         for b in (self._load_scan_btn, self._load_cal_btn):
             b.setEnabled(False)
-            b.setStyleSheet("font-size: 10px;")
+            b.setStyleSheet(SS.BTN_SMALL)
             btn_col.addWidget(b)
 
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.HLine)
-        sep2.setStyleSheet("color:#444;")
+        sep2.setStyleSheet(SS.SEPARATOR)
         btn_col.addWidget(sep2)
 
         self._load_toml_btn = QPushButton("Load TOML…")
         self._save_toml_btn = QPushButton("Save TOML…")
         for b in (self._load_toml_btn, self._save_toml_btn):
-            b.setStyleSheet("font-size: 10px;")
+            b.setStyleSheet(SS.BTN_SMALL)
             btn_col.addWidget(b)
 
         btn_col.addStretch()
@@ -1244,7 +1238,8 @@ class BatchPanel(QWidget):
 
         # ── 4. Output options ──────────────────────────────────────────
         out_box = QGroupBox("Output options")
-        out_box.setStyleSheet(_SECTION_STYLE)
+        apply_style(out_box, SS.GROUP_A)
+        out_box.setStyleSheet(SS.GROUP_A)
         ol = QVBoxLayout(out_box)
         ol.setSpacing(3)
         tr = QHBoxLayout()
@@ -1258,7 +1253,7 @@ class BatchPanel(QWidget):
         self._out_dir_label = QLabel(
             "Output directory: batch_<timestamp>/ inside PTU folder"
         )
-        self._out_dir_label.setStyleSheet("color: #777; font-size: 9px;")
+        self._out_dir_label.setStyleSheet(SS.HINT)
         ol.addWidget(self._out_dir_label)
         ilay.addWidget(out_box)
 
@@ -1268,15 +1263,12 @@ class BatchPanel(QWidget):
         run_row = QHBoxLayout()
         self._run_btn = QPushButton("Run Batch")
         self._run_btn.setStyleSheet(
-            "QPushButton { background:#2a4a2a; color:#88ff88; "
-            "font-weight:bold; padding:3px 12px; }"
+            SS.BTN_RUN
         )
         self._stop_btn = QPushButton("Stop")
         self._stop_btn.setEnabled(False)
         self._stop_btn.setStyleSheet(
-            "QPushButton { background:#4a1a1a; color:#ff8080; "
-            "font-weight:bold; padding:3px 12px; }"
-            "QPushButton:disabled { background:#2a1a1a; color:#664444; }"
+            SS.BTN_STOP
         )
         run_row.addWidget(self._run_btn)
         run_row.addWidget(self._stop_btn)
@@ -1290,7 +1282,7 @@ class BatchPanel(QWidget):
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setMaximumHeight(130)
-        self._log.setStyleSheet(_LOG_STYLE)
+        self._log.setStyleSheet(SS.LOG)
         root.addWidget(self._log)
 
         # Wiring

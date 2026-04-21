@@ -11,7 +11,6 @@ Color / plot rules (matching old FLOPA behaviour):
 Calibration:
   • Factor stored as complex number; applied as phasor_complex * factor
   • "Calculate" button → CalibrationDialog: enter τ_ref (ns) + measured G, S → computes factor
-  • "Auto from data"   → uses TCSPC histogram or weighted avg G/S for measured phasor
   • "Reset"            → 1+0j
 
 Stale indicator (●):  turns red on ANY change to view selection OR plot settings after last plot.
@@ -27,6 +26,7 @@ from pathlib import Path
 
 import numpy as np
 from matplotlib.figure import Figure
+from matplotlib.path import Path as MplPath
 from qtpy.QtCore import Qt, Slot
 from qtpy.QtGui import QBrush, QColor
 from qtpy.QtWidgets import (
@@ -67,11 +67,8 @@ except ImportError:
     )
 
 from napari_flopa.state import AppState
+from napari_flopa.widgets.style import MPL, SS, apply_style
 
-_DARK_BG = "#1e1e1e"
-_AXES_BG = "#2b2b2b"
-_TICK_CLR = "#cccccc"
-_SPINE_CLR = "#555555"
 _MAX_PX = 80_000  # scatter subsample cap
 
 
@@ -93,6 +90,21 @@ class PhasorPanel(QWidget):
         self._final_plot_data: dict | None = None  # for CSV export
         self._calib_factor: complex = 1.0 + 0j
 
+        # ROI selection state
+        self._roi_active = False
+        self._roi_label_id = 0
+        self._roi_lasso_verts = []
+        self._roi_line = None
+        self._roi_bg = None  # blitting background
+        self._roi_labels_layer = None
+        self._roi_label_data = None
+        self._roi_point_labels = None
+        self._roi_mpl_cids = []
+        self._roi_g = None
+        self._roi_s = None
+        self._roi_scatter = None
+        self._roi_pixel_yx = None
+
         self._build_ui()
         self.state.dataset_changed.connect(self._on_dataset_changed)
         self.viewer.layers.events.inserted.connect(
@@ -113,16 +125,31 @@ class PhasorPanel(QWidget):
 
         # ── Toolbar ────────────────────────────────────────────────────
         tb = QHBoxLayout()
-        self._plot_btn = QPushButton("Plot Phasor from Current View")
+        self._plot_btn = QPushButton("Plot")
         self._plot_btn.setEnabled(False)
         tb.addWidget(self._plot_btn)
 
         self._stale = QLabel("●")
         self._stale.setFixedWidth(14)
         self._stale.setAlignment(Qt.AlignCenter)
-        self._stale.setStyleSheet("color: #555555; font-size: 16px;")
+        self._stale.setStyleSheet(SS.STALE_INACTIVE)
         self._stale.setVisible(False)
         tb.addWidget(self._stale)
+
+        self._roi_btn = QPushButton("⬡ ROI Select")
+        self._roi_btn.setCheckable(True)
+        self._roi_btn.setToolTip("Toggle interactive lasso ROI selection on the phasor plot")
+        self._roi_btn.setEnabled(False)   # enabled after first plot
+        self._roi_btn.setVisible(False)   # TODO: re-enable when ROI Select is ready
+        tb.addWidget(self._roi_btn)
+
+        self._roi_done_btn = QPushButton("✓ Done")
+        self._roi_done_btn.setVisible(False)
+        self._roi_done_btn.setStyleSheet(SS.BTN_SUCCESS)
+        tb.addWidget(self._roi_done_btn)
+
+        self._roi_btn.toggled.connect(self._on_roi_toggled)
+        self._roi_done_btn.clicked.connect(self._on_roi_done)
 
         tb.addStretch()
 
@@ -141,6 +168,7 @@ class PhasorPanel(QWidget):
 
         # -- Mode group --
         mode_box = QGroupBox("Mode")
+        apply_style(mode_box, SS.GROUP_A)
         mode_lay = QVBoxLayout(mode_box)
         mode_lay.setSpacing(2)
         self._per_object_radio = QRadioButton("Per Object")
@@ -148,6 +176,8 @@ class PhasorPanel(QWidget):
         self._per_object_radio.setChecked(True)
         mode_lay.addWidget(self._per_object_radio)
         mode_lay.addWidget(self._per_pixel_radio)
+        self._per_object_radio.toggled.connect(lambda _: self._cancel_roi_if_active())
+        self._per_pixel_radio.toggled.connect(lambda _: self._cancel_roi_if_active())
 
         self._pixel_mode_group = QButtonGroup(self)
         self._pm_scatter = QRadioButton("Scatter")
@@ -177,7 +207,7 @@ class PhasorPanel(QWidget):
                 density_row = QHBoxLayout()
                 density_row.setSpacing(4)
                 density_row.addWidget(self._pm_density)
-                self._hexbin_check = QCheckBox("Hex")
+                self._hexbin_check = QCheckBox("Hexbin")
                 self._hexbin_check.setToolTip(
                     "Unchecked: square histogram (imshow)\n"
                     "Checked: hexagonal bins (hexbin)"
@@ -199,7 +229,8 @@ class PhasorPanel(QWidget):
         setup_row.addWidget(mode_box)
 
         # -- Mask + cmap --
-        mask_box = QGroupBox("Mask / Colors")
+        mask_box = QGroupBox("Mask")
+        apply_style(mask_box, SS.GROUP_A)
         mask_lay = QGridLayout(mask_box)
         mask_lay.setVerticalSpacing(3)
 
@@ -251,7 +282,7 @@ class PhasorPanel(QWidget):
         self._calib_display = QLineEdit(self._fmt_complex(self._calib_factor))
         self._calib_display.setReadOnly(True)
         self._calib_display.setStyleSheet(
-            "color: #aaaaaa; font-family: monospace;"
+            SS.DISPLAY
         )
         self._calib_display.setToolTip(
             "Current calibration factor (complex number). Applied as: phasor × factor"
@@ -273,13 +304,6 @@ class PhasorPanel(QWidget):
         calc_btn.clicked.connect(self._on_calculate_cal_dialog)
         cal_lay.addWidget(calc_btn)
 
-        auto_btn = QPushButton("Auto")
-        auto_btn.setToolTip(
-            "Compute measured phasor from TCSPC histogram (or weighted avg G/S)\n"
-            "using τ_ref set in the Calculate dialog"
-        )
-        auto_btn.clicked.connect(self._on_auto_calibrate)
-        cal_lay.addWidget(auto_btn)
 
         custom_btn = QPushButton("Custom")
         custom_btn.setToolTip(
@@ -304,7 +328,7 @@ class PhasorPanel(QWidget):
         cw_lay = QVBoxLayout(cw)
         cw_lay.setContentsMargins(0, 0, 0, 0)
         self._fig = Figure(tight_layout=True)
-        self._fig.patch.set_facecolor(_DARK_BG)
+        self._fig.patch.set_facecolor(MPL.FIG_BG)
         self._canvas = FigureCanvas(self._fig)
         self._canvas.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding
@@ -341,12 +365,12 @@ class PhasorPanel(QWidget):
             "Load and reconstruct a PTU file with 'All' output to enable phasor."
         )
         self._status.setWordWrap(True)
-        self._status.setStyleSheet("color: #888888; font-size: 10px;")
+        self._status.setStyleSheet(SS.STATUS)
         root.addWidget(self._status)
 
         # Initial empty axes
         self._ax = self._fig.add_subplot(111)
-        self._ax.set_facecolor(_AXES_BG)
+        self._ax.set_facecolor(MPL.AXES_BG)
         self._draw_empty()
 
         # ── Signal wiring ──────────────────────────────────────────────
@@ -409,7 +433,7 @@ class PhasorPanel(QWidget):
     def _mark_stale(self):
         if self._plotted_settings is not None:
             if self._get_settings() != self._plotted_settings:
-                self._stale.setStyleSheet("color: #ff4444; font-size: 16px;")
+                self._stale.setStyleSheet(SS.STALE_STALE)
                 self._stale.setToolTip(
                     "Settings or view have changed since the last plot — click Plot to refresh."
                 )
@@ -501,93 +525,6 @@ class PhasorPanel(QWidget):
         except Exception as e:
             self._status.setText(f"Calibration error: {e}")
 
-    def _on_auto_calibrate(self):
-        """Compute measured phasor from TCSPC or weighted avg G/S."""
-        ds = self.state.dataset
-        if ds is None:
-            self._status.setText("No dataset.")
-            return
-        try:
-            tau_ns = self._tau_ref_spin.value()
-            f_rep_hz = self.state.frep_mhz * 1e6
-            ip = ds.attrs.get("instrument_params", {})
-            sel, dims_to_sum = _parse_settings(ds, self._current_view)
-            sliced = ds.isel(**sel) if sel else ds
-            if dims_to_sum:
-                from napari_flopa.processing.image_utils import (
-                    aggregate_dataset,
-                )
-
-                sliced = aggregate_dataset(sliced, dims_to_sum)
-
-            measured = None
-
-            if "tcspc_histogram" in sliced:
-                res_ns = ip.get("tcspc_resolution_ns", None)
-                if res_ns is not None:
-                    decay = sliced["tcspc_histogram"].values.squeeze()
-                    if decay.ndim > 1:
-                        decay = decay.sum(axis=tuple(range(decay.ndim - 1)))
-                    decay = decay.astype(np.float64)
-                    total = decay.sum()
-                    if total > 0:
-                        omega = 2 * np.pi * f_rep_hz
-                        t = np.arange(len(decay)) * (res_ns * 1e-9)
-                        measured = (
-                            np.dot(decay, np.exp(1j * omega * t)) / total
-                        )
-
-            if (
-                measured is None
-                and "phasor_g" in sliced
-                and "phasor_s" in sliced
-            ):
-                g2 = sliced["phasor_g"].values.squeeze().astype(np.float64)
-                s2 = sliced["phasor_s"].values.squeeze().astype(np.float64)
-                w = None
-                if "photon_count" in sliced:
-                    w = (
-                        sliced["photon_count"]
-                        .values.squeeze()
-                        .astype(np.float64)
-                    )
-                valid = np.isfinite(g2) & np.isfinite(s2)
-                if w is not None:
-                    wv = w[valid]
-                    gv = g2[valid]
-                    sv = s2[valid]
-                    wsum = wv.sum()
-                    g_avg = (
-                        np.dot(wv, gv) / wsum
-                        if wsum > 0
-                        else np.nanmean(g2[valid])
-                    )
-                    s_avg = (
-                        np.dot(wv, sv) / wsum
-                        if wsum > 0
-                        else np.nanmean(s2[valid])
-                    )
-                else:
-                    g_avg, s_avg = np.nanmean(g2[valid]), np.nanmean(s2[valid])
-                measured = complex(g_avg, s_avg)
-
-            if measured is None or not np.isfinite(measured):
-                self._status.setText(
-                    "Cannot compute measured phasor from current data."
-                )
-                return
-
-            self._calib_factor = _calc_calib_factor(tau_ns, measured, f_rep_hz)
-            self._calib_display.setText(self._fmt_complex(self._calib_factor))
-            self.state.set_calib_factor(self._calib_factor)
-            self._mark_stale()
-            self._status.setText(
-                f"Calibration factor: {self._fmt_complex(self._calib_factor)}  "
-                f"(τ_ref={tau_ns:.3f} ns)"
-            )
-        except Exception as e:
-            traceback.print_exc()
-            self._status.setText(f"Auto-calibration error: {e}")
 
     def _on_custom_factor_dialog(self):
         """Open dialog: user types real + imaginary parts directly."""
@@ -657,14 +594,15 @@ class PhasorPanel(QWidget):
         # ── Smoothing ───────────────────────────────────────────────────
         if self._smooth_group.isChecked() and photon_count is not None:
             k = self._smooth_spin.value()
-            from napari_flopa.processing.image_utils import smooth_weighted
+            from napari_flopa.io.ptuio.utils import smooth_phasor
 
-            phasor_g, _ = smooth_weighted(
-                phasor_g, photon_count.astype(np.uint32), size=k
+            phasor_c_smooth = smooth_phasor(
+                phasor_g + 1j * phasor_s,
+                photon_count.astype(np.uint32),
+                size=k,
             )
-            phasor_s, _ = smooth_weighted(
-                phasor_s, photon_count.astype(np.uint32), size=k
-            )
+            phasor_g = phasor_c_smooth.real
+            phasor_s = phasor_c_smooth.imag
 
         # ── Calibration ─────────────────────────────────────────────────
         phasor_c = phasor_g + 1j * phasor_s
@@ -707,82 +645,46 @@ class PhasorPanel(QWidget):
         ) = ([], [], [], [], [], [], [])
 
         if per_object:
+            from napari_flopa.io.ptuio.utils import average_phasor
+
+            phasor_c = phasor_g + 1j * phasor_s
+            pc_arr = (
+                photon_count.astype(np.float64)
+                if photon_count is not None
+                else np.ones(phasor_c.shape)
+            )
+
             if not mask_active:
                 # whole image → single centroid
-                valid = np.isfinite(phasor_g) & np.isfinite(phasor_s)
-                if photon_count is not None:
-                    valid &= photon_count > 0
-                pc_v = (
-                    photon_count[valid].astype(np.float64)
-                    if photon_count is not None
-                    else None
-                )
-                g_v = phasor_g[valid].astype(np.float64)
-                s_v = phasor_s[valid].astype(np.float64)
-                g_avg = (
-                    np.dot(pc_v, g_v) / pc_v.sum()
-                    if pc_v is not None and pc_v.sum() > 0
-                    else float(np.nanmean(g_v))
-                )
-                s_avg = (
-                    np.dot(pc_v, s_v) / pc_v.sum()
-                    if pc_v is not None and pc_v.sum() > 0
-                    else float(np.nanmean(s_v))
-                )
-                g_out.append(g_avg)
-                s_out.append(s_avg)
+                avg = average_phasor(phasor_c, pc_arr)
+                valid = np.isfinite(phasor_g) & np.isfinite(phasor_s) & (pc_arr > 0)
+                g_out.append(float(avg.real))
+                s_out.append(float(avg.imag))
                 labels_out.append(np.nan)
-                photons_out.append(
-                    float(pc_v.sum())
-                    if pc_v is not None
-                    else float(valid.sum())
-                )
+                photons_out.append(float(pc_arr[valid].sum()))
                 areas_out.append(int(valid.sum()))
                 colors_out.append((1.0, 1.0, 1.0, 0.9))  # white
                 lt_v = lt_2d[valid] if lt_2d is not None else None
                 lt_out.append(
-                    float(np.nanmean(lt_v))
-                    if lt_v is not None
-                    else float("nan")
+                    float(np.nanmean(lt_v)) if lt_v is not None else float("nan")
                 )
             else:
                 for lbl in np.unique(label_2d):
                     if lbl == 0:
                         continue
                     m = label_2d == lbl
-                    valid = m & np.isfinite(phasor_g) & np.isfinite(phasor_s)
-                    if not valid.any():
+                    avg = average_phasor(phasor_c, pc_arr, mask=m)
+                    if not np.isfinite(avg):
                         continue
-                    pc_v = (
-                        photon_count[valid].astype(np.float64)
-                        if photon_count is not None
-                        else None
-                    )
-                    g_v = phasor_g[valid].astype(np.float64)
-                    s_v = phasor_s[valid].astype(np.float64)
-                    wsum = pc_v.sum() if pc_v is not None else 0.0
-                    g_avg = (
-                        np.dot(pc_v, g_v) / wsum
-                        if wsum > 0
-                        else float(np.nanmean(g_v))
-                    )
-                    s_avg = (
-                        np.dot(pc_v, s_v) / wsum
-                        if wsum > 0
-                        else float(np.nanmean(s_v))
-                    )
-                    g_out.append(g_avg)
-                    s_out.append(s_avg)
+                    valid = m & np.isfinite(phasor_g) & np.isfinite(phasor_s) & (pc_arr > 0)
+                    g_out.append(float(avg.real))
+                    s_out.append(float(avg.imag))
                     labels_out.append(int(lbl))
-                    photons_out.append(
-                        float(wsum if wsum > 0 else valid.sum())
-                    )
+                    photons_out.append(float(pc_arr[valid].sum()))
                     areas_out.append(int(m.sum()))
                     lt_v = lt_2d[valid] if lt_2d is not None else None
                     lt_out.append(
-                        float(np.nanmean(lt_v))
-                        if lt_v is not None
-                        else float("nan")
+                        float(np.nanmean(lt_v)) if lt_v is not None else float("nan")
                     )
                     rgba = _get_napari_color(mask_layer, int(lbl))
                     colors_out.append(rgba)
@@ -793,6 +695,8 @@ class PhasorPanel(QWidget):
                 valid &= photon_count > 0
             if mask_active and label_2d is not None:
                 valid &= label_2d > 0
+
+            yx_valid = np.argwhere(valid)  # (N, 2) — row, col of every valid pixel
 
             g_pix = phasor_g[valid]
             s_pix = phasor_s[valid]
@@ -824,6 +728,11 @@ class PhasorPanel(QWidget):
                 pc_pix = pc_pix[idx] if pc_pix is not None else None
                 lt_pix = lt_pix[idx] if lt_pix is not None else None
                 lbl_pix = lbl_pix[idx] if lbl_pix is not None else None
+                yx_plot = yx_valid[idx]
+            else:
+                yx_plot = yx_valid
+
+            self._roi_pixel_yx = (yx_plot[:, 0], yx_plot[:, 1])
 
             g_out = g_pix
             s_out = s_pix
@@ -858,6 +767,8 @@ class PhasorPanel(QWidget):
         }
 
         # ── Draw ────────────────────────────────────────────────────────
+        if per_object:
+            self._roi_pixel_yx = None
         sync_hz = ip.get("sync_rate_hz", None) or (self.state.frep_mhz * 1e6)
         self._draw_phasor(
             np.array(g_out).ravel(),
@@ -900,9 +811,10 @@ class PhasorPanel(QWidget):
         self._table.setVisible(True)
 
         self._plotted_settings = self._get_settings()
-        self._stale.setStyleSheet("color: #44cc44; font-size: 16px;")
+        self._stale.setStyleSheet(SS.STALE_FRESH)
         self._stale.setToolTip("Plot is up to date.")
         self._stale.setVisible(True)
+        self._roi_btn.setEnabled(True)
         n_plot = len(np.array(g_out).ravel())
         if per_object:
             self._status.setText(f"Plotted {n_plot:,} objects.")
@@ -937,8 +849,8 @@ class PhasorPanel(QWidget):
         fig.clear()
         ax = fig.add_subplot(111)
         self._ax = ax
-        ax.set_facecolor(_AXES_BG)
-        fig.patch.set_facecolor(_DARK_BG)
+        ax.set_facecolor(MPL.AXES_BG)
+        fig.patch.set_facecolor(MPL.FIG_BG)
 
         # Universal semicircle
         theta = np.linspace(0, np.pi, 300)
@@ -989,9 +901,9 @@ class PhasorPanel(QWidget):
                     handles=handles,
                     fontsize=7,
                     loc="upper right",
-                    facecolor=_AXES_BG,
-                    edgecolor=_SPINE_CLR,
-                    labelcolor=_TICK_CLR,
+                    facecolor=MPL.AXES_BG,
+                    edgecolor=MPL.SPINE,
+                    labelcolor=MPL.TICK,
                     framealpha=0.8,
                 )
 
@@ -1019,9 +931,9 @@ class PhasorPanel(QWidget):
                     handles=handles,
                     fontsize=7,
                     loc="upper right",
-                    facecolor=_AXES_BG,
-                    edgecolor=_SPINE_CLR,
-                    labelcolor=_TICK_CLR,
+                    facecolor=MPL.AXES_BG,
+                    edgecolor=MPL.SPINE,
+                    labelcolor=MPL.TICK,
                     framealpha=0.8,
                 )
 
@@ -1075,30 +987,36 @@ class PhasorPanel(QWidget):
                         zorder=1,
                     )
                     cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-                cb.ax.yaxis.set_tick_params(colors=_TICK_CLR, labelsize=7)
-                cb.ax.set_facecolor(_AXES_BG)
-                cb.outline.set_edgecolor(_SPINE_CLR)
-                cb.set_label("Count", color=_TICK_CLR, fontsize=8)
+                cb.ax.yaxis.set_tick_params(colors=MPL.TICK, labelsize=7)
+                cb.ax.set_facecolor(MPL.AXES_BG)
+                cb.outline.set_edgecolor(MPL.SPINE)
+                cb.set_label("Count", color=MPL.TICK, fontsize=8)
 
         self._finalise_axes(ax)
+
+        # Store G/S for ROI selection (_roi_pixel_yx set by _do_compute)
+        self._roi_g = np.asarray(g, dtype=np.float32).ravel()
+        self._roi_s = np.asarray(s, dtype=np.float32).ravel()
+        self._roi_scatter = None
+
         self._canvas.draw_idle()
 
     def _finalise_axes(self, ax):
         ax.set_xlim(-0.05, 1.05)
         ax.set_ylim(-0.05, 0.80)
         ax.set_aspect("equal", adjustable="datalim")
-        ax.set_xlabel("G", color=_TICK_CLR)
-        ax.set_ylabel("S", color=_TICK_CLR)
-        ax.tick_params(colors=_TICK_CLR, labelsize=8)
+        ax.set_xlabel("G", color=MPL.TICK)
+        ax.set_ylabel("S", color=MPL.TICK)
+        ax.tick_params(colors=MPL.TICK, labelsize=8)
         for sp in ax.spines.values():
-            sp.set_edgecolor(_SPINE_CLR)
+            sp.set_edgecolor(MPL.SPINE)
 
     def _draw_empty(self):
         self._fig.clear()
         ax = self._fig.add_subplot(111)
         self._ax = ax
-        ax.set_facecolor(_AXES_BG)
-        self._fig.patch.set_facecolor(_DARK_BG)
+        ax.set_facecolor(MPL.AXES_BG)
+        self._fig.patch.set_facecolor(MPL.FIG_BG)
         theta = np.linspace(0, np.pi, 300)
         ax.plot(
             0.5 + 0.5 * np.cos(theta),
@@ -1266,7 +1184,7 @@ class PhasorPanel(QWidget):
             return
         try:
             self._fig.savefig(
-                path, dpi=150, facecolor=_DARK_BG, bbox_inches="tight"
+                path, dpi=150, facecolor=MPL.FIG_BG, bbox_inches="tight"
             )
             self._status.setText(f"Plot saved: {Path(path).name}")
         except Exception as e:
@@ -1298,6 +1216,242 @@ class PhasorPanel(QWidget):
             self._status.setText(f"Table saved: {Path(path).name}")
         except Exception as e:
             self._status.setText(f"Save error: {e}")
+
+    # ── ROI Selection ──────────────────────────────────────────────────────
+
+    def hideEvent(self, event):
+        """Cancel ROI selection when this panel is hidden (e.g. tab switch)."""
+        self._cancel_roi_if_active()
+        super().hideEvent(event)
+
+    def _cancel_roi_if_active(self):
+        if self._roi_active:
+            self._on_roi_done()
+
+    def _on_roi_toggled(self, checked: bool):
+        """Toggle interactive lasso ROI mode on/off."""
+        self._roi_active = checked
+        self._roi_btn.setText("⬡ ROI Select" if not checked else "● ROI Active")
+        self._roi_done_btn.setVisible(checked)
+        if checked:
+            # Connect matplotlib mouse events
+            canvas = self._canvas
+            self._roi_mpl_cids = [
+                canvas.mpl_connect('button_press_event',    self._roi_on_press),
+                canvas.mpl_connect('motion_notify_event',   self._roi_on_motion),
+                canvas.mpl_connect('button_release_event',  self._roi_on_release),
+            ]
+        else:
+            self._roi_disconnect()
+
+    def _roi_disconnect(self):
+        for cid in self._roi_mpl_cids:
+            self._canvas.mpl_disconnect(cid)
+        self._roi_mpl_cids = []
+        self._roi_bg = None
+        if self._roi_line is not None:
+            try:
+                self._roi_line.remove()
+            except Exception:
+                pass
+            self._roi_line = None
+        self._roi_lasso_verts = []
+        self._canvas.draw_idle()
+
+    def _on_roi_done(self):
+        """Finish ROI session: disconnect events, reset for fresh start."""
+        self._roi_btn.setChecked(False)
+        self._roi_btn.setText("⬡ ROI Select")
+        self._roi_done_btn.setVisible(False)
+        self._roi_disconnect()
+        self._roi_active = False
+        # Reset state so next toggle starts fresh
+        self._roi_label_id = 0
+        self._roi_point_labels = None
+        self._roi_labels_layer = None
+        self._roi_label_data = None
+
+    def _roi_on_press(self, event):
+        if event.inaxes != self._ax or event.button != 1:
+            return
+        self._roi_lasso_verts = [(event.xdata, event.ydata)]
+        if self._roi_line is not None:
+            try:
+                self._roi_line.remove()
+            except Exception:
+                pass
+        self._roi_line, = self._ax.plot(
+            [event.xdata], [event.ydata],
+            color='yellow', linewidth=1.0, alpha=0.8, zorder=20,
+            animated=True,
+        )
+        # Capture static background for blitting (excludes animated artists)
+        self._canvas.draw()
+        self._roi_bg = self._canvas.copy_from_bbox(self._ax.bbox)
+
+    def _roi_on_motion(self, event):
+        if not self._roi_lasso_verts or event.inaxes != self._ax:
+            return
+        self._roi_lasso_verts.append((event.xdata, event.ydata))
+        xs = [v[0] for v in self._roi_lasso_verts]
+        ys = [v[1] for v in self._roi_lasso_verts]
+        self._roi_line.set_data(xs, ys)
+        # Blit: restore background, draw only the lasso line, flush
+        self._canvas.restore_region(self._roi_bg)
+        self._ax.draw_artist(self._roi_line)
+        self._canvas.blit(self._ax.bbox)
+
+    def _roi_on_release(self, event):
+        if event.button != 1:
+            return
+        if len(self._roi_lasso_verts) < 3:
+            self._roi_lasso_verts = []
+            self._roi_bg = None
+            return
+        # Close the polygon
+        verts = self._roi_lasso_verts + [self._roi_lasso_verts[0]]
+        self._roi_lasso_verts = []
+        self._roi_bg = None
+        # Switch line back to non-animated so it persists in the normal render
+        self._roi_line.set_animated(False)
+        xs = [v[0] for v in verts]
+        ys = [v[1] for v in verts]
+        self._roi_line.set_data(xs, ys)
+
+        # Test which plotted points are inside the polygon
+        if not hasattr(self, '_roi_g') or self._roi_g is None or len(self._roi_g) == 0:
+            return
+
+        poly = MplPath(verts)
+        pts = np.column_stack([self._roi_g, self._roi_s])
+        inside = poly.contains_points(pts)
+
+        if not inside.any():
+            return
+
+        self._roi_label_id += 1
+        lbl = self._roi_label_id
+
+        # Initialise point labels array
+        if self._roi_point_labels is None:
+            self._roi_point_labels = np.zeros(len(self._roi_g), dtype=np.int32)
+        # Overwrite any previous assignment for points inside
+        self._roi_point_labels[inside] = lbl
+
+        # Update napari Labels layer first (so colors are available for scatter)
+        self._roi_update_labels_layer(inside, lbl)
+
+        # Update scatter colors on plot
+        self._roi_update_scatter_colors()
+
+    def _roi_update_scatter_colors(self):
+        """Recolor all scatter points: assigned → napari label color, unassigned → gray."""
+        if self._roi_point_labels is None or self._roi_labels_layer is None:
+            return
+        ax = self._ax
+        # Remove existing ROI scatter if present
+        if hasattr(self, '_roi_scatter') and self._roi_scatter is not None:
+            try:
+                self._roi_scatter.remove()
+            except Exception:
+                pass
+        n = len(self._roi_g)
+        colors = np.zeros((n, 4), dtype=np.float32)
+        colors[:, :3] = 0.35   # gray for unassigned
+        colors[:, 3]  = 0.5
+        for lbl_id in range(1, self._roi_label_id + 1):
+            mask = self._roi_point_labels == lbl_id
+            if mask.any():
+                rgba = _get_napari_color(self._roi_labels_layer, lbl_id)
+                colors[mask] = rgba
+                colors[mask, 3] = 0.85
+        # Determine marker size based on mode
+        per_obj = self._per_object_radio.isChecked()
+        ms = 50 if per_obj else 3
+        self._roi_scatter = ax.scatter(
+            self._roi_g, self._roi_s,
+            c=colors, s=ms,
+            edgecolors='none' if not per_obj else 'white',
+            linewidths=0 if not per_obj else 0.5,
+            zorder=15
+        )
+        self._canvas.draw_idle()
+
+    def _roi_update_labels_layer(self, inside_mask: np.ndarray, lbl: int):
+        """
+        Paint pixels for the selected phasor points into the Labels layer.
+
+        For per-object mode: inside_mask selects phasor centroids → look up their
+        object IDs in self._final_plot_data['labels'] → paint those objects' pixels.
+        For per-pixel mode: inside_mask selects individual pixels stored in
+        self._roi_pixel_coords → paint those pixels directly.
+        """
+        ds = self.state.dataset
+        if ds is None:
+            return
+
+        # Get image shape from dataset
+        shape_2d = None
+        for var in ('photon_count', 'phasor_g', 'mean_arrival_time'):
+            if var in ds:
+                arr = ds[var]
+                # squeeze out non-spatial dims to get (lines, pixels)
+                vals = arr.values
+                # find last 2 dims
+                if vals.ndim >= 2:
+                    shape_2d = vals.shape[-2:]
+                break
+        if shape_2d is None:
+            return
+
+        # Create or reuse labels layer
+        if self._roi_labels_layer is None or self._roi_labels_layer not in self.viewer.layers:
+            self._roi_label_data = np.zeros(shape_2d, dtype=np.int32)
+            try:
+                self._roi_labels_layer = self.viewer.add_labels(
+                    self._roi_label_data.copy(),
+                    name="Phasor ROI Labels"
+                )
+            except Exception:
+                return
+
+        per_obj = self._per_object_radio.isChecked()
+        fd = self._final_plot_data
+
+        if per_obj and fd is not None:
+            # labels array holds object IDs (from the mask layer used for plotting)
+            obj_labels = fd.get('labels')
+            if obj_labels is None:
+                return
+            obj_labels_arr = np.asarray(obj_labels).ravel()
+            selected_obj_ids = obj_labels_arr[inside_mask]
+
+            # We need the label_2d map — get it from the current mask layer
+            mask_name = self._mask_combo.currentText()
+            if mask_name == "None" or mask_name not in self.viewer.layers:
+                # No mask → whole image, paint everything with lbl
+                self._roi_label_data[:] = lbl
+            else:
+                mask_layer = self.viewer.layers[mask_name]
+                ldata = np.asarray(mask_layer.data)
+                if ldata.ndim > 2:
+                    ldata = ldata.reshape(-1, ldata.shape[-2], ldata.shape[-1])[0]
+                if ldata.shape != shape_2d:
+                    return
+                label_2d = ldata.astype(np.int32)
+                for oid in selected_obj_ids:
+                    if np.isfinite(oid):
+                        self._roi_label_data[label_2d == int(oid)] = lbl
+        else:
+            # Per-pixel: use stored pixel indices
+            if hasattr(self, '_roi_pixel_yx') and self._roi_pixel_yx is not None:
+                ys, xs = self._roi_pixel_yx
+                in_ys = ys[inside_mask]
+                in_xs = xs[inside_mask]
+                valid = (in_ys >= 0) & (in_ys < shape_2d[0]) & (in_xs >= 0) & (in_xs < shape_2d[1])
+                self._roi_label_data[in_ys[valid], in_xs[valid]] = lbl
+
+        self._roi_labels_layer.data = self._roi_label_data.copy()
 
 
 # ── CalibrationDialog ─────────────────────────────────────────────────────

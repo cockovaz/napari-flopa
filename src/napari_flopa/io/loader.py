@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import numpy as np
@@ -199,28 +198,3 @@ def _format_marker_suggestions(analysis_results: dict) -> str:
         for lines_val, acc_val in suggestions:
             lines.append(f"  - {lines_val} x {acc_val}")
     return "\n".join(lines)
-
-
-def load_h5_dataset(filepath: Path) -> tuple:
-    """
-    Loads a dataset from an HDF5 file previously saved by FLOPA.
-
-    Re-hydrates attributes saved as JSON strings back into Python dicts.
-
-    Args:
-        filepath: Path to the .h5 file.
-
-    Returns:
-        Tuple of (xr.Dataset, attrs_dict).
-    """
-    ds = xr.open_dataset(filepath, engine="h5netcdf")
-
-    attrs_copy = ds.attrs.copy()
-    for key, value in attrs_copy.items():
-        if isinstance(value, str) and value.strip().startswith("{"):
-            try:
-                ds.attrs[key] = json.loads(value)
-            except json.JSONDecodeError:
-                pass
-
-    return ds

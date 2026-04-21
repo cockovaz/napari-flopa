@@ -55,13 +55,10 @@ except ImportError:
         FigureCanvasQTAgg as FigureCanvas,
     )
 
+from napari_flopa.io.ptuio.utils import shift_decay
 from napari_flopa.state import AppState
+from napari_flopa.widgets.style import MPL, SS, apply_style
 
-_DARK_BG = "#1e1e1e"
-_AXES_BG = "#2b2b2b"
-_TICK_CLR = "#cccccc"
-_SPINE_CLR = "#555555"
-_GRID_CLR = "#3a3a3a"
 
 
 # 60-colour palette from matplotlib's three tab20 maps
@@ -83,19 +80,6 @@ _LEGEND_COLS = 5  # columns in the scrollable curve grid
 
 _MAX_LEGEND = 8  # max entries shown in the matplotlib plot legend
 
-_DET_BTN_ON = (
-    "QPushButton { background:#2a4a4a; color:#00d8d8; border:1px solid #00aaaa;"
-    " border-radius:3px; padding:1px 6px; font-size:10px; }"
-    "QPushButton:hover { background:#2e5555; }"
-)
-_DET_BTN_OFF = (
-    "QPushButton { background:#2b2b2b; color:#555555; border:1px solid #444;"
-    " border-radius:3px; padding:1px 6px; font-size:10px; }"
-)
-_DET_BTN_DISABLED = (
-    "QPushButton { background:#222; color:#444; border:1px solid #333;"
-    " border-radius:3px; padding:1px 6px; font-size:10px; }"
-)
 
 
 class DecayPanel(QWidget):
@@ -161,7 +145,7 @@ class DecayPanel(QWidget):
         self._stale = QLabel("●")
         self._stale.setFixedWidth(14)
         self._stale.setAlignment(Qt.AlignCenter)
-        self._stale.setStyleSheet("color: #555555; font-size: 16px;")
+        self._stale.setStyleSheet(SS.STALE_INACTIVE)
         self._stale.setVisible(False)
         tb.addWidget(self._stale)
 
@@ -191,6 +175,7 @@ class DecayPanel(QWidget):
         sr.setSpacing(6)
 
         agg_box = QGroupBox("Aggregate")
+        apply_style(agg_box, SS.GROUP_A)
         agg_lay = QHBoxLayout(agg_box)
         agg_lay.setSpacing(6)
         agg_lay.setContentsMargins(6, 2, 6, 2)
@@ -206,6 +191,7 @@ class DecayPanel(QWidget):
         sr.addWidget(agg_box)
 
         shift_box = QGroupBox("Shift (bins)")
+        apply_style(shift_box, SS.GROUP_A)
         shift_lay = QHBoxLayout(shift_box)
         shift_lay.setContentsMargins(6, 2, 6, 2)
         self._shift_spin = QSpinBox()
@@ -222,9 +208,9 @@ class DecayPanel(QWidget):
 
         # ── Matplotlib canvas ──────────────────────────────────────────
         self._fig = Figure(figsize=(8, 4), tight_layout=True)
-        self._fig.patch.set_facecolor(_DARK_BG)
+        self._fig.patch.set_facecolor(MPL.FIG_BG)
         self._ax = self._fig.add_subplot(111)
-        self._ax.set_facecolor(_AXES_BG)
+        self._ax.set_facecolor(MPL.AXES_BG)
         self._canvas = FigureCanvas(self._fig)
         self._canvas.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding
@@ -246,7 +232,7 @@ class DecayPanel(QWidget):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("color: #444;")
+        sep.setStyleSheet(SS.SEPARATOR)
         det_row.addWidget(sep)
 
         self._show_all_btn = QPushButton("All")
@@ -283,7 +269,7 @@ class DecayPanel(QWidget):
             "Load and reconstruct a PTU file to enable decay plotting."
         )
         self._status.setWordWrap(True)
-        self._status.setStyleSheet("color: #888888; font-size: 10px;")
+        self._status.setStyleSheet(SS.STATUS)
         root.addWidget(self._status)
 
         # ── Wiring ─────────────────────────────────────────────────────
@@ -335,7 +321,7 @@ class DecayPanel(QWidget):
     def _mark_stale(self):
         """Turn the stale indicator red if curves exist and settings have changed."""
         if self._curves:
-            self._stale.setStyleSheet("color: #ff4444; font-size: 16px;")
+            self._stale.setStyleSheet(SS.STALE_STALE)
             self._stale.setToolTip(
                 "Settings changed since last plot — click Plot to refresh."
             )
@@ -358,7 +344,7 @@ class DecayPanel(QWidget):
             return
         self._curves = curves
         self._plotted_view = dict(self._current_view)
-        self._stale.setStyleSheet("color: #44cc44; font-size: 16px;")
+        self._stale.setStyleSheet(SS.STALE_FRESH)
         self._stale.setToolTip("Plot is up to date.")
         self._stale.setVisible(True)
         self._export_btn.setEnabled(True)
@@ -419,7 +405,7 @@ class DecayPanel(QWidget):
 
         self._curves = curves
         self._plotted_view = dict(v)
-        self._stale.setStyleSheet("color: #44cc44; font-size: 16px;")
+        self._stale.setStyleSheet(SS.STALE_FRESH)
         self._stale.setToolTip("Plot is up to date.")
         self._stale.setVisible(True)
         self._export_btn.setEnabled(True)
@@ -550,17 +536,17 @@ class DecayPanel(QWidget):
 
         ax = self._ax
         ax.clear()
-        ax.set_facecolor(_AXES_BG)
+        ax.set_facecolor(MPL.AXES_BG)
 
         # Subtle grid
         ax.grid(
-            True, color=_GRID_CLR, linewidth=0.5, linestyle="--", alpha=0.9
+            True, color=MPL.GRID, linewidth=0.5, linestyle="--", alpha=0.9
         )
         ax.set_axisbelow(True)
 
         visible = [c for c in self._curves if c["visible"]]
         for curve in visible:
-            counts = np.roll(curve["counts"], shift)
+            counts = shift_decay(curve["counts"], -shift)
             if norm:
                 peak = counts.max()
                 counts = counts / peak if peak > 0 else counts
@@ -583,17 +569,17 @@ class DecayPanel(QWidget):
             res_ns = float(dt[0]) if len(dt) > 0 else 1.0
         ax.set_xlabel(
             "Time (ns)" if res_ns != 1.0 else "TCSPC bin",
-            color=_TICK_CLR,
+            color=MPL.TICK,
             fontsize=8,
         )
         ax.set_ylabel(
             "Counts" if not norm else "Norm. counts",
-            color=_TICK_CLR,
+            color=MPL.TICK,
             fontsize=8,
         )
-        ax.tick_params(colors=_TICK_CLR, labelsize=7)
+        ax.tick_params(colors=MPL.TICK, labelsize=7)
         for sp in ax.spines.values():
-            sp.set_edgecolor(_SPINE_CLR)
+            sp.set_edgecolor(MPL.SPINE)
 
         if visible:
             ax.set_xlim(visible[0]["time_ns"][0], visible[0]["time_ns"][-1])
@@ -611,9 +597,9 @@ class DecayPanel(QWidget):
                 l_show,
                 fontsize=7,
                 loc="upper right",
-                facecolor=_AXES_BG,
-                edgecolor=_SPINE_CLR,
-                labelcolor=_TICK_CLR,
+                facecolor=MPL.AXES_BG,
+                edgecolor=MPL.SPINE,
+                labelcolor=MPL.TICK,
                 framealpha=0.8,
             )
 
@@ -633,15 +619,15 @@ class DecayPanel(QWidget):
         """Render a placeholder "No data" axes with consistent styling."""
         ax = self._ax
         ax.clear()
-        ax.set_facecolor(_AXES_BG)
+        ax.set_facecolor(MPL.AXES_BG)
         ax.grid(
-            True, color=_GRID_CLR, linewidth=0.5, linestyle="--", alpha=0.6
+            True, color=MPL.GRID, linewidth=0.5, linestyle="--", alpha=0.6
         )
-        ax.set_xlabel("Time (ns)", color=_TICK_CLR, fontsize=8)
-        ax.set_ylabel("Counts", color=_TICK_CLR, fontsize=8)
-        ax.tick_params(colors=_TICK_CLR, labelsize=7)
+        ax.set_xlabel("Time (ns)", color=MPL.TICK, fontsize=8)
+        ax.set_ylabel("Counts", color=MPL.TICK, fontsize=8)
+        ax.tick_params(colors=MPL.TICK, labelsize=7)
         for sp in ax.spines.values():
-            sp.set_edgecolor(_SPINE_CLR)
+            sp.set_edgecolor(MPL.SPINE)
         ax.text(
             0.5,
             0.5,
@@ -686,7 +672,7 @@ class DecayPanel(QWidget):
             btn.setFixedWidth(32)
             btn.setEnabled(not disabled)
             btn.setStyleSheet(
-                _DET_BTN_ON if not disabled else _DET_BTN_DISABLED
+                SS.BTN_DET_ON if not disabled else SS.BTN_DET_DISABLED
             )
             btn.toggled.connect(
                 lambda checked, d=ch: self._on_det_toggled(d, checked)
@@ -699,16 +685,16 @@ class DecayPanel(QWidget):
         for btn in self._det_btns.values():
             btn.setEnabled(not detectors_aggregated)
             btn.setStyleSheet(
-                _DET_BTN_DISABLED
+                SS.BTN_DET_DISABLED
                 if detectors_aggregated
-                else (_DET_BTN_ON if btn.isChecked() else _DET_BTN_OFF)
+                else (SS.BTN_DET_ON if btn.isChecked() else SS.BTN_DET_OFF)
             )
 
     def _on_det_toggled(self, chan_idx: int, visible: bool):
         """Show/hide all curves belonging to detector chan_idx and sync button style."""
         btn = self._det_btns.get(chan_idx)
         if btn:
-            btn.setStyleSheet(_DET_BTN_ON if visible else _DET_BTN_OFF)
+            btn.setStyleSheet(SS.BTN_DET_ON if visible else SS.BTN_DET_OFF)
         for c in self._curves:
             if c["chan_idx"] == chan_idx:
                 c["visible"] = visible
@@ -778,7 +764,7 @@ class DecayPanel(QWidget):
                 btn = self._det_btns[chan]
                 btn.blockSignals(True)
                 btn.setChecked(any_vis)
-                btn.setStyleSheet(_DET_BTN_ON if any_vis else _DET_BTN_OFF)
+                btn.setStyleSheet(SS.BTN_DET_ON if any_vis else SS.BTN_DET_OFF)
                 btn.blockSignals(False)
             self._redraw()
 
@@ -790,7 +776,7 @@ class DecayPanel(QWidget):
         for ch, btn in self._det_btns.items():
             btn.blockSignals(True)
             btn.setChecked(visible)
-            btn.setStyleSheet(_DET_BTN_ON if visible else _DET_BTN_OFF)
+            btn.setStyleSheet(SS.BTN_DET_ON if visible else SS.BTN_DET_OFF)
             btn.blockSignals(False)
         self._rebuild_legend()
         self._redraw()
@@ -816,7 +802,7 @@ class DecayPanel(QWidget):
         else:
             try:
                 self._fig.savefig(
-                    path, dpi=300, facecolor=_DARK_BG, bbox_inches="tight"
+                    path, dpi=300, facecolor=MPL.FIG_BG, bbox_inches="tight"
                 )
                 self._status.setText(f"Saved: {Path(path).name}")
             except Exception as e:

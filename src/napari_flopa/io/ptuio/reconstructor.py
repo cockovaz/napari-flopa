@@ -172,7 +172,7 @@ class ImageReconstructor:
             )  # existing shape logic
 
         # Rolling context
-        self._partial_line_marker = (
+        self._partial_start_nsync = (
             None  # stores unmatched marker from previous chunk
         )
         self._current_line_idx = 0
@@ -238,7 +238,7 @@ class ImageReconstructor:
         self._assign_photons_to_segments(photons, line_segments)
 
     def finalize(self):
-        if self._partial_line_marker is not None:
+        if self._partial_start_nsync is not None:
             self._flush_final_line()
 
         data = {}
@@ -442,13 +442,13 @@ class ImageReconstructor:
             self._frame_marker_nsyncs, frame_nsyncs, axis=0
         )
 
-        if self._partial_line_marker is not None:
+        if self._partial_start_nsync is not None:
             start_nsyncs = np.insert(
-                start_nsyncs, 0, self._partial_line_marker
+                start_nsyncs, 0, self._partial_start_nsync
             )
-            self._partial_line_marker = None
+            self._partial_start_nsync = None
 
-        self._partial_line_marker = start_nsyncs[-1]
+        self._partial_start_nsync = start_nsyncs[-1]
 
         start = start_nsyncs[:-1].astype(np.int64)
         stop = start + self.line_duration
@@ -609,9 +609,9 @@ class ImageReconstructor:
     def _flush_final_line(self):
 
         final_segment = np.empty(1, dtype=segment_dtype)
-        final_segment["start_nsync"] = self._partial_line_marker
+        final_segment["start_nsync"] = self._partial_start_nsync
         final_segment["stop_nsync"] = (
-            self._partial_line_marker + self.line_duration
+            self._partial_start_nsync + self.line_duration
         )
         final_segment["frame_idx"] = self._current_frame_idx
         final_segment["line_idx"] = self._current_line_idx
@@ -623,7 +623,7 @@ class ImageReconstructor:
         self._pending_photons = np.empty(
             (0,), dtype=self._pending_photons.dtype
         )
-        self._partial_line_marker = None
+        self._partial_start_nsync = None
 
     def _extract_markers(self, events, codes):
         return events[

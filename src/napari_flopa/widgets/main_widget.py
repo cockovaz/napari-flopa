@@ -1,5 +1,6 @@
 import napari
-from qtpy.QtWidgets import QTabWidget, QVBoxLayout, QWidget
+from qtpy.QtCore import Qt
+from qtpy.QtWidgets import QScrollArea, QTabWidget, QVBoxLayout, QWidget
 
 from napari_flopa.state import AppState
 from napari_flopa.widgets.batch_panel import BatchPanel
@@ -9,12 +10,22 @@ from napari_flopa.widgets.phasor_panel import PhasorPanel
 from napari_flopa.widgets.ptu_panel import PtuPanel
 
 
+def _scrollable(widget: QWidget) -> QScrollArea:
+    scroll = QScrollArea()
+    scroll.setWidget(widget)
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    return scroll
+
+
 class FlimWidget(QWidget):
     """
-    Main napari plugin widget. Tab container with three panels:
-      0 — Process PTU
+    Main napari plugin widget. Tab container with panels:
+      0 — File
       1 — Phasor
       2 — Decay
+      3 - Batch
 
     On first reconstruction, a FlimViewPanel is added as a bottom dock widget.
     When the FLIM View selection changes, Phasor and Decay panels are notified
@@ -38,14 +49,15 @@ class FlimWidget(QWidget):
         self._decay_panel = DecayPanel(self.state, viewer)
         self._batch_panel = BatchPanel(self.state, viewer)
 
-        self._tabs.addTab(self._ptu_panel, "Process PTU")
-        self._tabs.addTab(self._phasor_panel, "Phasor")
-        self._tabs.addTab(self._decay_panel, "Decay")
-        self._tabs.addTab(self._batch_panel, "Batch")
+        self._tabs.addTab(_scrollable(self._ptu_panel), "File")
+        self._tabs.addTab(_scrollable(self._phasor_panel), "Phasor")
+        self._tabs.addTab(_scrollable(self._decay_panel), "Decay")
+        self._tabs.addTab(_scrollable(self._batch_panel), "Batch")
 
         # Phasor/Decay tabs start disabled until data is available
         self._tabs.setTabEnabled(1, False)
         self._tabs.setTabEnabled(2, False)
+        self._tabs.setTabEnabled(3, False)  # TODO: re-enable when Batch is ready
 
         layout.addWidget(self._tabs)
 

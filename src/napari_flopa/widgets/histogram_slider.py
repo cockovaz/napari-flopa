@@ -24,6 +24,8 @@ from qtpy.QtWidgets import (
 )
 from superqt import QDoubleRangeSlider, QRangeSlider
 
+from napari_flopa.widgets.style import SS
+
 
 class _HistogramCanvas(QWidget):
     """Pure QPainter histogram bar chart with view (cyan) and mask (red) range markers."""
@@ -32,7 +34,7 @@ class _HistogramCanvas(QWidget):
         super().__init__(parent)
         self.integer_mode = integer_mode
         self.setFixedHeight(canvas_height)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self._counts = np.array([])
         self._edges = np.array([])
@@ -49,10 +51,15 @@ class _HistogramCanvas(QWidget):
 
         self._colormap = cm.gray
         self._lut = self._make_lut(cm.gray)
+        self._name = ""
 
     @staticmethod
     def _make_lut(cmap) -> np.ndarray:
         return (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
+
+    def set_name(self, name: str):
+        self._name = name
+        self.update()
 
     def set_colormap(self, cmap):
         self._colormap = cmap
@@ -90,37 +97,77 @@ class _HistogramCanvas(QWidget):
 
         w, h = self.width(), self.height()
         pad_b = 4
+        pad_l = _HIST_PAD_L  # left gutter = y-axis / left slider handle
+        pad_r = _HIST_PAD_R  # right padding = right slider handle
 
         painter.fillRect(0, 0, w, h, QColor(30, 30, 30))
 
+        # ── Y-axis labels (drawn first so they sit in the gutter) ──────────
+        ax_color = QColor(150, 150, 150, 160)
+        painter.setPen(ax_color)
+        font = painter.font()
+        font.setPointSize(6)
+        painter.setFont(font)
+        fm = painter.fontMetrics()
+
+        if self._counts.size > 0 and self._data_max > self._data_min:
+            max_count = self._counts.max() or 1.0
+            max_label = _compact_count(int(np.expm1(max_count)))
+            # "0" at bottom-left, max count at top-left — right-aligned in gutter
+            painter.drawText(
+                QRect(0, h - pad_b - fm.height(), pad_l - 3, fm.height()),
+                Qt.AlignRight | Qt.AlignVCenter,
+                "0",
+            )
+            painter.drawText(
+                QRect(0, 1, pad_l - 3, fm.height()),
+                Qt.AlignRight | Qt.AlignVCenter,
+                max_label,
+            )
+
+        # Rotated name label centred vertically in the gutter
+        if self._name:
+            font.setPointSize(7)
+            painter.setFont(font)
+            painter.setPen(QColor(180, 180, 180, 140))
+            painter.save()
+            painter.translate(fm.height() + 2, h // 2)
+            painter.rotate(-90)
+            painter.drawText(-painter.fontMetrics().horizontalAdvance(self._name) // 2, 0, self._name)
+            painter.restore()
+
         if self._counts.size == 0 or self._data_max <= self._data_min:
             painter.setPen(QColor(120, 120, 120))
-            painter.drawText(QRect(0, 0, w, h), Qt.AlignCenter, "No data")
+            painter.drawText(QRect(pad_l, 0, w - pad_l, h), Qt.AlignCenter, "No data")
             painter.end()
             return
 
-        disp_range = (
-            self._display_max - self._data_min
-        )  # extended range for x-mapping
+        # ── Histogram bars (x mapped onto [pad_l, w - pad_r]) ─────────────
+        pad_t = 6  # top buffer so the tallest bar never touches the ceiling
+        bar_w = w - pad_l - pad_r
+        bar_area_h = h - pad_b - pad_t  # usable vertical space for bars
+        disp_range = self._display_max - self._data_min
         data_range = self._data_max - self._data_min
         max_count = self._counts.max() or 1.0
 
+        # Subtle horizontal dashed line at the max-count level
+        painter.setPen(QPen(QColor(150, 150, 150, 55), 1, Qt.DashLine))
+        painter.drawLine(pad_l, pad_t, w - pad_r, pad_t)
+
         for i, count in enumerate(self._counts):
             x0, x1 = self._edges[i], self._edges[i + 1]
-            px0 = int((x0 - self._data_min) / disp_range * w)
-            px1 = int((x1 - self._data_min) / disp_range * w)
-            bar_h = int(count / max_count * (h - pad_b))
+            px0 = pad_l + int((x0 - self._data_min) / disp_range * bar_w)
+            px1 = pad_l + int((x1 - self._data_min) / disp_range * bar_w)
+            bar_h = int(count / max_count * bar_area_h)
 
             centre = (x0 + x1) / 2.0
             if centre < self._lo or centre > self._hi:
-                # outside contrast range — dim with full-range color
                 lut_idx = int((centre - self._data_min) / data_range * 255)
                 lut_idx = max(0, min(255, lut_idx))
                 r = int(self._lut[lut_idx, 0]) // 4
                 g = int(self._lut[lut_idx, 1]) // 4
                 b = int(self._lut[lut_idx, 2]) // 4
             else:
-                # remap centre onto view range so histogram colors match display
                 view_range = (
                     self._hi - self._lo if self._hi > self._lo else 1.0
                 )
@@ -141,40 +188,32 @@ class _HistogramCanvas(QWidget):
         # View range markers — cyan dashed, semi-transparent
         cyan = QColor(0, 220, 220, 140)
         for val in (self._lo, self._hi):
-            px = int((val - self._data_min) / disp_range * w)
+            px = pad_l + int((val - self._data_min) / disp_range * bar_w)
             painter.setPen(QPen(cyan, 1, Qt.DashLine))
-            painter.drawLine(px, 0, px, h - pad_b)
+            painter.drawLine(px, pad_t, px, h - pad_b)
 
         # Mask range markers — red dashed, semi-transparent
         red = QColor(220, 60, 60, 140)
         for val in (self._mask_lo, self._mask_hi):
-            px = int((val - self._data_min) / disp_range * w)
+            px = pad_l + int((val - self._data_min) / disp_range * bar_w)
             painter.setPen(QPen(red, 1, Qt.DashLine))
-            painter.drawLine(px, 0, px, h - pad_b)
+            painter.drawLine(px, pad_t, px, h - pad_b)
 
         painter.end()
 
 
-_EDIT_STYLE = (
-    "QLineEdit { background: #2b2b2b; color: #cccccc; "
-    "border: 1px solid #444; border-radius: 2px; "
-    "padding: 1px 2px; font-size: 9px; }"
-    "QLineEdit:focus { border: 1px solid #888; }"
-)
+def _compact_count(n: int) -> str:
+    """Format a count value compactly: 1_200 → '1.2k', 1_500_000 → '1.5M'."""
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n/1_000:.1f}k"
+    return str(n)
 
-_SLIDER_VIEW_STYLE = (
-    "QSlider::groove:horizontal { background: #333; height: 4px; border-radius: 2px; }"
-    "QSlider::handle:horizontal { background: #00dcdc; width: 10px; height: 10px;"
-    " margin: -3px 0; border-radius: 5px; }"
-    "QSlider::sub-page:horizontal { background: #00aaaa; border-radius: 2px; }"
-)
 
-_SLIDER_MASK_STYLE = (
-    "QSlider::groove:horizontal { background: #333; height: 4px; border-radius: 2px; }"
-    "QSlider::handle:horizontal { background: #dc4444; width: 10px; height: 10px;"
-    " margin: -3px 0; border-radius: 5px; }"
-    "QSlider::sub-page:horizontal { background: #aa2222; border-radius: 2px; }"
-)
+_HIST_PAD_L = 52  # left gutter = edit-box width; y-axis aligns with left slider handle
+_HIST_PAD_R = 45  # right padding = edit-box width; x-axis end aligns with right slider handle
+
 
 
 class HistogramSlider(QWidget):
@@ -200,6 +239,7 @@ class HistogramSlider(QWidget):
         super().__init__(parent)
         self.integer_mode = integer_mode
         self._is_updating = False
+        self._valid_data: np.ndarray = np.array([])
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 1, 0, 1)
@@ -210,7 +250,7 @@ class HistogramSlider(QWidget):
             integer_mode=integer_mode, canvas_height=canvas_height
         )
         canvas_row = QHBoxLayout()
-        canvas_row.setContentsMargins(45, 0, 45, 0)
+        canvas_row.setContentsMargins(0, 0, 0, 0)  # canvas spans full widget width
         canvas_row.addWidget(self._canvas)
         layout.addLayout(canvas_row)
         layout.addSpacing(1)
@@ -226,7 +266,7 @@ class HistogramSlider(QWidget):
         self._slider.setRange(0, 1)
         self._slider.setValue((0, 1))
         self._slider.setFixedHeight(18)
-        self._slider.setStyleSheet(_SLIDER_VIEW_STYLE)
+        self._slider.setStyleSheet(SS.SLIDER_VIEW)
 
         view_row = QHBoxLayout()
         view_row.setSpacing(2)
@@ -247,7 +287,7 @@ class HistogramSlider(QWidget):
         self._mask_slider.setRange(0, 1)
         self._mask_slider.setValue((0, 1))
         self._mask_slider.setFixedHeight(18)
-        self._mask_slider.setStyleSheet(_SLIDER_MASK_STYLE)
+        self._mask_slider.setStyleSheet(SS.SLIDER_MASK)
 
         mask_row = QHBoxLayout()
         mask_row.setSpacing(2)
@@ -280,11 +320,13 @@ class HistogramSlider(QWidget):
     # ------------------------------------------------------------------ #
 
     def update_data(self, data: np.ndarray):
+        """Full reset: histogram + slider positions set to [p2, p98]."""
         valid = data[np.isfinite(data)] if data is not None else np.array([])
         if valid.size == 0:
             self._canvas.set_data(None)
             return
 
+        self._valid_data = valid
         mn, mx = float(np.min(valid)), float(np.max(valid))
         if mn >= mx:
             mx = mn + 1.0
@@ -312,6 +354,79 @@ class HistogramSlider(QWidget):
         self._update_edit(self._mask_lo_edit, mask_lo)
         self._update_edit(self._mask_hi_edit, mx)
 
+    def update_data_keep_range(self, data: np.ndarray):
+        """Update histogram but preserve current slider positions, clamping to new range."""
+        valid = data[np.isfinite(data)] if data is not None else np.array([])
+        if valid.size == 0:
+            self._canvas.set_data(None)
+            return
+
+        self._valid_data = valid
+        mn, mx = float(np.min(valid)), float(np.max(valid))
+        if mn >= mx:
+            mx = mn + 1.0
+
+        self._canvas.set_data(valid)
+
+        cur_lo, cur_hi = float(self._slider.value()[0]), float(self._slider.value()[1])
+        new_lo = max(mn, min(cur_lo, mx))
+        new_hi = max(mn, min(cur_hi, mx))
+        if new_lo >= new_hi:
+            new_lo, new_hi = mn, mx
+
+        cur_mlo = float(self._mask_slider.value()[0])
+        cur_mhi = float(self._mask_slider.value()[1])
+        new_mlo = max(mn, min(cur_mlo, mx))
+        new_mhi = max(mn, min(cur_mhi, mx))
+        if new_mlo >= new_mhi:
+            new_mlo = float(1 if self.integer_mode else mn)
+            new_mhi = mx
+
+        self._is_updating = True
+        self._slider.setRange(mn, mx)
+        self._mask_slider.setRange(mn, mx)
+        self._slider.setValue((new_lo, new_hi))
+        self._mask_slider.setValue((new_mlo, new_mhi))
+        self._is_updating = False
+
+        self._canvas.set_range(new_lo, new_hi)
+        self._canvas.set_mask_range(new_mlo, new_mhi)
+        self._update_edit(self._lo_edit, new_lo)
+        self._update_edit(self._hi_edit, new_hi)
+        self._update_edit(self._mask_lo_edit, new_mlo)
+        self._update_edit(self._mask_hi_edit, new_mhi)
+
+    def set_auto_contrast(self):
+        """Set contrast slider to [p2, p98] of the current data."""
+        if self._valid_data.size == 0:
+            return
+        lo, hi = np.nanpercentile(self._valid_data, [2, 98])
+        mn, mx = float(self._slider.minimum()), float(self._slider.maximum())
+        lo, hi = float(max(mn, lo)), float(min(mx, hi))
+        if lo >= hi:
+            return
+        self._is_updating = True
+        self._slider.setValue((lo, hi))
+        self._is_updating = False
+        self._canvas.set_range(lo, hi)
+        self._update_edit(self._lo_edit, lo)
+        self._update_edit(self._hi_edit, hi)
+        self.sliderReleased.emit(self.value())
+
+    def set_min_max(self):
+        """Set contrast slider to full data range [min, max]."""
+        mn, mx = float(self._slider.minimum()), float(self._slider.maximum())
+        self._is_updating = True
+        self._slider.setValue((mn, mx))
+        self._is_updating = False
+        self._canvas.set_range(mn, mx)
+        self._update_edit(self._lo_edit, mn)
+        self._update_edit(self._hi_edit, mx)
+        self.sliderReleased.emit(self.value())
+
+    def set_name(self, name: str):
+        self._canvas.set_name(name)
+
     def set_colormap(self, cmap):
         self._canvas.set_colormap(cmap)
 
@@ -335,7 +450,7 @@ class HistogramSlider(QWidget):
         e = QLineEdit("0")
         e.setFixedWidth(45)
         e.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        e.setStyleSheet(_EDIT_STYLE)
+        e.setStyleSheet(SS.LINE_EDIT)
         return e
 
     def _fmt(self, v) -> str:
