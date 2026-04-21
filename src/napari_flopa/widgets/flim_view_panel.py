@@ -268,9 +268,7 @@ class FlimViewPanel(QWidget):
         int_ctrl.addLayout(int_contrast)
 
         self.int_mask_btn = QPushButton("→ Generate Int. Mask")
-        self.int_mask_btn.setStyleSheet(
-            SS.BTN_DANGER
-        )
+        self.int_mask_btn.setStyleSheet(SS.BTN_DANGER)
         self.int_mask_btn.setToolTip(
             "Create a new Labels layer from pixels within the red slider range."
         )
@@ -335,9 +333,7 @@ class FlimViewPanel(QWidget):
         lt_ctrl.addLayout(lt_contrast)
 
         self.lt_mask_btn = QPushButton("→ Generate Lt. Mask")
-        self.lt_mask_btn.setStyleSheet(
-            SS.BTN_DANGER
-        )
+        self.lt_mask_btn.setStyleSheet(SS.BTN_DANGER)
         self.lt_mask_btn.setToolTip(
             "Create a new Labels layer from pixels within the red slider range."
         )
@@ -364,16 +360,20 @@ class FlimViewPanel(QWidget):
         ):
             btn.setEnabled(False)
             el.addWidget(btn)
-        #el.addStretch()
+        # el.addStretch()
         grid.addWidget(exp_group, 0, 3)
 
         self.export_int_btn.clicked.connect(self._export_intensity)
         self.export_lt_btn.clicked.connect(self._export_lifetime)
         self.export_flim_btn.clicked.connect(self._export_flim)
 
-        self.int_auto_btn.clicked.connect(self.intensity_slider.set_auto_contrast)
+        self.int_auto_btn.clicked.connect(
+            self.intensity_slider.set_auto_contrast
+        )
         self.int_minmax_btn.clicked.connect(self.intensity_slider.set_min_max)
-        self.lt_auto_btn.clicked.connect(self.lifetime_slider.set_auto_contrast)
+        self.lt_auto_btn.clicked.connect(
+            self.lifetime_slider.set_auto_contrast
+        )
         self.lt_minmax_btn.clicked.connect(self.lifetime_slider.set_min_max)
 
         def _sync_int_histogram_colormap():
@@ -382,12 +382,22 @@ class FlimViewPanel(QWidget):
             show_l = self.show_lifetime.isChecked() and has_lifetime
             flim_mode = show_i and show_l
             self.int_colormap.setEnabled(not flim_mode)
-            cmap = cm.gray if flim_mode else cm.get_cmap(self.int_colormap.currentText())
+            cmap = (
+                cm.gray
+                if flim_mode
+                else cm.get_cmap(self.int_colormap.currentText())
+            )
             self.intensity_slider.set_colormap(cmap)
 
-        self.show_intensity.toggled.connect(lambda _: _sync_int_histogram_colormap())
-        self.show_lifetime.toggled.connect(lambda _: _sync_int_histogram_colormap())
-        self.int_colormap.currentTextChanged.connect(lambda _: _sync_int_histogram_colormap())
+        self.show_intensity.toggled.connect(
+            lambda _: _sync_int_histogram_colormap()
+        )
+        self.show_lifetime.toggled.connect(
+            lambda _: _sync_int_histogram_colormap()
+        )
+        self.int_colormap.currentTextChanged.connect(
+            lambda _: _sync_int_histogram_colormap()
+        )
         _sync_int_histogram_colormap()
 
         # ------------------------------------------------------------------ #
@@ -409,15 +419,13 @@ class FlimViewPanel(QWidget):
             lt_lo, lt_hi = self.lifetime_slider.value()
             lt_range = lt_hi - lt_lo if lt_hi > lt_lo else 1.0
             cl_f = np.where(np.isfinite(cl), cl, lt_lo).astype(np.float32)
-            lt_idx = np.clip(
-                (cl_f - lt_lo) / lt_range * 255, 0, 255
-            ).astype(np.uint8)
+            lt_idx = np.clip((cl_f - lt_lo) / lt_range * 255, 0, 255).astype(
+                np.uint8
+            )
             int_lo, int_hi = self.intensity_slider.value()
             int_range = int_hi - int_lo if int_hi > int_lo else 1.0
             ci_f = np.where(np.isfinite(ci), ci, int_lo).astype(np.float32)
-            int_norm = np.clip(
-                (ci_f - int_lo) / int_range, 0, 1
-            )
+            int_norm = np.clip((ci_f - int_lo) / int_range, 0, 1)
             return (self._lut[lt_idx].astype(np.float32) / 255.0) * int_norm[
                 ..., np.newaxis
             ]

@@ -133,12 +133,18 @@ class _HistogramCanvas(QWidget):
             painter.save()
             painter.translate(fm.height() + 2, h // 2)
             painter.rotate(-90)
-            painter.drawText(-painter.fontMetrics().horizontalAdvance(self._name) // 2, 0, self._name)
+            painter.drawText(
+                -painter.fontMetrics().horizontalAdvance(self._name) // 2,
+                0,
+                self._name,
+            )
             painter.restore()
 
         if self._counts.size == 0 or self._data_max <= self._data_min:
             painter.setPen(QColor(120, 120, 120))
-            painter.drawText(QRect(pad_l, 0, w - pad_l, h), Qt.AlignCenter, "No data")
+            painter.drawText(
+                QRect(pad_l, 0, w - pad_l, h), Qt.AlignCenter, "No data"
+            )
             painter.end()
             return
 
@@ -211,9 +217,10 @@ def _compact_count(n: int) -> str:
     return str(n)
 
 
-_HIST_PAD_L = 52  # left gutter = edit-box width; y-axis aligns with left slider handle
+_HIST_PAD_L = (
+    52  # left gutter = edit-box width; y-axis aligns with left slider handle
+)
 _HIST_PAD_R = 45  # right padding = edit-box width; x-axis end aligns with right slider handle
-
 
 
 class HistogramSlider(QWidget):
@@ -250,7 +257,9 @@ class HistogramSlider(QWidget):
             integer_mode=integer_mode, canvas_height=canvas_height
         )
         canvas_row = QHBoxLayout()
-        canvas_row.setContentsMargins(0, 0, 0, 0)  # canvas spans full widget width
+        canvas_row.setContentsMargins(
+            0, 0, 0, 0
+        )  # canvas spans full widget width
         canvas_row.addWidget(self._canvas)
         layout.addLayout(canvas_row)
         layout.addSpacing(1)
@@ -368,7 +377,9 @@ class HistogramSlider(QWidget):
 
         self._canvas.set_data(valid)
 
-        cur_lo, cur_hi = float(self._slider.value()[0]), float(self._slider.value()[1])
+        cur_lo, cur_hi = float(self._slider.value()[0]), float(
+            self._slider.value()[1]
+        )
         new_lo = max(mn, min(cur_lo, mx))
         new_hi = max(mn, min(cur_hi, mx))
         if new_lo >= new_hi:

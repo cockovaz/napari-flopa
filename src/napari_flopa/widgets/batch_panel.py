@@ -79,7 +79,6 @@ _OK = '<span style="color:#60cc60">{}</span>'
 _INFO = '<span style="color:#aaaaaa">{}</span>'
 
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # _AggRow  — one aggregation / processing configuration row
 # ─────────────────────────────────────────────────────────────────────────────
@@ -402,9 +401,7 @@ class _PhasorSection(_ExportSection):
         self._warn = QLabel(
             "⚠  Per-pixel tables can have millions of rows per file."
         )
-        self._warn.setStyleSheet(
-            SS.WARNING
-        )
+        self._warn.setStyleSheet(SS.WARNING)
         self._warn.setVisible(False)
         lay.addWidget(self._warn)
         self._px_radio.toggled.connect(self._warn.setVisible)
@@ -1262,14 +1259,10 @@ class BatchPanel(QWidget):
         # ── 5. Run controls ────────────────────────────────────────────
         run_row = QHBoxLayout()
         self._run_btn = QPushButton("Run Batch")
-        self._run_btn.setStyleSheet(
-            SS.BTN_RUN
-        )
+        self._run_btn.setStyleSheet(SS.BTN_RUN)
         self._stop_btn = QPushButton("Stop")
         self._stop_btn.setEnabled(False)
-        self._stop_btn.setStyleSheet(
-            SS.BTN_STOP
-        )
+        self._stop_btn.setStyleSheet(SS.BTN_STOP)
         run_row.addWidget(self._run_btn)
         run_row.addWidget(self._stop_btn)
         run_row.addStretch()

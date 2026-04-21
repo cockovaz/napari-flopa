@@ -60,7 +60,6 @@ from napari_flopa.state import AppState
 from napari_flopa.widgets.style import MPL, SS, apply_style
 
 
-
 # 60-colour palette from matplotlib's three tab20 maps
 def _build_palette() -> list:
     colours = []
@@ -79,7 +78,6 @@ _PALETTE = _build_palette()
 _LEGEND_COLS = 5  # columns in the scrollable curve grid
 
 _MAX_LEGEND = 8  # max entries shown in the matplotlib plot legend
-
 
 
 class DecayPanel(QWidget):
@@ -539,9 +537,7 @@ class DecayPanel(QWidget):
         ax.set_facecolor(MPL.AXES_BG)
 
         # Subtle grid
-        ax.grid(
-            True, color=MPL.GRID, linewidth=0.5, linestyle="--", alpha=0.9
-        )
+        ax.grid(True, color=MPL.GRID, linewidth=0.5, linestyle="--", alpha=0.9)
         ax.set_axisbelow(True)
 
         visible = [c for c in self._curves if c["visible"]]
@@ -620,9 +616,7 @@ class DecayPanel(QWidget):
         ax = self._ax
         ax.clear()
         ax.set_facecolor(MPL.AXES_BG)
-        ax.grid(
-            True, color=MPL.GRID, linewidth=0.5, linestyle="--", alpha=0.6
-        )
+        ax.grid(True, color=MPL.GRID, linewidth=0.5, linestyle="--", alpha=0.6)
         ax.set_xlabel("Time (ns)", color=MPL.TICK, fontsize=8)
         ax.set_ylabel("Counts", color=MPL.TICK, fontsize=8)
         ax.tick_params(colors=MPL.TICK, labelsize=7)

@@ -265,7 +265,7 @@ class PtuPanel(QWidget):
 
         # Bidirectional
         self.bidir_group = QGroupBox("Bidirectional Scan")
-        self.bidir_group.setObjectName("plain") 
+        self.bidir_group.setObjectName("plain")
         apply_style(self.bidir_group, SS.GROUP_A)
         self.bidir_group.setCheckable(True)
         self.bidir_group.setChecked(False)

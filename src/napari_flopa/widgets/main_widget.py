@@ -57,7 +57,9 @@ class FlimWidget(QWidget):
         # Phasor/Decay tabs start disabled until data is available
         self._tabs.setTabEnabled(1, False)
         self._tabs.setTabEnabled(2, False)
-        self._tabs.setTabEnabled(3, False)  # TODO: re-enable when Batch is ready
+        self._tabs.setTabEnabled(
+            3, False
+        )  # TODO: re-enable when Batch is ready
 
         layout.addWidget(self._tabs)
 

@@ -138,9 +138,13 @@ class PhasorPanel(QWidget):
 
         self._roi_btn = QPushButton("⬡ ROI Select")
         self._roi_btn.setCheckable(True)
-        self._roi_btn.setToolTip("Toggle interactive lasso ROI selection on the phasor plot")
-        self._roi_btn.setEnabled(False)   # enabled after first plot
-        self._roi_btn.setVisible(False)   # TODO: re-enable when ROI Select is ready
+        self._roi_btn.setToolTip(
+            "Toggle interactive lasso ROI selection on the phasor plot"
+        )
+        self._roi_btn.setEnabled(False)  # enabled after first plot
+        self._roi_btn.setVisible(
+            False
+        )  # TODO: re-enable when ROI Select is ready
         tb.addWidget(self._roi_btn)
 
         self._roi_done_btn = QPushButton("✓ Done")
@@ -176,8 +180,12 @@ class PhasorPanel(QWidget):
         self._per_object_radio.setChecked(True)
         mode_lay.addWidget(self._per_object_radio)
         mode_lay.addWidget(self._per_pixel_radio)
-        self._per_object_radio.toggled.connect(lambda _: self._cancel_roi_if_active())
-        self._per_pixel_radio.toggled.connect(lambda _: self._cancel_roi_if_active())
+        self._per_object_radio.toggled.connect(
+            lambda _: self._cancel_roi_if_active()
+        )
+        self._per_pixel_radio.toggled.connect(
+            lambda _: self._cancel_roi_if_active()
+        )
 
         self._pixel_mode_group = QButtonGroup(self)
         self._pm_scatter = QRadioButton("Scatter")
@@ -281,9 +289,7 @@ class PhasorPanel(QWidget):
         cal_lay.addWidget(QLabel("Factor:"))
         self._calib_display = QLineEdit(self._fmt_complex(self._calib_factor))
         self._calib_display.setReadOnly(True)
-        self._calib_display.setStyleSheet(
-            SS.DISPLAY
-        )
+        self._calib_display.setStyleSheet(SS.DISPLAY)
         self._calib_display.setToolTip(
             "Current calibration factor (complex number). Applied as: phasor × factor"
         )
@@ -303,7 +309,6 @@ class PhasorPanel(QWidget):
         )
         calc_btn.clicked.connect(self._on_calculate_cal_dialog)
         cal_lay.addWidget(calc_btn)
-
 
         custom_btn = QPushButton("Custom")
         custom_btn.setToolTip(
@@ -525,7 +530,6 @@ class PhasorPanel(QWidget):
         except Exception as e:
             self._status.setText(f"Calibration error: {e}")
 
-
     def _on_custom_factor_dialog(self):
         """Open dialog: user types real + imaginary parts directly."""
         dlg = CustomFactorDialog(self._calib_factor, parent=self)
@@ -657,7 +661,11 @@ class PhasorPanel(QWidget):
             if not mask_active:
                 # whole image → single centroid
                 avg = average_phasor(phasor_c, pc_arr)
-                valid = np.isfinite(phasor_g) & np.isfinite(phasor_s) & (pc_arr > 0)
+                valid = (
+                    np.isfinite(phasor_g)
+                    & np.isfinite(phasor_s)
+                    & (pc_arr > 0)
+                )
                 g_out.append(float(avg.real))
                 s_out.append(float(avg.imag))
                 labels_out.append(np.nan)
@@ -666,7 +674,9 @@ class PhasorPanel(QWidget):
                 colors_out.append((1.0, 1.0, 1.0, 0.9))  # white
                 lt_v = lt_2d[valid] if lt_2d is not None else None
                 lt_out.append(
-                    float(np.nanmean(lt_v)) if lt_v is not None else float("nan")
+                    float(np.nanmean(lt_v))
+                    if lt_v is not None
+                    else float("nan")
                 )
             else:
                 for lbl in np.unique(label_2d):
@@ -676,7 +686,12 @@ class PhasorPanel(QWidget):
                     avg = average_phasor(phasor_c, pc_arr, mask=m)
                     if not np.isfinite(avg):
                         continue
-                    valid = m & np.isfinite(phasor_g) & np.isfinite(phasor_s) & (pc_arr > 0)
+                    valid = (
+                        m
+                        & np.isfinite(phasor_g)
+                        & np.isfinite(phasor_s)
+                        & (pc_arr > 0)
+                    )
                     g_out.append(float(avg.real))
                     s_out.append(float(avg.imag))
                     labels_out.append(int(lbl))
@@ -684,7 +699,9 @@ class PhasorPanel(QWidget):
                     areas_out.append(int(m.sum()))
                     lt_v = lt_2d[valid] if lt_2d is not None else None
                     lt_out.append(
-                        float(np.nanmean(lt_v)) if lt_v is not None else float("nan")
+                        float(np.nanmean(lt_v))
+                        if lt_v is not None
+                        else float("nan")
                     )
                     rgba = _get_napari_color(mask_layer, int(lbl))
                     colors_out.append(rgba)
@@ -696,7 +713,9 @@ class PhasorPanel(QWidget):
             if mask_active and label_2d is not None:
                 valid &= label_2d > 0
 
-            yx_valid = np.argwhere(valid)  # (N, 2) — row, col of every valid pixel
+            yx_valid = np.argwhere(
+                valid
+            )  # (N, 2) — row, col of every valid pixel
 
             g_pix = phasor_g[valid]
             s_pix = phasor_s[valid]
@@ -1231,15 +1250,19 @@ class PhasorPanel(QWidget):
     def _on_roi_toggled(self, checked: bool):
         """Toggle interactive lasso ROI mode on/off."""
         self._roi_active = checked
-        self._roi_btn.setText("⬡ ROI Select" if not checked else "● ROI Active")
+        self._roi_btn.setText(
+            "⬡ ROI Select" if not checked else "● ROI Active"
+        )
         self._roi_done_btn.setVisible(checked)
         if checked:
             # Connect matplotlib mouse events
             canvas = self._canvas
             self._roi_mpl_cids = [
-                canvas.mpl_connect('button_press_event',    self._roi_on_press),
-                canvas.mpl_connect('motion_notify_event',   self._roi_on_motion),
-                canvas.mpl_connect('button_release_event',  self._roi_on_release),
+                canvas.mpl_connect("button_press_event", self._roi_on_press),
+                canvas.mpl_connect("motion_notify_event", self._roi_on_motion),
+                canvas.mpl_connect(
+                    "button_release_event", self._roi_on_release
+                ),
             ]
         else:
             self._roi_disconnect()
@@ -1280,9 +1303,13 @@ class PhasorPanel(QWidget):
                 self._roi_line.remove()
             except Exception:
                 pass
-        self._roi_line, = self._ax.plot(
-            [event.xdata], [event.ydata],
-            color='yellow', linewidth=1.0, alpha=0.8, zorder=20,
+        (self._roi_line,) = self._ax.plot(
+            [event.xdata],
+            [event.ydata],
+            color="yellow",
+            linewidth=1.0,
+            alpha=0.8,
+            zorder=20,
             animated=True,
         )
         # Capture static background for blitting (excludes animated artists)
@@ -1319,7 +1346,11 @@ class PhasorPanel(QWidget):
         self._roi_line.set_data(xs, ys)
 
         # Test which plotted points are inside the polygon
-        if not hasattr(self, '_roi_g') or self._roi_g is None or len(self._roi_g) == 0:
+        if (
+            not hasattr(self, "_roi_g")
+            or self._roi_g is None
+            or len(self._roi_g) == 0
+        ):
             return
 
         poly = MplPath(verts)
@@ -1350,15 +1381,15 @@ class PhasorPanel(QWidget):
             return
         ax = self._ax
         # Remove existing ROI scatter if present
-        if hasattr(self, '_roi_scatter') and self._roi_scatter is not None:
+        if hasattr(self, "_roi_scatter") and self._roi_scatter is not None:
             try:
                 self._roi_scatter.remove()
             except Exception:
                 pass
         n = len(self._roi_g)
         colors = np.zeros((n, 4), dtype=np.float32)
-        colors[:, :3] = 0.35   # gray for unassigned
-        colors[:, 3]  = 0.5
+        colors[:, :3] = 0.35  # gray for unassigned
+        colors[:, 3] = 0.5
         for lbl_id in range(1, self._roi_label_id + 1):
             mask = self._roi_point_labels == lbl_id
             if mask.any():
@@ -1369,11 +1400,13 @@ class PhasorPanel(QWidget):
         per_obj = self._per_object_radio.isChecked()
         ms = 50 if per_obj else 3
         self._roi_scatter = ax.scatter(
-            self._roi_g, self._roi_s,
-            c=colors, s=ms,
-            edgecolors='none' if not per_obj else 'white',
+            self._roi_g,
+            self._roi_s,
+            c=colors,
+            s=ms,
+            edgecolors="none" if not per_obj else "white",
             linewidths=0 if not per_obj else 0.5,
-            zorder=15
+            zorder=15,
         )
         self._canvas.draw_idle()
 
@@ -1392,7 +1425,7 @@ class PhasorPanel(QWidget):
 
         # Get image shape from dataset
         shape_2d = None
-        for var in ('photon_count', 'phasor_g', 'mean_arrival_time'):
+        for var in ("photon_count", "phasor_g", "mean_arrival_time"):
             if var in ds:
                 arr = ds[var]
                 # squeeze out non-spatial dims to get (lines, pixels)
@@ -1405,12 +1438,14 @@ class PhasorPanel(QWidget):
             return
 
         # Create or reuse labels layer
-        if self._roi_labels_layer is None or self._roi_labels_layer not in self.viewer.layers:
+        if (
+            self._roi_labels_layer is None
+            or self._roi_labels_layer not in self.viewer.layers
+        ):
             self._roi_label_data = np.zeros(shape_2d, dtype=np.int32)
             try:
                 self._roi_labels_layer = self.viewer.add_labels(
-                    self._roi_label_data.copy(),
-                    name="Phasor ROI Labels"
+                    self._roi_label_data.copy(), name="Phasor ROI Labels"
                 )
             except Exception:
                 return
@@ -1420,7 +1455,7 @@ class PhasorPanel(QWidget):
 
         if per_obj and fd is not None:
             # labels array holds object IDs (from the mask layer used for plotting)
-            obj_labels = fd.get('labels')
+            obj_labels = fd.get("labels")
             if obj_labels is None:
                 return
             obj_labels_arr = np.asarray(obj_labels).ravel()
@@ -1435,7 +1470,9 @@ class PhasorPanel(QWidget):
                 mask_layer = self.viewer.layers[mask_name]
                 ldata = np.asarray(mask_layer.data)
                 if ldata.ndim > 2:
-                    ldata = ldata.reshape(-1, ldata.shape[-2], ldata.shape[-1])[0]
+                    ldata = ldata.reshape(
+                        -1, ldata.shape[-2], ldata.shape[-1]
+                    )[0]
                 if ldata.shape != shape_2d:
                     return
                 label_2d = ldata.astype(np.int32)
@@ -1444,11 +1481,19 @@ class PhasorPanel(QWidget):
                         self._roi_label_data[label_2d == int(oid)] = lbl
         else:
             # Per-pixel: use stored pixel indices
-            if hasattr(self, '_roi_pixel_yx') and self._roi_pixel_yx is not None:
+            if (
+                hasattr(self, "_roi_pixel_yx")
+                and self._roi_pixel_yx is not None
+            ):
                 ys, xs = self._roi_pixel_yx
                 in_ys = ys[inside_mask]
                 in_xs = xs[inside_mask]
-                valid = (in_ys >= 0) & (in_ys < shape_2d[0]) & (in_xs >= 0) & (in_xs < shape_2d[1])
+                valid = (
+                    (in_ys >= 0)
+                    & (in_ys < shape_2d[0])
+                    & (in_xs >= 0)
+                    & (in_xs < shape_2d[1])
+                )
                 self._roi_label_data[in_ys[valid], in_xs[valid]] = lbl
 
         self._roi_labels_layer.data = self._roi_label_data.copy()

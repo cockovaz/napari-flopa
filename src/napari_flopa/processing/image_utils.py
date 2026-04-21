@@ -27,7 +27,9 @@ def smooth_weighted(
     count = np.asarray(count)
     if array.ndim != 2 or count.ndim != 2:
         raise ValueError("array and count must both be 2D arrays")
-    assert array.shape == count.shape, "array and count must have the same shape"
+    assert (
+        array.shape == count.shape
+    ), "array and count must have the same shape"
     if not (isinstance(size, int) and size > 0):
         raise ValueError("size must be a positive integer")
     kernel = np.ones((size, size), dtype=np.float32)

@@ -1,7 +1,4 @@
-from pathlib import Path
-
 import numpy as np
-import xarray as xr
 
 from napari_flopa.processing.logger import ProgressLogger
 
