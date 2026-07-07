@@ -55,7 +55,8 @@ except ImportError:
         FigureCanvasQTAgg as FigureCanvas,
     )
 
-from napari_flopa.io.ptuio.utils import shift_decay
+from ptuio.utils import shift_decay
+
 from napari_flopa.state import AppState
 from napari_flopa.widgets.style import MPL, SS, apply_style
 
@@ -376,27 +377,26 @@ class DecayPanel(QWidget):
         sel_seq = v.get("sequence", 0)
         sel_chan = v.get("channel", 0)
 
+        # Parse indices from label tokens like "F2", "S1", "D0"
+        def _idx(prefix, label):
+            for tok in label.split():
+                if tok.startswith(prefix) and tok[len(prefix) :].isdigit():
+                    return int(tok[len(prefix) :])
+            return None
+
         for c in curves:
             label = c["label"]
-
-            # Parse indices from label tokens like "F2", "S1", "D0"
-            def _idx(prefix):
-                for tok in label.split():
-                    if tok.startswith(prefix) and tok[len(prefix) :].isdigit():
-                        return int(tok[len(prefix) :])
-                return None
-
             show = True
             if not agg_frames:
-                fi = _idx("F")
+                fi = _idx("F", label)
                 if fi is not None and fi != sel_frame:
                     show = False
             if show and not agg_seqs:
-                si = _idx("S")
+                si = _idx("S", label)
                 if si is not None and si != sel_seq:
                     show = False
             if show and not agg_chans:
-                di = _idx("D")
+                di = _idx("D", label)
                 if di is not None and di != sel_chan:
                     show = False
             c["visible"] = show
@@ -486,7 +486,10 @@ class DecayPanel(QWidget):
             else:
                 sizes = [da.sizes[d] for d in free_dims]
                 for combo in itertools.product(*[range(s) for s in sizes]):
-                    sel = {d: int(v) for d, v in zip(free_dims, combo)}
+                    sel = {
+                        d: int(v)
+                        for d, v in zip(free_dims, combo, strict=True)
+                    }
                     counts = da.isel(**sel).values.flatten().astype(np.float64)
                     label = " ".join(
                         f"{_short.get(d, d[0].upper())}{v}"
@@ -767,7 +770,7 @@ class DecayPanel(QWidget):
         for c in self._curves:
             c["visible"] = visible
         # Sync detector buttons
-        for ch, btn in self._det_btns.items():
+        for _ch, btn in self._det_btns.items():
             btn.blockSignals(True)
             btn.setChecked(visible)
             btn.setStyleSheet(SS.BTN_DET_ON if visible else SS.BTN_DET_OFF)

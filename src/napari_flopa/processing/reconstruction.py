@@ -1,7 +1,7 @@
 import xarray as xr
+from ptuio.decoder import T3OverflowCorrector
+from ptuio.reconstructor import ImageReconstructor, ScanConfig
 
-from napari_flopa.io.ptuio.decoder import T3OverflowCorrector
-from napari_flopa.io.ptuio.reconstructor import ImageReconstructor, ScanConfig
 from napari_flopa.processing.logger import ProgressLogger
 
 
@@ -53,11 +53,11 @@ def reconstruct_ptu_to_dataset(
 
     corrector = T3OverflowCorrector(wraparound=constants["wrap"])
 
-    chunk_num = 0
-    for chunk in reader.iter_chunks(chunk_size=1_000_000):
+    for chunk_num, chunk in enumerate(
+        reader.iter_chunks(chunk_size=1_000_000), start=1
+    ):
         corrected = corrector.correct(chunk)
         recon.update(corrected)
-        chunk_num += 1
         logger.log(f"Processed chunk {chunk_num}...")
         if recon._finished:
             break

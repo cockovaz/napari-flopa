@@ -11,6 +11,8 @@ from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
 )
 from matplotlib.figure import Figure
+from ptuio.reconstructor import ScanConfig
+from ptuio.utils import estimate_bidirectional_shift
 from qtpy.QtCore import Qt, QThreadPool, Signal, Slot
 from qtpy.QtGui import QFont
 from qtpy.QtWidgets import (
@@ -42,15 +44,6 @@ from napari_flopa.io.loader import (
     get_markers,
     read_ptu_file,
 )
-from napari_flopa.io.ptuio.reconstructor import ScanConfig
-from napari_flopa.io.ptuio.utils import estimate_bidirectional_shift
-
-# estimate_bidirectional_shift internally uses tttrkit's ImageReconstructor,
-# which isinstance-checks against tttrkit's ScanConfig — import it for that path only.
-try:
-    from ptuio.reconstructor import ScanConfig as _TtkScanConfig
-except ImportError:
-    _TtkScanConfig = ScanConfig
 from napari_flopa.processing.logger import ProgressLogger
 from napari_flopa.processing.reconstruction import reconstruct_ptu_to_dataset
 from napari_flopa.state import AppState
@@ -541,8 +534,7 @@ class PtuPanel(QWidget):
             accumulations = tuple(s.value() for s in self.accu_spinboxes) or (
                 1,
             )
-            # Use tttrkit's ScanConfig so estimate_bidirectional_shift's isinstance check passes
-            config = _TtkScanConfig(
+            config = ScanConfig(
                 lines=self.lines_spin.value(),
                 pixels=self.pixels_spin.value(),
                 bidirectional=True,

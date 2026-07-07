@@ -1,11 +1,10 @@
 import numpy as np
+from ptuio.decoder import T3OverflowCorrector
+from ptuio.marker import get_marker_distribution, marker_events
+from ptuio.reader import TTTRReader
+from ptuio.utils import estimate_tcspc_bins
 
 from napari_flopa.processing.logger import ProgressLogger
-
-from .ptuio.decoder import T3OverflowCorrector
-from .ptuio.marker import get_marker_distribution, marker_events
-from .ptuio.reader import TTTRReader
-from .ptuio.utils import estimate_tcspc_bins
 
 
 def format_ptu_header(

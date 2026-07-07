@@ -94,8 +94,15 @@ def aggregate_dataset(ds: xr.Dataset, dims) -> xr.Dataset:
             )
 
     if "tcspc_histogram" in ds:
+        # tcspc_histogram is a global decay (frame, channel, tcspc_channel) and
+        # does not carry the spatial dims (sequence/line/pixel) the other
+        # variables do — only reduce over the dims it actually has.
+        hist = ds["tcspc_histogram"]
+        hist_dims = [d for d in dims if d in hist.dims]
         out["tcspc_histogram"] = (
-            ds["tcspc_histogram"].sum(dim=dims, keepdims=True).astype("uint64")
+            hist.sum(dim=hist_dims, keepdims=True).astype("uint64")
+            if hist_dims
+            else hist
         )
 
     if not out:

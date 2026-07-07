@@ -21,6 +21,7 @@ Export:
             (populated after every plot, not only per-object)
 """
 
+import contextlib
 import traceback
 from pathlib import Path
 
@@ -598,7 +599,7 @@ class PhasorPanel(QWidget):
         # ── Smoothing ───────────────────────────────────────────────────
         if self._smooth_group.isChecked() and photon_count is not None:
             k = self._smooth_spin.value()
-            from napari_flopa.io.ptuio.utils import smooth_phasor
+            from ptuio.utils import smooth_phasor
 
             phasor_c_smooth = smooth_phasor(
                 phasor_g + 1j * phasor_s,
@@ -649,7 +650,7 @@ class PhasorPanel(QWidget):
         ) = ([], [], [], [], [], [], [])
 
         if per_object:
-            from napari_flopa.io.ptuio.utils import average_phasor
+            from ptuio.utils import average_phasor
 
             phasor_c = phasor_g + 1j * phasor_s
             pc_arr = (
@@ -1061,7 +1062,6 @@ class PhasorPanel(QWidget):
 
     def _fill_table_per_object(self, g, s, lt, photons, labels, colors):
         self._table.setRowCount(len(g))
-        fmts = ["{:.4f}", "{:.4f}", "{:.3f}", "{:.1f}"]
         for r in range(len(g)):
             rgba = colors[r] if isinstance(colors, list) else (1, 1, 1)
             self._set_table_row(
@@ -1164,18 +1164,15 @@ class PhasorPanel(QWidget):
         )
         swatch.setFlags(Qt.ItemIsEnabled)
         self._table.setItem(r, 0, swatch)
-        for c, (val, fmt) in enumerate(
-            zip(
-                [
-                    label_str,
-                    str(pixels),
-                    f"{mean_g:.4f}",
-                    f"{mean_s:.4f}",
-                    f"{mean_lt:.3f}",
-                    f"{total_int:.1f}",
-                ],
-                range(6),
-            )
+        for c, val in enumerate(
+            [
+                label_str,
+                str(pixels),
+                f"{mean_g:.4f}",
+                f"{mean_s:.4f}",
+                f"{mean_lt:.3f}",
+                f"{total_int:.1f}",
+            ]
         ):
             item = QTableWidgetItem(val)
             item.setTextAlignment(Qt.AlignCenter)
@@ -1273,10 +1270,8 @@ class PhasorPanel(QWidget):
         self._roi_mpl_cids = []
         self._roi_bg = None
         if self._roi_line is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._roi_line.remove()
-            except Exception:
-                pass
             self._roi_line = None
         self._roi_lasso_verts = []
         self._canvas.draw_idle()
@@ -1299,10 +1294,8 @@ class PhasorPanel(QWidget):
             return
         self._roi_lasso_verts = [(event.xdata, event.ydata)]
         if self._roi_line is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._roi_line.remove()
-            except Exception:
-                pass
         (self._roi_line,) = self._ax.plot(
             [event.xdata],
             [event.ydata],
@@ -1382,10 +1375,8 @@ class PhasorPanel(QWidget):
         ax = self._ax
         # Remove existing ROI scatter if present
         if hasattr(self, "_roi_scatter") and self._roi_scatter is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._roi_scatter.remove()
-            except Exception:
-                pass
         n = len(self._roi_g)
         colors = np.zeros((n, 4), dtype=np.float32)
         colors[:, :3] = 0.35  # gray for unassigned

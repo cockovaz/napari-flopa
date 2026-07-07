@@ -832,7 +832,7 @@ class _BatchWorker(QObject):
                         continue
 
                     if per_pixel:
-                        for gi, si, pci in zip(g_m, s_m, pc_m):
+                        for gi, si, pci in zip(g_m, s_m, pc_m, strict=True):
                             rows.append(
                                 dict(
                                     ptu_file=stem,
@@ -917,7 +917,9 @@ class _BatchWorker(QObject):
         else:
             sizes = [da.sizes[d] for d in free_dims]
             for combo in itertools.product(*[range(s) for s in sizes]):
-                sel = {d: int(v) for d, v in zip(free_dims, combo)}
+                sel = {
+                    d: int(v) for d, v in zip(free_dims, combo, strict=True)
+                }
                 c = da.isel(**sel).values.flatten().astype(np.float64)
                 lbl = " ".join(
                     f"{_short.get(d,'?')}{v}" for d, v in sel.items()
@@ -981,7 +983,7 @@ def _agg_combos(ds, cfg: dict) -> tuple[list[str], list[tuple[dict, str]]]:
 
     combos = []
     for vals in itertools.product(*free.values()):
-        sel = dict(zip(free.keys(), vals))
+        sel = dict(zip(free.keys(), vals, strict=True))
         suffix = "_".join(f"{_short.get(k,'?')}{v}" for k, v in sel.items())
         if sum_dims:
             suffix += "_Sum" + "".join(d[0].upper() for d in sum_dims)
@@ -1379,14 +1381,16 @@ class BatchPanel(QWidget):
 
     def _build_scan_config(self):
         """Build a ScanConfig from the UI fields."""
-        from napari_flopa.io.ptuio.reconstructor import ScanConfig
+        from ptuio.reconstructor import ScanConfig
 
         def _int(edit: QLineEdit, name: str, default: int = 1) -> int:
             txt = edit.text().strip()
             try:
                 return int(txt) if txt else default
             except ValueError:
-                raise ValueError(f"{name}: expected integer, got {txt!r}")
+                raise ValueError(
+                    f"{name}: expected integer, got {txt!r}"
+                ) from None
 
         n_seqs = _int(self._c_seqs, "N seqs", 1)
 
@@ -1439,7 +1443,7 @@ class BatchPanel(QWidget):
         except ValueError:
             raise ValueError(
                 f"Calibration factor: invalid complex number {txt!r}"
-            )
+            ) from None
 
     def _on_run(self):
         ptu_dir = self._ptu_edit.text().strip()
