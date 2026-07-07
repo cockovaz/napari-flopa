@@ -118,6 +118,9 @@ lint.select = [
 lint.ignore = [
     "E501", # line too long. let black handle this
     "UP006", "UP007", # type annotation. As using magicgui require runtime type annotation then we disable this.
+    "BLE001", # blind `except Exception` — intentional in Qt/GUI callbacks (show dialog / log instead of crashing napari)
+    "SIM102", # nested `if` — kept separate for readability in view logic
+    "C408", # `dict(...)` calls — allowed alongside literals
 ]
 
 exclude = [

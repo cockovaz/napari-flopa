@@ -4,7 +4,7 @@ Resolution order for the demo params file (first match wins):
 
 1. ``$NAPARI_FLOPA_DEMO`` — absolute path to a params ``.json``. For pointing at
    an arbitrary local file (e.g. on CI or a shared machine).
-2. ``demo_data/demo_params.local.json`` — a git-ignored local override. 
+2. ``demo_data/demo_params.local.json`` — a git-ignored local override.
 3. ``demo_data/demo_params.json`` — the small demo shipped with the package.
 
 The ``ptu_filename`` in the params file is resolved relative to that file's own

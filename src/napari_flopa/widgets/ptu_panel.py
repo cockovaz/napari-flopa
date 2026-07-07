@@ -172,7 +172,8 @@ class PtuPanel(QWidget):
         apply_style(self.log_text, SS.LOG)
         # Override font size to match header_info (8pt > 9px from SS.LOG)
         self.log_text.setStyleSheet(
-            self.log_text.styleSheet() + "\nQPlainTextEdit { font-family: Courier; font-size: 8pt; }"
+            self.log_text.styleSheet()
+            + "\nQPlainTextEdit { font-family: Courier; font-size: 8pt; }"
         )
         info_layout.addWidget(self.log_text)
         main_layout.addWidget(self.info_group)
@@ -192,6 +193,7 @@ class PtuPanel(QWidget):
         left = QGroupBox()
         left.setFlat(True)
         lf = QFormLayout(left)
+
         def _spin_row(spinbox):
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
@@ -336,7 +338,9 @@ class PtuPanel(QWidget):
             return
         block = "\n".join(self._log_buffer)
         current = self.log_text.toPlainText()
-        new_content = block if not current else f"{block}\n{'-' * 40}\n{current}"
+        new_content = (
+            block if not current else f"{block}\n{'-' * 40}\n{current}"
+        )
         self.log_text.setPlainText(new_content)
         cursor = self.log_text.textCursor()
         cursor.movePosition(cursor.MoveOperation.Start)
@@ -356,7 +360,7 @@ class PtuPanel(QWidget):
     def _select_ptu_file(self):
         filepath_str, _ = QFileDialog.getOpenFileName(
             self, "Select PTU File", "", "PicoQuant Files (*.ptu)"
-        ) # type: ignore
+        )  # type: ignore
         if not filepath_str:
             return
         self.ptu_filepath = Path(filepath_str)
@@ -581,7 +585,6 @@ class PtuPanel(QWidget):
         shifts, scores, fit = self.shift_plot_data
         ax.plot(shifts, scores, "o-", label="correlation")
         ax.plot(shifts, fit, "--", label="Gaussian fit")
-        best = shifts[scores.argmax()]
         ax.axvline(
             self.bidir_phase_spin.value(),
             color="r",

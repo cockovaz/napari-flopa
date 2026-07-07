@@ -36,7 +36,7 @@ class C:
     BG_DARK = "#1e1e1e"  # panel / plot background
     BG_MID = "#2b2b2b"  # input field / axes background
     BG_RAISED = "#333333"  # slider groove, subtle raised surface
-    BG_SUBTLE = "#0D394D" # "#1e2a38" before
+    BG_SUBTLE = "#0D394D"  # "#1e2a38" before
 
     # Borders / separators
     BORDER = "#444444"
