@@ -36,7 +36,7 @@ class C:
     BG_DARK = "#1e1e1e"  # panel / plot background
     BG_MID = "#2b2b2b"  # input field / axes background
     BG_RAISED = "#333333"  # slider groove, subtle raised surface
-    BG_SUBTLE = "#1e2a38"
+    BG_SUBTLE = "#0D394D" # "#1e2a38" before
 
     # Borders / separators
     BORDER = "#444444"
@@ -71,7 +71,7 @@ class C:
 
     # Accent — orange (warning / secondary title)
     ORANGE = "#ffaa44"  # warning label
-    TITLE_PRIMARY = "#f5ea1d"  # GROUP_A main title (yellow)
+    TITLE_PRIMARY = "#f5df1d"  # GROUP_A main title (yellow) # was "#f5ea1d"
     TITLE_PLAIN = "#e0e0e0"  # GROUP_A #plain variant (light gray)
     TITLE_SECONDARY = "#ffbc2b"  # GROUP_B title (amber)
 
@@ -178,7 +178,7 @@ class SS:
     GROUP_A = f"""
     QGroupBox {{
         margin-top: 14px;
-        border: 1px dashed {C.BORDER_DEFAULT};
+        border: 1px {C.TITLE_PRIMARY};
         border-radius: 0px;
         background-color: {C.BG_SUBTLE};
     }}
@@ -201,7 +201,7 @@ class SS:
     # Secondary / nested sections — amber title.
     GROUP_B = f"""
     QGroupBox {{
-        margin-top: 10px;
+        margin-top: 1px;
     }}
     QGroupBox::title {{
         subcontrol-origin: margin;
@@ -221,8 +221,7 @@ class SS:
         subcontrol-origin: margin;
         padding: 0px 2px;
         font-size: 12pt;
-        font-weight: bold;
-        color: {C.CYAN};
+        color: {C.CYAN_DIM};
     }}
     """
 

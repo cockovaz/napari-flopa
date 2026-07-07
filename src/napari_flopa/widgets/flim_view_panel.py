@@ -3,8 +3,9 @@ import traceback
 import numpy as np
 import xarray as xr
 from matplotlib import cm
-from qtpy.QtCore import QTimer, Signal, Slot
+from qtpy.QtCore import QTimer, Signal, Slot, Qt
 from qtpy.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -14,6 +15,7 @@ from qtpy.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -68,7 +70,6 @@ class FlimViewPanel(QWidget):
         )  # (sel_tuple, frozenset(dims_to_sum)) → (raw_int, raw_lt)
         self._smooth_cache = {}  # (type, id, shape, k) → smoothed array
         self._layers_created = False
-        self._layer_lock_bypass = False
         self.selectors = {}
 
         # Debounce timer kept as instance attr so it is not GC-collected
@@ -83,10 +84,10 @@ class FlimViewPanel(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(2, 0, 2, 0)
 
-        self.container = QGroupBox("FLIM View")
+        self.container = QGroupBox("FLIM VIEW")
         apply_style(self.container, SS.GROUP_TITLE)
         self.view_layout = QVBoxLayout(self.container)
-        self.view_layout.setContentsMargins(2, 2, 2, 2)
+        self.view_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(self.container)
         main_layout.addStretch()
 
@@ -161,13 +162,13 @@ class FlimViewPanel(QWidget):
         grid.setSpacing(2)
         # col 0: selectors (narrow), cols 1-2: histogram groups (wide), col 3: export (medium)
         grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 4)
-        grid.setColumnStretch(2, 4)
+        grid.setColumnStretch(1, 3)
+        grid.setColumnStretch(2, 3)
         grid.setColumnStretch(3, 1)
         self.view_layout.addLayout(grid)
 
         # ---- Col 0: slicing selectors ----
-        sel_group = QGroupBox()
+        sel_group = QGroupBox('Dims')
         apply_style(sel_group, SS.GROUP_A)
         sel_group.setFlat(True)
         sf = QGridLayout(sel_group)
@@ -195,8 +196,8 @@ class FlimViewPanel(QWidget):
         for row, (lbl, spin, chk) in enumerate(
             [
                 ("Frame:", frame_sel, sum_frames),
-                ("Seq:", seq_sel, sum_seqs),
-                ("Det:", chan_sel, sum_chans),
+                ("Sequence:", seq_sel, sum_seqs),
+                ("Detector:", chan_sel, sum_chans),
             ]
         ):
             sf.addWidget(QLabel(lbl), row, 0)
@@ -239,10 +240,14 @@ class FlimViewPanel(QWidget):
 
         int_row1 = QHBoxLayout()
         int_row1.setSpacing(2)
-        self.show_intensity = QCheckBox("ON")
+        self.show_intensity = QCheckBox("Show")
         self.show_intensity.setChecked(True)
+        self.show_intensity.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         int_row1.addWidget(self.show_intensity)
+        #int_row1.addSpacing(30)
+        int_row1.addStretch()
         self.smooth_int_check = QCheckBox("Smooth")
+        self.smooth_int_check.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         int_row1.addWidget(self.smooth_int_check)
         self.smooth_int_spin = QSpinBox()
         self.smooth_int_spin.setRange(2, 50)
@@ -252,14 +257,19 @@ class FlimViewPanel(QWidget):
         int_row1.addWidget(self.smooth_int_spin)
         int_ctrl.addLayout(int_row1)
 
+        int_row2 = QHBoxLayout()
+        self.int_colormap_lbl = QLabel('Colormap:')
+        int_row2.addWidget(self.int_colormap_lbl)
         self.int_colormap = QComboBox()
-        self.int_colormap.addItems(["gray", "viridis", "magma"])
-        int_ctrl.addWidget(self.int_colormap)
+        self.int_colormap.addItems(["gray", "viridis", "magma", 'hot', 'cividis'])
+        int_row2.addWidget(self.int_colormap)
+        int_ctrl.addLayout(int_row2)
 
         int_contrast = QHBoxLayout()
         int_contrast.setSpacing(2)
-
-        self.int_auto_btn = QPushButton("Auto contrast")
+        self.int_contrast_lbl = QLabel('Contrast:')
+        int_contrast.addWidget(self.int_contrast_lbl)
+        self.int_auto_btn = QPushButton("Auto")
         self.int_auto_btn.setToolTip("Set contrast to [p2, p98]")
         int_contrast.addWidget(self.int_auto_btn)
         self.int_minmax_btn = QPushButton("Min-Max")
@@ -268,7 +278,7 @@ class FlimViewPanel(QWidget):
         int_ctrl.addLayout(int_contrast)
 
         self.int_mask_btn = QPushButton("→ Generate Int. Mask")
-        self.int_mask_btn.setStyleSheet(SS.BTN_DANGER)
+        #self.int_mask_btn.setStyleSheet(SS.BTN_DANGER)
         self.int_mask_btn.setToolTip(
             "Create a new Labels layer from pixels within the red slider range."
         )
@@ -305,10 +315,12 @@ class FlimViewPanel(QWidget):
 
         lt_row1 = QHBoxLayout()
         lt_row1.setSpacing(2)
-        self.show_lifetime = QCheckBox("ON")
+        self.show_lifetime = QCheckBox("Show")
         self.show_lifetime.setChecked(True)
+        self.show_lifetime.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         lt_row1.addWidget(self.show_lifetime)
         self.smooth_lt_check = QCheckBox("Smooth")
+        self.smooth_lt_check.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         lt_row1.addWidget(self.smooth_lt_check)
         self.smooth_lt_spin = QSpinBox()
         self.smooth_lt_spin.setRange(2, 50)
@@ -318,13 +330,20 @@ class FlimViewPanel(QWidget):
         lt_row1.addWidget(self.smooth_lt_spin)
         lt_ctrl.addLayout(lt_row1)
 
+        lt_row2 = QHBoxLayout()
+        lt_row2.setSpacing(2)
+        self.lt_colormap_lbl = QLabel('Colormap:')
+        lt_row2.addWidget(self.lt_colormap_lbl)
         self.lt_colormap = QComboBox()
-        self.lt_colormap.addItems(["rainbow", "hsv", "viridis"])
-        lt_ctrl.addWidget(self.lt_colormap)
+        self.lt_colormap.addItems(["rainbow", "hsv", "viridis", 'magma', 'cividis'])
+        lt_row2.addWidget(self.lt_colormap)
+        lt_ctrl.addLayout(lt_row2)
 
         lt_contrast = QHBoxLayout()
         lt_contrast.setSpacing(2)
-        self.lt_auto_btn = QPushButton("Auto contrast")
+        self.lt_text = QLabel('Contrast:')
+        lt_contrast.addWidget(self.lt_text)
+        self.lt_auto_btn = QPushButton("Auto")
         self.lt_auto_btn.setToolTip("Set contrast to [p2, p98]")
         lt_contrast.addWidget(self.lt_auto_btn)
         self.lt_minmax_btn = QPushButton("Min-Max")
@@ -333,7 +352,7 @@ class FlimViewPanel(QWidget):
         lt_ctrl.addLayout(lt_contrast)
 
         self.lt_mask_btn = QPushButton("→ Generate Lt. Mask")
-        self.lt_mask_btn.setStyleSheet(SS.BTN_DANGER)
+        #self.lt_mask_btn.setStyleSheet(SS.BTN_DANGER)
         self.lt_mask_btn.setToolTip(
             "Create a new Labels layer from pixels within the red slider range."
         )
@@ -348,24 +367,56 @@ class FlimViewPanel(QWidget):
         exp_group = QGroupBox("Export")
         apply_style(exp_group, SS.GROUP_A)
         el = QVBoxLayout(exp_group)
-        el.setSpacing(2)
-        el.setContentsMargins(4, 2, 4, 2)
-        self.export_int_btn = QPushButton("Intensity")
-        self.export_lt_btn = QPushButton("Lifetime")
-        self.export_flim_btn = QPushButton("FLIM RGB")
-        for btn in (
-            self.export_int_btn,
-            self.export_lt_btn,
-            self.export_flim_btn,
-        ):
-            btn.setEnabled(False)
-            el.addWidget(btn)
-        # el.addStretch()
-        grid.addWidget(exp_group, 0, 3)
+        el.setSpacing(4)
+        el.setContentsMargins(4, 4, 4, 4)
 
-        self.export_int_btn.clicked.connect(self._export_intensity)
-        self.export_lt_btn.clicked.connect(self._export_lifetime)
-        self.export_flim_btn.clicked.connect(self._export_flim)
+        has_flim = has_intensity and has_lifetime
+
+        # Row 1: one checkbox per export type
+        chk_row = QHBoxLayout()
+        chk_row.setSpacing(4)
+        self.exp_int_chk = QCheckBox("Intensity")
+        self.exp_int_chk.setEnabled(has_intensity)
+        self.exp_int_chk.setChecked(has_intensity)
+        self.exp_lt_chk = QCheckBox("Lifetime")
+        self.exp_lt_chk.setEnabled(has_lifetime)
+        self.exp_lt_chk.setChecked(has_lifetime)
+        self.exp_flim_chk = QCheckBox("FLIM RGB")
+        self.exp_flim_chk.setEnabled(has_flim)
+        self.exp_flim_chk.setChecked(has_flim)
+        for chk in (self.exp_int_chk, self.exp_lt_chk, self.exp_flim_chk):
+            chk_row.addWidget(chk)
+        el.addLayout(chk_row)
+
+        # Row 2: shared Single / Stack radio buttons
+        rb_row = QHBoxLayout()
+        rb_row.setSpacing(6)
+        self._exp_single_rb = QRadioButton("Single")
+        self._exp_single_rb.setChecked(True)
+        self._exp_stack_rb  = QRadioButton("Stack")
+        self._exp_mode_grp  = QButtonGroup(exp_group)
+        self._exp_mode_grp.addButton(self._exp_single_rb, 0)
+        self._exp_mode_grp.addButton(self._exp_stack_rb,  1)
+        rb_row.addWidget(self._exp_single_rb)
+        rb_row.addWidget(self._exp_stack_rb)
+        rb_row.addStretch()
+        el.addLayout(rb_row)
+
+        # Shape info — shown below Stack radio (relevant for stack context)
+        _shape_dims = ["frame", "sequence", "channel", "line", "pixel"]
+        _shape_parts = [f"{d[0].upper()}: {ds.sizes[d]}" for d in _shape_dims if d in ds.sizes]
+        shape_lbl = QLabel('Stack: '+"  ".join(_shape_parts))
+        shape_lbl.setStyleSheet(SS.STATUS)
+        shape_lbl.setWordWrap(True)
+        el.addWidget(shape_lbl)
+
+        # Row 3: Save button
+        self.export_save_btn = QPushButton("Save")
+        self.export_save_btn.setEnabled(False)
+        self.export_save_btn.clicked.connect(self._on_export_save)
+        el.addWidget(self.export_save_btn)
+
+        grid.addWidget(exp_group, 0, 3)
 
         self.int_auto_btn.clicked.connect(
             self.intensity_slider.set_auto_contrast
@@ -405,11 +456,8 @@ class FlimViewPanel(QWidget):
         # ------------------------------------------------------------------ #
 
         def _set_visible(name: str, value: bool):
-            """Set layer visibility from panel code, bypassing the user lock."""
             if name in self.viewer.layers:
-                self._layer_lock_bypass = True
                 self.viewer.layers[name].visible = value
-                self._layer_lock_bypass = False
 
         def _make_lut(cmap_name: str) -> np.ndarray:
             cmap = cm.get_cmap(cmap_name)
@@ -520,17 +568,14 @@ class FlimViewPanel(QWidget):
                             name="FLIM",
                             rgb=True,
                         )
-                        self._lock_layer(self.viewer.layers["FLIM"])
                     if ci is not None:
                         self.viewer.add_image(
                             ci, name="Intensity", colormap="gray"
                         )
-                        self._lock_layer(self.viewer.layers["Intensity"])
                     if cl is not None:
                         self.viewer.add_image(
                             cl, name="Lifetime", colormap="rainbow"
                         )
-                        self._lock_layer(self.viewer.layers["Lifetime"])
                     self._layers_created = True
 
                 _set_visible("FLIM", flim_mode)
@@ -567,12 +612,8 @@ class FlimViewPanel(QWidget):
                                 self.lt_colormap.currentText()
                             )
 
-                # enable export buttons whenever we have data
-                self.export_int_btn.setEnabled(ci is not None)
-                self.export_lt_btn.setEnabled(cl is not None)
-                self.export_flim_btn.setEnabled(
-                    ci is not None and cl is not None and self._lut is not None
-                )
+                # enable Save button whenever any cached data is available
+                self.export_save_btn.setEnabled(ci is not None or cl is not None)
             except Exception:
                 traceback.print_exc()
 
@@ -791,120 +832,68 @@ class FlimViewPanel(QWidget):
     # Export                                                               #
     # ------------------------------------------------------------------ #
 
-    def _lock_layer(self, layer) -> None:
-        """Prevent user from modifying a managed FLIM layer from the napari UI.
 
-        Sets editable=False and connects to the visible/opacity events so any
-        change made via the layer list is immediately reverted.  Changes made
-        by panel code are exempt: they set _layer_lock_bypass=True first via
-        the _set_visible helper.
-        """
-        layer.editable = False
+    def _on_export_save(self):
+        """Unified Save handler — asks for base name/directory once, saves all checked types."""
+        from pathlib import Path
 
-        def _guard_visible():
-            if not self._layer_lock_bypass:
-                self._layer_lock_bypass = True
-                layer.visible = not layer.visible  # revert
-                self._layer_lock_bypass = False
-
-        def _guard_opacity():
-            if not self._layer_lock_bypass:
-                self._layer_lock_bypass = True
-                layer.opacity = 1.0  # revert
-                self._layer_lock_bypass = False
-
-        layer.events.visible.connect(_guard_visible)
-        layer.events.opacity.connect(_guard_opacity)
-
-    def _export_intensity(self):
-        """Save cached intensity array as a uint16 TIFF (normalised to 0–65535)."""
-        if self._cached_intensity is None:
+        do_int  = self.exp_int_chk.isChecked()  and self.exp_int_chk.isEnabled()
+        do_lt   = self.exp_lt_chk.isChecked()   and self.exp_lt_chk.isEnabled()
+        do_flim = self.exp_flim_chk.isChecked() and self.exp_flim_chk.isEnabled()
+        if not (do_int or do_lt or do_flim):
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Intensity", "intensity.tif", "TIFF (*.tif *.tiff)"
+
+        is_stack = self._exp_mode_grp.checkedId() == 1
+        if is_stack:
+            QMessageBox.information(self, "Not yet implemented",
+                                    "Stack export is not yet implemented.")
+            return
+
+        stem = Path(self.dataset.attrs.get("source_filename", "export")).stem
+        path_str, _ = QFileDialog.getSaveFileName(
+            self, "Save — choose base name and location", stem, "All Files (*)"
         )
-        if not path:
+        if not path_str:
             return
-        try:
-            from skimage.io import imsave
 
-            arr = self._cached_intensity
-            # normalise to uint16 for TIFF
-            mn, mx = float(arr.min()), float(arr.max())
-            if mx > mn:
-                scaled = ((arr - mn) / (mx - mn) * 65535).astype(np.uint16)
-            else:
-                scaled = np.zeros_like(arr, dtype=np.uint16)
-            imsave(path, scaled, check_contrast=False)
+        base = Path(path_str).with_suffix("")  # strip any extension the user typed
+        try:
+            if do_int:
+                self._save_intensity(base.parent / (base.name + "_int.tif"))
+            if do_lt:
+                self._save_lifetime(base.parent / (base.name + "_lt.tif"))
+            if do_flim:
+                self._save_flim(base.parent / (base.name + "_flim.png"))
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
-    def _export_lifetime(self):
-        """Save cached lifetime array as a float32 TIFF (values in ns)."""
-        if self._cached_lifetime is None:
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Lifetime", "lifetime.tif", "TIFF (*.tif *.tiff)"
-        )
-        if not path:
-            return
-        try:
-            from skimage.io import imsave
+    def _save_intensity(self, path):
+        """Write cached intensity as uint16 TIFF (normalised to 0–65535)."""
+        from skimage.io import imsave
+        arr = self._cached_intensity
+        mn, mx = float(arr.min()), float(arr.max())
+        if mx > mn:
+            scaled = ((arr - mn) / (mx - mn) * 65535).astype(np.uint16)
+        else:
+            scaled = np.zeros_like(arr, dtype=np.uint16)
+        imsave(str(path), scaled, check_contrast=False)
 
-            imsave(
-                path,
-                self._cached_lifetime.astype(np.float32),
-                check_contrast=False,
-            )
-        except Exception as e:
-            QMessageBox.critical(self, "Export Error", str(e))
+    def _save_lifetime(self, path):
+        """Write cached lifetime as float32 TIFF (values in ns)."""
+        from skimage.io import imsave
+        imsave(str(path), self._cached_lifetime.astype(np.float32), check_contrast=False)
 
-    def _export_flim(self):
-        """
-        Save the FLIM RGB composite as PNG or TIFF (uint8).
-
-        Lifetime is mapped through the current LUT using the lifetime slider's
-        contrast range; intensity modulates brightness via the intensity slider's
-        contrast range.
-        """
-        if (
-            self._cached_intensity is None
-            or self._cached_lifetime is None
-            or self._lut is None
-        ):
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export FLIM RGB",
-            "flim.png",
-            "PNG (*.png);;TIFF (*.tif *.tiff)",
-        )
-        if not path:
-            return
-        try:
-            from skimage.io import imsave
-
-            lt_lo, lt_hi = self.lifetime_slider.value()
-            lt_range = lt_hi - lt_lo if lt_hi > lt_lo else 1.0
-            lt_idx = np.clip(
-                (self._cached_lifetime.astype(np.float32) - lt_lo)
-                / lt_range
-                * 255,
-                0,
-                255,
-            ).astype(np.uint8)
-            int_lo, int_hi = self.intensity_slider.value()
-            int_range = int_hi - int_lo if int_hi > int_lo else 1.0
-            int_norm = np.clip(
-                (self._cached_intensity.astype(np.float32) - int_lo)
-                / int_range,
-                0,
-                1,
-            )
-            rgb_f32 = (
-                self._lut[lt_idx].astype(np.float32) / 255.0
-            ) * int_norm[..., np.newaxis]
-            rgb_u8 = (rgb_f32 * 255).clip(0, 255).astype(np.uint8)
-            imsave(path, rgb_u8, check_contrast=False)
-        except Exception as e:
-            QMessageBox.critical(self, "Export Error", str(e))
+    def _save_flim(self, path):
+        """Write FLIM RGB composite as uint8 PNG/TIFF using current LUT and contrast."""
+        from skimage.io import imsave
+        ci, cl = self._cached_intensity, self._cached_lifetime
+        lt_lo, lt_hi = self.lifetime_slider.value()
+        lt_range = lt_hi - lt_lo if lt_hi > lt_lo else 1.0
+        lt_idx = np.clip(
+            (cl.astype(np.float32) - lt_lo) / lt_range * 255, 0, 255
+        ).astype(np.uint8)
+        int_lo, int_hi = self.intensity_slider.value()
+        int_range = int_hi - int_lo if int_hi > int_lo else 1.0
+        int_norm = np.clip((ci.astype(np.float32) - int_lo) / int_range, 0, 1)
+        rgb_f32 = (self._lut[lt_idx].astype(np.float32) / 255.0) * int_norm[..., np.newaxis]
+        imsave(str(path), (rgb_f32 * 255).clip(0, 255).astype(np.uint8), check_contrast=False)

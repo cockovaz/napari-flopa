@@ -7,7 +7,7 @@ full_name: Zuzana Cockova
 github_repository_url: provide later
 github_username_or_organization: cockovaz
 include_reader_plugin: false
-include_sample_data_plugin: true
+include_sample_data_plugin: false
 include_widget_plugin: true
 include_writer_plugin: false
 install_dependabot: false

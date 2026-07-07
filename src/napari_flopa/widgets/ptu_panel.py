@@ -1,4 +1,3 @@
-import json
 import traceback
 from pathlib import Path
 
@@ -35,6 +34,7 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from napari_flopa.demo import load_demo
 from napari_flopa.io.loader import (
     _format_marker_suggestions,
     analyze_marker_distribution,
@@ -75,6 +75,7 @@ class PtuPanel(QWidget):
         self.ptu_data = None
         self.ptu_filepath = None
         self.shift_plot_data = None
+        self._log_buffer: list[str] = []
 
         self._build_ui()
 
@@ -111,8 +112,8 @@ class PtuPanel(QWidget):
         header_layout = QVBoxLayout(self.header_group)
         self.header_info = QTextEdit()
         self.header_info.setReadOnly(True)
-        self.header_info.setFont(QFont("Courier", 8))
-        self.header_info.setFixedHeight(130)
+        self.header_info.setFont(QFont("Courier", 6))
+        self.header_info.setFixedHeight(100)
         header_layout.addWidget(self.header_info)
 
         marker_row = QHBoxLayout()
@@ -124,17 +125,9 @@ class PtuPanel(QWidget):
         self.full_header_btn = QPushButton("Full Header...")
         self.full_header_btn.setToolTip("Show complete raw header tags")
         self.full_header_btn.clicked.connect(self._show_full_header)
-        self.markers_output = QPlainTextEdit()
-        self.markers_output.setReadOnly(True)
-        self.markers_output.setFont(QFont("Courier", 8))
         marker_row.addWidget(self.markers_btn)
         marker_row.addWidget(self.full_header_btn)
         header_layout.addLayout(marker_row)
-
-        self.markers_output.setFixedHeight(60)
-        self.markers_output.setVisible(False)
-        apply_style(self.markers_output, SS.LOG)
-        header_layout.addWidget(self.markers_output)
         main_layout.addWidget(self.header_group)
         self.header_group.setVisible(False)
 
@@ -155,28 +148,34 @@ class PtuPanel(QWidget):
             [
                 "Intensity only",
                 "Intensity + Mean Lifetime",
-                "All (+ Phasor & TCSPC)",
+                "All (+ Phasor & Decay)",
             ]
         )
         self.out_combo.setCurrentIndex(2)
         output_row.addWidget(self.out_combo)
         output_row.addStretch()
-        recon_layout.addLayout(output_row)
-
         self.reconstruct_btn = QPushButton("Reconstruct Image")
         self.reconstruct_btn.clicked.connect(self._run_reconstruction)
-        recon_layout.addWidget(self.reconstruct_btn)
-
-        self.log_text = QPlainTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setFont(QFont("Courier", 8))
-        self.log_text.setFixedHeight(100)
-        self.log_text.setVisible(False)
-        apply_style(self.log_text, SS.LOG)
-        recon_layout.addWidget(self.log_text)
+        output_row.addWidget(self.reconstruct_btn)
+        recon_layout.addLayout(output_row)
 
         main_layout.addWidget(self.recon_group)
         self.recon_group.setVisible(False)
+
+        # --- Info / log ---
+        self.info_group = QGroupBox("Log")
+        apply_style(self.info_group, SS.GROUP_A)
+        info_layout = QVBoxLayout(self.info_group)
+        self.log_text = QPlainTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setFixedHeight(120)
+        apply_style(self.log_text, SS.LOG)
+        # Override font size to match header_info (8pt > 9px from SS.LOG)
+        self.log_text.setStyleSheet(
+            self.log_text.styleSheet() + "\nQPlainTextEdit { font-family: Courier; font-size: 8pt; }"
+        )
+        info_layout.addWidget(self.log_text)
+        main_layout.addWidget(self.info_group)
 
         main_layout.addStretch()
 
@@ -193,30 +192,42 @@ class PtuPanel(QWidget):
         left = QGroupBox()
         left.setFlat(True)
         lf = QFormLayout(left)
+        def _spin_row(spinbox):
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(spinbox)
+            row.addStretch()
+            return row
+
         self.lines_spin = QSpinBox()
         self.lines_spin.setRange(1, 10000)
         self.lines_spin.setValue(512)
-        lf.addRow("Lines:", self.lines_spin)
+        self.lines_spin.setMinimumWidth(40)
+        lf.addRow("Lines:", _spin_row(self.lines_spin))
 
         self.pixels_spin = QSpinBox()
         self.pixels_spin.setRange(1, 10000)
         self.pixels_spin.setValue(512)
-        lf.addRow("Pixels:", self.pixels_spin)
+        self.pixels_spin.setMinimumWidth(40)
+        lf.addRow("Pixels:", _spin_row(self.pixels_spin))
 
         self.frames_spin = QSpinBox()
         self.frames_spin.setRange(1, 1000)
         self.frames_spin.setValue(1)
-        lf.addRow("Frames:", self.frames_spin)
+        self.frames_spin.setMinimumWidth(40)
+        lf.addRow("Frames:", _spin_row(self.frames_spin))
 
         self.tcspc_bins_spin = QSpinBox()
         self.tcspc_bins_spin.setRange(1, 65536)
         self.tcspc_bins_spin.setValue(4096)
-        lf.addRow("TCSPC Bins:", self.tcspc_bins_spin)
+        self.tcspc_bins_spin.setMinimumWidth(40)
+        lf.addRow("TCSPC Bins:", _spin_row(self.tcspc_bins_spin))
 
         self.max_detector_spin = QSpinBox()
         self.max_detector_spin.setRange(1, 128)
         self.max_detector_spin.setValue(2)
-        lf.addRow("Max Det.:", self.max_detector_spin)
+        self.max_detector_spin.setMinimumWidth(40)
+        lf.addRow("Max Det.:", _spin_row(self.max_detector_spin))
 
         grid.addWidget(left, 0, 0)
 
@@ -230,25 +241,26 @@ class PtuPanel(QWidget):
         self.frep_spin.setRange(0.001, 500.0)
         self.frep_spin.setValue(40.0)
         self.frep_spin.setDecimals(3)
-        self.frep_spin.setSuffix(" MHz")
+        self.frep_spin.setMinimumWidth(40)
         self.frep_spin.setToolTip(
             "Laser/excitation repetition rate — auto-filled from file header.\n"
             "Used for phasor calibration and lifetime calculation."
         )
         self.frep_spin.valueChanged.connect(lambda v: self.state.set_frep(v))
-        rf.addRow("Rep. rate (MHz):", self.frep_spin)
+        rf.addRow("Rep. rate (MHz):", _spin_row(self.frep_spin))
 
         self.sequences_spin = QSpinBox()
         self.sequences_spin.setRange(1, 16)
         self.sequences_spin.setValue(1)
+        self.sequences_spin.setMinimumWidth(40)
         self.sequences_spin.valueChanged.connect(
             self._update_accumulation_widgets
         )
-        rf.addRow("N Sequences:", self.sequences_spin)
+        rf.addRow("N Sequences:", _spin_row(self.sequences_spin))
 
         self.accu_scroll = QScrollArea()
         self.accu_scroll.setWidgetResizable(True)
-        self.accu_scroll.setFixedHeight(80)
+        self.accu_scroll.setMinimumHeight(60)
         self.accu_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.accu_container = QWidget()
         self.accu_container_layout = QVBoxLayout(self.accu_container)
@@ -277,6 +289,7 @@ class PtuPanel(QWidget):
         self.bidir_phase_spin.setSingleStep(0.0001)
         self.bidir_phase_spin.setDecimals(5)
         self.bidir_phase_spin.setValue(0.0)
+        self.bidir_phase_spin.setMinimumWidth(80)
         bidir_layout.addWidget(self.bidir_phase_spin)
 
         bidir_layout.addSpacing(10)
@@ -291,20 +304,50 @@ class PtuPanel(QWidget):
         bidir_layout.addWidget(self.plot_shift_btn)
         bidir_layout.addStretch()
 
-        self.save_config_btn = QPushButton("Save\nConfig")
+        self.save_config_btn = QPushButton("Save Config")
         self.save_config_btn.setToolTip("Save scan parameters to a TOML file")
-        self.save_config_btn.setMinimumHeight(48)
         self.save_config_btn.setStyleSheet("text-align: center;")
         self.save_config_btn.clicked.connect(self._on_save_config_toml)
 
         bidir_row = QHBoxLayout()
         bidir_row.setContentsMargins(0, 0, 0, 0)
         bidir_row.addWidget(self.bidir_group)
-        bidir_row.addWidget(self.save_config_btn, alignment=Qt.AlignVCenter)
+        bidir_row.addWidget(self.save_config_btn)
         main_layout.addLayout(bidir_row)
 
         self._update_accumulation_widgets()
         return group
+
+    # ------------------------------------------------------------------ #
+    # Helpers                                                              #
+    # ------------------------------------------------------------------ #
+
+    def _log_start(self):
+        """Begin accumulating a new log block."""
+        self._log_buffer = []
+
+    def _log_line(self, text: str):
+        """Add a line to the current log block buffer."""
+        self._log_buffer.append(text)
+
+    def _log_commit(self):
+        """Prepend the buffered block as one unit to the Info box."""
+        if not self._log_buffer:
+            return
+        block = "\n".join(self._log_buffer)
+        current = self.log_text.toPlainText()
+        new_content = block if not current else f"{block}\n{'-' * 40}\n{current}"
+        self.log_text.setPlainText(new_content)
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Start)
+        self.log_text.setTextCursor(cursor)
+        self._log_buffer = []
+
+    # keep a single-call shortcut for one-liner messages
+    def _log(self, text: str):
+        self._log_start()
+        self._log_line(text)
+        self._log_commit()
 
     # ------------------------------------------------------------------ #
     # Slots                                                                #
@@ -313,7 +356,7 @@ class PtuPanel(QWidget):
     def _select_ptu_file(self):
         filepath_str, _ = QFileDialog.getOpenFileName(
             self, "Select PTU File", "", "PicoQuant Files (*.ptu)"
-        )
+        ) # type: ignore
         if not filepath_str:
             return
         self.ptu_filepath = Path(filepath_str)
@@ -347,7 +390,7 @@ class PtuPanel(QWidget):
             self.header_group.setVisible(True)
             self.config_group.setVisible(True)
             self.recon_group.setVisible(True)
-            self.markers_output.setPlainText("")
+            self.log_text.clear()
             self.shift_plot_data = None
             self.plot_shift_btn.setEnabled(False)
 
@@ -357,34 +400,10 @@ class PtuPanel(QWidget):
             )
 
     def _on_load_demo(self):
-        pkg_data = Path(__file__).parent.parent / "data"
-        params_path = pkg_data / "demo_params.json"
-        if not params_path.exists():
-            QMessageBox.critical(
-                self,
-                "Demo Error",
-                f"demo_params.json not found:\n{params_path}",
-            )
-            return
-        with open(params_path) as f:
-            params = json.load(f)
-
-        # Locate PTU — first try alongside the params file, then the repo data/ dir
-        ptu_name = params["ptu_filename"]
-        candidates = [
-            pkg_data / ptu_name,
-            Path(__file__).parent.parent.parent.parent.parent
-            / "data"
-            / ptu_name,
-        ]
-        ptu_path = next((p for p in candidates if p.exists()), None)
-        if ptu_path is None:
-            QMessageBox.critical(
-                self,
-                "Demo Error",
-                f"Demo PTU file not found:\n{ptu_name}\n\n"
-                "Place it in the repo data/ folder or alongside demo_params.json.",
-            )
+        try:
+            params, ptu_path = load_demo()
+        except Exception as e:
+            QMessageBox.critical(self, "Demo Error", str(e))
             return
 
         try:
@@ -420,7 +439,7 @@ class PtuPanel(QWidget):
             self.header_group.setVisible(True)
             self.config_group.setVisible(True)
             self.recon_group.setVisible(True)
-            self.markers_output.setPlainText("")
+            self.log_text.clear()
             self.shift_plot_data = None
             self.plot_shift_btn.setEnabled(False)
         except Exception as e:
@@ -449,20 +468,22 @@ class PtuPanel(QWidget):
         dlg.exec_()
 
     def _show_markers(self):
-        self.markers_output.setVisible(True)
         if not self.ptu_data:
-            self.markers_output.setPlainText("No file loaded.")
+            self._log("Analyze Markers: no file loaded.")
             return
-        self.markers_output.setPlainText("Analyzing...")
+        self._log_start()
+        self._log_line("Analyzing markers...")
         QApplication.processEvents()
         try:
             dist = get_markers(self.ptu_data["reader"], chunk_limit=20)
             if "error" in dist:
-                self.markers_output.setPlainText(dist["error"])
+                self._log_line(dist["error"])
+                self._log_commit()
                 return
             analysis = analyze_marker_distribution(dist)
             text = _format_marker_suggestions(analysis)
-            self.markers_output.setPlainText(text)
+            self._log_line(text)
+            self._log_commit()
 
             # Auto-apply if only one suggestion
             suggestions = analysis.get("suggestions", [])
@@ -474,7 +495,8 @@ class PtuPanel(QWidget):
                 if self.accu_spinboxes:
                     self.accu_spinboxes[0].setValue(accum)
         except Exception as e:
-            self.markers_output.setPlainText(f"Error: {e}")
+            self._log_line(f"Markers error: {e}")
+            self._log_commit()
 
     def _update_accumulation_widgets(self):
         while self.accu_container_layout.count():
@@ -507,8 +529,8 @@ class PtuPanel(QWidget):
         self.shift_plot_data = None
         self.plot_shift_btn.setEnabled(False)
         self.estimate_btn.setText("Estimating...")
-        self.log_text.setVisible(True)
-        self.log_text.appendPlainText("Estimating bidirectional shift...")
+        self._log_start()
+        self._log_line("Estimating bidirectional shift...")
         QApplication.processEvents()
 
         try:
@@ -535,18 +557,15 @@ class PtuPanel(QWidget):
             )
             if best_shift is not None:
                 self.bidir_phase_spin.setValue(best_shift)
-                self.log_text.appendPlainText(f"Best shift: {best_shift:.5f}")
+                self._log_line(f"Best shift: {best_shift:.5f}")
                 self.shift_plot_data = plot_data
                 self.plot_shift_btn.setEnabled(True)
             else:
-                self.log_text.appendPlainText(
-                    "Estimation failed — check parameters."
-                )
+                self._log_line("Estimation failed — check parameters.")
         except Exception as e:
-            self.log_text.appendPlainText(
-                f"Error: {e}\n{traceback.format_exc()}"
-            )
+            self._log_line(f"Error: {e}\n{traceback.format_exc()}")
         finally:
+            self._log_commit()
             self.estimate_btn.setText("Estimate")
 
     def _on_plot_shift(self):
@@ -643,10 +662,10 @@ class PtuPanel(QWidget):
                 self, "No Data", "Please load a PTU file first."
             )
             return
-        self.log_text.setVisible(True)
         self.log_text.clear()
         self.reconstruct_btn.setEnabled(False)
-        self.log_text.appendPlainText("Starting reconstruction...")
+        self._log("Starting reconstruction...")
+        QApplication.processEvents()
 
         scan_config = self._build_scan_config()
         outputs = self._get_outputs()
@@ -683,12 +702,12 @@ class PtuPanel(QWidget):
         if self.ptu_filepath:
             ds.attrs["source_filename"] = self.ptu_filepath.name
 
-        self.log_text.appendPlainText(f"Done. Dataset: {dict(ds.sizes)}")
+        self._log(f"Done. Dataset: {dict(ds.sizes)}")
         self.state.set_dataset(ds, constants)
         self.reconstruction_finished.emit(ds)
 
     @Slot(tuple)
     def _on_reconstruction_error(self, error_tuple):
         exctype, value, tb = error_tuple
-        self.log_text.appendPlainText(f"ERROR: {value}\n{tb}")
+        self._log(f"ERROR: {value}\n{tb}")
         QMessageBox.critical(self, "Reconstruction Error", str(value))

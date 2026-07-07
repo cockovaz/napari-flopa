@@ -5,8 +5,7 @@ description = "Flim (fluorescence lifetime) image data opening, processing and a
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
-  {name = "Zuzana Cockova"},
-  {email = "cockovaz@natur.cuni.cz"},
+  {name = "Zuzana Cockova", email = "cockovaz@natur.cuni.cz"},
 ]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
@@ -30,20 +29,30 @@ requires-python = ">=3.10"
 # See best practices: https://napari.org/stable/plugins/building_a_plugin/best_practices.html
 dependencies = [
     "numpy",
-    "magicgui",
+    "magicgui",  # drop if unused
     "qtpy",
     "scikit-image",
     "xarray",
     "scipy",
-    "h5netcdf",
     "matplotlib",
     "superqt",
+    "tomli-w",  # write TOML configs (batch + ptu panels)
+    "tomli; python_version < '3.11'",  # read TOML on 3.10 (tomllib is 3.11+)
+    # tttrkit: pinned git dependency for the upcoming refactor.
+    # NOTE: direct-URL deps block uploading to PyPI — pin a released version
+    # (or vendor it) before publishing a wheel.
+    "tttrkit @ git+https://github.com/panekdal/tttrkit.git@fc803d4",
 ]
 
 [project.optional-dependencies]
 # Allow easily installation with the full, default napari installation
 # (including Qt backend) using napari-flopa[all].
 all = ["napari[all]"]
+
+[project.urls]
+"Homepage" = "https://github.com/cockovaz/napari-flopa"
+"Bug Tracker" = "https://github.com/cockovaz/napari-flopa/issues"
+"Source Code" = "https://github.com/cockovaz/napari-flopa"
 
 [dependency-groups]
 dev = [
@@ -71,6 +80,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml"]
+# Ship the small bundled demo. A local override (demo_params.local.json) is
+# git-ignored and excluded so it is never packaged.
+"napari_flopa" = ["demo_data/demo_params.json", "demo_data/*.ptu"]
 
 [tool.setuptools_scm]
 write_to = "src/napari_flopa/_version.py"
