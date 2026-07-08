@@ -67,8 +67,8 @@ except ImportError:
         FigureCanvasQTAgg as FigureCanvas,
     )
 
-from napari_flopa.state import AppState
-from napari_flopa.widgets.style import MPL, SS, apply_style
+from napari_flopa.ui.state import FlopaState
+from napari_flopa.ui.style import MPL, SS, apply_style
 
 _MAX_PX = 80_000  # scatter subsample cap
 
@@ -81,7 +81,7 @@ class PhasorPanel(QWidget):
     PM_INTENSITY = 1  # alpha-weighted by photon count
     PM_DENSITY = 2  # 2D histogram imshow
 
-    def __init__(self, state: AppState, viewer, parent=None):
+    def __init__(self, state: FlopaState, viewer, parent=None):
         super().__init__(parent)
         self.state = state
         self.viewer = viewer
@@ -575,7 +575,9 @@ class PhasorPanel(QWidget):
         sel, dims_to_sum = _parse_settings(ds, self._current_view)
         sliced = ds.isel(**sel) if sel else ds
         if dims_to_sum:
-            from napari_flopa.processing.image_utils import aggregate_dataset
+            from napari_flopa.core.processing.image_utils import (
+                aggregate_dataset,
+            )
 
             sliced = aggregate_dataset(sliced, dims_to_sum)
 

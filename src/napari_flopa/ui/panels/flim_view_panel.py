@@ -21,14 +21,14 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from napari_flopa.processing.image_utils import (
+from napari_flopa.core.processing.image_utils import (
     aggregate_dataset,
     smooth_count,
     smooth_weighted,
 )
-from napari_flopa.state import AppState
-from napari_flopa.widgets.histogram_slider import HistogramSlider
-from napari_flopa.widgets.style import SS, apply_style
+from napari_flopa.ui.state import FlopaState
+from napari_flopa.ui.style import SS, apply_style
+from napari_flopa.ui.widgets.histogram_slider import HistogramSlider
 
 _CANVAS_H = 55  # histogram canvas height in compact layout
 _HIST_MAX_W = 300  # histogram slider max width
@@ -57,7 +57,7 @@ class FlimViewPanel(QWidget):
 
     view_changed = Signal(dict)
 
-    def __init__(self, state: AppState, viewer, parent=None):
+    def __init__(self, state: FlopaState, viewer, parent=None):
         super().__init__(parent)
         self.state = state
         self.viewer = viewer

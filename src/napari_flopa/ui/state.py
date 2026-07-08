@@ -3,7 +3,7 @@ import xarray as xr
 from qtpy.QtCore import QObject, Signal
 
 
-class AppState(QObject):
+class FlopaState(QObject):
     """
     Central shared state passed to all widgets.
 

@@ -2,12 +2,12 @@ import napari
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import QScrollArea, QTabWidget, QVBoxLayout, QWidget
 
-from napari_flopa.state import AppState
-from napari_flopa.widgets.batch_panel import BatchPanel
-from napari_flopa.widgets.decay_panel import DecayPanel
-from napari_flopa.widgets.flim_view_panel import FlimViewPanel
-from napari_flopa.widgets.phasor_panel import PhasorPanel
-from napari_flopa.widgets.ptu_panel import PtuPanel
+from napari_flopa.ui.panels.batch_panel import BatchPanel
+from napari_flopa.ui.panels.decay_panel import DecayPanel
+from napari_flopa.ui.panels.flim_view_panel import FlimViewPanel
+from napari_flopa.ui.panels.phasor_panel import PhasorPanel
+from napari_flopa.ui.panels.ptu_panel import PtuPanel
+from napari_flopa.ui.state import FlopaState
 
 
 def _scrollable(widget: QWidget) -> QScrollArea:
@@ -35,7 +35,7 @@ class FlimWidget(QWidget):
     def __init__(self, viewer: napari.Viewer, parent=None):
         super().__init__(parent)
         self.viewer = viewer
-        self.state = AppState()
+        self.state = FlopaState()
         self._view_dock = None
         self._view_panel = None
 

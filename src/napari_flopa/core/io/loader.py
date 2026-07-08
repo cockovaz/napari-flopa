@@ -4,7 +4,7 @@ from ptuio.marker import get_marker_distribution, marker_events
 from ptuio.reader import TTTRReader
 from ptuio.utils import estimate_tcspc_bins
 
-from napari_flopa.processing.logger import ProgressLogger
+from napari_flopa.core.logger import ProgressLogger
 
 
 def format_ptu_header(

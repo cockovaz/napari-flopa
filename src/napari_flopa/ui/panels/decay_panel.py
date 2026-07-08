@@ -57,8 +57,8 @@ except ImportError:
 
 from ptuio.utils import shift_decay
 
-from napari_flopa.state import AppState
-from napari_flopa.widgets.style import MPL, SS, apply_style
+from napari_flopa.ui.state import FlopaState
+from napari_flopa.ui.style import MPL, SS, apply_style
 
 
 # 60-colour palette from matplotlib's three tab20 maps
@@ -85,13 +85,13 @@ class DecayPanel(QWidget):
     """
     Tab 2 — TCSPC decay curves.
 
-    Reads tcspc_histogram from AppState.dataset and plots one curve per free
+    Reads tcspc_histogram from FlopaState.dataset and plots one curve per free
     dimension combination after optional aggregation.  Receives view settings
     from FlimViewPanel via on_view_changed(dict) and marks itself stale when
     settings differ from the last plot.
     """
 
-    def __init__(self, state: AppState, viewer, parent=None):
+    def __init__(self, state: FlopaState, viewer, parent=None):
         super().__init__(parent)
         self.state = state
         self.viewer = viewer

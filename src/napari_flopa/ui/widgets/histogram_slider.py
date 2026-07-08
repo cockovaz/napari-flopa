@@ -24,7 +24,7 @@ from qtpy.QtWidgets import (
 )
 from superqt import QDoubleRangeSlider, QRangeSlider
 
-from napari_flopa.widgets.style import SS
+from napari_flopa.ui.style import SS
 
 
 class _HistogramCanvas(QWidget):

@@ -2,7 +2,7 @@ import xarray as xr
 from ptuio.decoder import T3OverflowCorrector
 from ptuio.reconstructor import ImageReconstructor, ScanConfig
 
-from napari_flopa.processing.logger import ProgressLogger
+from napari_flopa.core.logger import ProgressLogger
 
 
 def reconstruct_ptu_to_dataset(

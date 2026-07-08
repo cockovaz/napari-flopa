@@ -36,19 +36,21 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from napari_flopa.demo import load_demo
-from napari_flopa.io.loader import (
+from napari_flopa.core.demo import load_demo
+from napari_flopa.core.io.loader import (
     _format_marker_suggestions,
     analyze_marker_distribution,
     format_ptu_header,
     get_markers,
     read_ptu_file,
 )
-from napari_flopa.processing.logger import ProgressLogger
-from napari_flopa.processing.reconstruction import reconstruct_ptu_to_dataset
-from napari_flopa.state import AppState
-from napari_flopa.widgets.style import SS, apply_style
-from napari_flopa.widgets.utils.threading import Worker
+from napari_flopa.core.logger import ProgressLogger
+from napari_flopa.core.processing.reconstruction import (
+    reconstruct_ptu_to_dataset,
+)
+from napari_flopa.ui.state import FlopaState
+from napari_flopa.ui.style import SS, apply_style
+from napari_flopa.ui.utils.threading import Worker
 
 
 class PtuPanel(QWidget):
@@ -59,7 +61,7 @@ class PtuPanel(QWidget):
 
     reconstruction_finished = Signal(object)  # xr.Dataset
 
-    def __init__(self, state: AppState, viewer, parent=None):
+    def __init__(self, state: FlopaState, viewer, parent=None):
         super().__init__(parent)
         self.state = state
         self.viewer = viewer

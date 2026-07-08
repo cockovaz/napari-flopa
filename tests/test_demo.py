@@ -7,16 +7,16 @@ where the shipped demo is absent), so they are safe on CI. Locally, a
 
 import pytest
 
-from napari_flopa import demo
+from napari_flopa.core import demo
 
 requires_demo = pytest.mark.skipif(
     demo.demo_params_path() is None,
-    reason="no demo data available (see src/napari_flopa/demo.py)",
+    reason="no demo data available (see src/napari_flopa/core/demo.py)",
 )
 
 
 def _scan_config(params):
-    from napari_flopa.io.ptuio.reconstructor import ScanConfig
+    from ptuio.reconstructor import ScanConfig
 
     return ScanConfig(
         lines=params["lines"],
@@ -35,8 +35,8 @@ def _scan_config(params):
 @requires_demo
 def test_demo_reconstructs():
     """Core pipeline: read + reconstruct the demo .ptu into a dataset."""
-    from napari_flopa.io.loader import read_ptu_file
-    from napari_flopa.processing.reconstruction import (
+    from napari_flopa.core.io.loader import read_ptu_file
+    from napari_flopa.core.processing.reconstruction import (
         reconstruct_ptu_to_dataset,
     )
 
@@ -54,7 +54,7 @@ def test_demo_reconstructs():
 @requires_demo
 def test_load_demo_button(make_napari_viewer):
     """Widget smoke test: the Load Demo button populates state without error."""
-    from napari_flopa.widgets.main_widget import FlimWidget
+    from napari_flopa.ui.main_widget import FlimWidget
 
     viewer = make_napari_viewer()
     widget = FlimWidget(viewer)

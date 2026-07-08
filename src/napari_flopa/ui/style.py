@@ -3,7 +3,7 @@ Centralised visual style tokens for napari-flopa widgets.
 
 Usage
 -----
-    from napari_flopa.widgets.style import C, SS, MPL, apply_style
+    from napari_flopa.ui.style import C, SS, MPL, apply_style
 
     apply_style(group_box, SS.GROUP_A)
     apply_style(label, SS.STATUS)

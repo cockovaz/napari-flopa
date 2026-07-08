@@ -56,8 +56,8 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from napari_flopa.state import AppState
-from napari_flopa.widgets.style import SS, apply_style
+from napari_flopa.ui.state import FlopaState
+from napari_flopa.ui.style import SS, apply_style
 
 # ── optional TOML support ────────────────────────────────────────────────
 try:
@@ -529,8 +529,8 @@ class _BatchWorker(QObject):
         Returns list of phasor row dicts (for possible single-table merge).
         Raises on any fatal error so the caller can log it.
         """
-        from napari_flopa.io.loader import read_ptu_file
-        from napari_flopa.processing.reconstruction import (
+        from napari_flopa.core.io.loader import read_ptu_file
+        from napari_flopa.core.processing.reconstruction import (
             reconstruct_ptu_to_dataset,
         )
 
@@ -612,7 +612,7 @@ class _BatchWorker(QObject):
         """Write TIFF images for one aggregation config pass."""
         from matplotlib import cm as _cm
 
-        from napari_flopa.processing.image_utils import (
+        from napari_flopa.core.processing.image_utils import (
             aggregate_dataset,
             smooth_count,
             smooth_weighted,
@@ -761,7 +761,7 @@ class _BatchWorker(QObject):
         """Extract phasor summary rows for one aggregation config."""
         if "phasor_g" not in ds or "phasor_s" not in ds:
             return []
-        from napari_flopa.processing.image_utils import aggregate_dataset
+        from napari_flopa.core.processing.image_utils import aggregate_dataset
 
         per_pixel = cfg.get("per_pixel", False)
         rows: list[dict] = []
@@ -1030,7 +1030,7 @@ class BatchPanel(QWidget):
     Processing runs in a QThread; UI stays responsive.
     """
 
-    def __init__(self, state: AppState, viewer, parent=None):
+    def __init__(self, state: FlopaState, viewer, parent=None):
         super().__init__(parent)
         self.state = state
         self.viewer = viewer

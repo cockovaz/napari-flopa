@@ -16,7 +16,8 @@ import json
 import os
 from pathlib import Path
 
-_DEMO_DIR = Path(__file__).parent / "demo_data"
+# demo_data lives at the package root; this module is one level down (core/).
+_DEMO_DIR = Path(__file__).parent.parent / "demo_data"
 
 
 def demo_params_path() -> Path | None:
