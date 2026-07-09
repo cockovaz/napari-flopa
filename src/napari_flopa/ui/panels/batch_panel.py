@@ -187,7 +187,7 @@ class _ExportSection(QGroupBox):
         super().__init__(title, parent)
         self.setCheckable(True)
         self.setChecked(False)
-        apply_style(self, SS.GROUP_A)
+        apply_style(self, SS.GROUP_PRIMARY)
         self._kind = kind
         self._rows: list[_AggRow] = []
 
@@ -1056,8 +1056,8 @@ class BatchPanel(QWidget):
 
         # ── 1. Directories ─────────────────────────────────────────────
         dir_box = QGroupBox("Directories")
-        apply_style(dir_box, SS.GROUP_A)
-        dir_box.setStyleSheet(SS.GROUP_A)
+        apply_style(dir_box, SS.GROUP_PRIMARY)
+        dir_box.setStyleSheet(SS.GROUP_PRIMARY)
         dg = QGridLayout(dir_box)
         dg.setSpacing(4)
         dg.addWidget(QLabel("PTU folder:"), 0, 0)
@@ -1084,8 +1084,8 @@ class BatchPanel(QWidget):
 
         # ── 2. Scan config + calibration ───────────────────────────────
         cfg_box = QGroupBox("Scan Config && Calibration")
-        apply_style(cfg_box, SS.GROUP_A)
-        cfg_box.setStyleSheet(SS.GROUP_A)
+        apply_style(cfg_box, SS.GROUP_PRIMARY)
+        cfg_box.setStyleSheet(SS.GROUP_PRIMARY)
         cfg_hlay = QHBoxLayout(cfg_box)
         cfg_hlay.setSpacing(8)
         cfg_hlay.setContentsMargins(6, 4, 6, 6)
@@ -1237,8 +1237,8 @@ class BatchPanel(QWidget):
 
         # ── 4. Output options ──────────────────────────────────────────
         out_box = QGroupBox("Output options")
-        apply_style(out_box, SS.GROUP_A)
-        out_box.setStyleSheet(SS.GROUP_A)
+        apply_style(out_box, SS.GROUP_PRIMARY)
+        out_box.setStyleSheet(SS.GROUP_PRIMARY)
         ol = QVBoxLayout(out_box)
         ol.setSpacing(3)
         tr = QHBoxLayout()

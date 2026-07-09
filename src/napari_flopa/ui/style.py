@@ -5,7 +5,7 @@ Usage
 -----
     from napari_flopa.ui.style import C, SS, MPL, apply_style
 
-    apply_style(group_box, SS.GROUP_A)
+    apply_style(group_box, SS.GROUP_PRIMARY)
     apply_style(label, SS.STATUS)
     apply_style(btn, SS.BTN_DANGER)
     ax.set_facecolor(MPL.AXES_BG)
@@ -16,10 +16,11 @@ Matplotlib plot colours are on ``MPL``.
 
 Group box title variants
 ------------------------
-  SS.GROUP_A  — primary sections; yellow title (#f5ea1d).
+  SS.GROUP_PRIMARY — primary sections; gold title.
                 Supports the ``#plain`` object-name selector for a muted
                 gray title: ``box.setObjectName("plain")``.
-  SS.GROUP_B  — secondary / nested sections; orange title (#ffbc2b).
+  SS.GROUP_NESTED  — secondary / nested sections; amber title.
+  SS.GROUP_DOCK    — top-level dock container (e.g. FLIM View); teal title.
   SS.GROUP_COMPACT — bordered compact box used in dense panel layouts.
 """
 
@@ -28,65 +29,72 @@ Group box title variants
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-class C:
-    """Raw hex colour tokens — single source of truth for the dark theme."""
+class C:  # "Color" — raw hex colour tokens
+    """Raw hex colour tokens — single source of truth for the dark theme.
 
-    # Backgrounds
-    BG_DEEP = "#1a1a1a"  # deepest background (log, canvas fill)
-    BG_DARK = "#1e1e1e"  # panel / plot background
-    BG_MID = "#2b2b2b"  # input field / axes background
-    BG_RAISED = "#333333"  # slider groove, subtle raised surface
-    BG_SUBTLE = "#0D394D"  # "#1e2a38" before
+    Tuned to sit inside napari's dark blue-grey theme (background #262930,
+    foreground #414851, text #f0f1f2). Token *names* are the public contract
+    (SS/MPL build on them); only the values changed.
+    """
+
+    # Surfaces (dark → light), matching napari's blue-greys
+    BG_DEEP = "#1c1e24"  # deepest background (log, console)
+    BG_DARK = "#262930"  # panel / plot background (napari `background`)
+    BG_MID = "#2e323b"  # input field / axes background
+    BG_RAISED = (
+        "#3d444e"  # slider groove, raised surface (~napari `foreground`)
+    )
+    BG_SECTION = "#2b323c"  # tinted group-box background (section)
 
     # Borders / separators
-    BORDER = "#444444"
-    BORDER_SOFT = "#333333"
-    BORDER_DEFAULT = "#555555"
+    BORDER = "#3a414b"
+    BORDER_SOFT = "#31363e"
+    BORDER_DEFAULT = "#565e68"  # ~napari `primary`
 
     # Text
-    TEXT = "#cccccc"  # primary text
-    TEXT_MUTED = "#aaaaaa"  # secondary / read-only text
-    TEXT_DIM = "#888888"  # status / hint text
-    TEXT_FAINT = "#777777"  # extra-faint hint
-    TEXT_DARK = "#555555"  # disabled / inactive
+    TEXT = "#e4e6e9"  # primary text (~napari `text`)
+    TEXT_MUTED = "#b4b9c0"  # secondary / read-only text
+    TEXT_DIM = "#868e93"  # status / hint text (napari `secondary`)
+    TEXT_FAINT = "#6b727b"  # extra-faint hint
+    TEXT_DARK = "#565e68"  # disabled / inactive
 
-    # Accent — cyan (contrast / view slider)
-    CYAN = "#00dcdc"
-    CYAN_DIM = "#00aaaa"
-    CYAN_BG = "#1d3535"  # "#2a4a4a"
-    CYAN_BG_HOV = "#2e5555"
+    # Accent — cyan/teal (contrast / view slider)
+    ACCENT = "#38bec9"
+    ACCENT_DIM = "#2a97a0"
+    ACCENT_BG = "#22343a"
+    ACCENT_BG_HOV = "#2b4249"
 
     # Accent — red (mask / danger)
-    RED = "#dc4444"
-    RED_DIM = "#aa2222"
-    RED_BG = "#4a1a1a"
-    RED_TEXT = "#f25555"
-    RED_SOFT = "#ff8080"
-    RED_DARK = "#664444"
-    RED_BG_DIS = "#2a1a1a"
+    DANGER = "#e05656"
+    DANGER_DIM = "#a83b3b"
+    DANGER_BG = "#3d2226"
+    DANGER_TEXT = "#ef6b6b"
+    DANGER_SOFT = "#f09393"
+    DANGER_DARK = "#6b4a4e"
+    DANGER_BG_DIS = "#2a1e21"
 
     # Accent — green (success / done)
-    GREEN = "#88ff88"
-    GREEN_BG = "#2a4a2a"
+    SUCCESS = "#5fbf74"
+    SUCCESS_BG = "#26382c"
 
-    # Accent — orange (warning / secondary title)
-    ORANGE = "#ffaa44"  # warning label
-    TITLE_PRIMARY = "#f5df1d"  # GROUP_A main title (yellow) # was "#f5ea1d"
-    TITLE_PLAIN = "#e0e0e0"  # GROUP_A #plain variant (light gray)
-    TITLE_SECONDARY = "#ffbc2b"  # GROUP_B title (amber)
+    # Accent — amber (warning / secondary title)
+    WARNING = "#e0a53a"  # warning label
+    TITLE = "#d9c45e"  # GROUP_PRIMARY main title (soft gold)
+    TITLE_PLAIN = "#c8ccd2"  # GROUP_PRIMARY #plain variant (light gray)
+    TITLE_NESTED = "#c9a24a"  # GROUP_NESTED title (amber)
 
-    # Stale indicator
-    STALE_INACTIVE = "#555555"
-    STALE_STALE = "#ff4444"
-    STALE_FRESH = "#44cc44"
+    # Stale indicator (aligned to danger / success)
+    STALE_INACTIVE = "#565e68"
+    STALE_STALE = "#e05656"
+    STALE_FRESH = "#5fbf74"
 
     # Parameter provenance (source: metadata / default / user / estimated)
-    # Yellow=metadata; grey=default; blue=user; orange=estimated (heuristic,
+    # Gold=metadata; grey=default; blue=user; amber=estimated (heuristic,
     # verify me). (Red/green are reserved for the plot stale/fresh indicator.)
-    PROV_METADATA = "#f5df1d"
-    PROV_DEFAULT = "#888888"
+    PROV_METADATA = "#d9c45e"
+    PROV_DEFAULT = "#868e93"
     PROV_USER = "#4a90d9"
-    PROV_ESTIMATED = "#ffaa44"
+    PROV_ESTIMATED = "#e0a53a"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -94,7 +102,7 @@ class C:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-class SS:
+class SS:  # "Style" — Qt stylesheet strings
     """Qt stylesheet strings for common widget roles."""
 
     # ── Labels ────────────────────────────────────────────────────────────────
@@ -110,7 +118,7 @@ class SS:
     STATUS = f"color: {C.TEXT_DIM}; font-size: 10px;"
     HINT = f"color: {C.TEXT_FAINT}; font-size: 9px; font-weight: normal;"
     MUTED = f"color: {C.TEXT_MUTED}; font-weight: normal;"
-    WARNING = f"color: {C.ORANGE}; font-size: 9px; font-weight: normal;"
+    WARNING = f"color: {C.WARNING}; font-size: 9px; font-weight: normal;"
     SEPARATOR = f"color: {C.BORDER};"
 
     # ── Stale indicator (● dot label) ─────────────────────────────────────────
@@ -126,31 +134,31 @@ class SS:
     # ── Buttons ───────────────────────────────────────────────────────────────
 
     BTN_DANGER = (
-        f"QPushButton {{ color: {C.RED_TEXT}; }}"
-        f"QPushButton:disabled {{ color: {C.RED_DIM}; }}"
+        f"QPushButton {{ color: {C.DANGER_TEXT}; }}"
+        f"QPushButton:disabled {{ color: {C.DANGER_DIM}; }}"
     )
 
-    BTN_SUCCESS = f"QPushButton {{ color: {C.GREEN}; }}"
+    BTN_SUCCESS = f"QPushButton {{ color: {C.SUCCESS}; }}"
 
     BTN_RUN = (
-        f"QPushButton {{ background: {C.GREEN_BG}; color: {C.GREEN}; "
+        f"QPushButton {{ background: {C.SUCCESS_BG}; color: {C.SUCCESS}; "
         f"font-weight: bold; padding: 3px 12px; }}"
     )
 
     BTN_STOP = (
-        f"QPushButton {{ background: {C.RED_BG}; color: {C.RED_SOFT}; "
+        f"QPushButton {{ background: {C.DANGER_BG}; color: {C.DANGER_SOFT}; "
         f"font-weight: bold; padding: 3px 12px; }}"
-        f"QPushButton:disabled {{ background: {C.RED_BG_DIS}; color: {C.RED_DARK}; }}"
+        f"QPushButton:disabled {{ background: {C.DANGER_BG_DIS}; color: {C.DANGER_DARK}; }}"
     )
 
     BTN_SMALL = "font-size: 10px;"
 
     # Detector toggle buttons (cyan = active, gray = inactive, dark = disabled)
     BTN_DET_ON = (
-        f"QPushButton {{ background: {C.CYAN_BG}; color: {C.CYAN}; "
-        f"border: 1px solid {C.CYAN_DIM}; border-radius: 3px; "
+        f"QPushButton {{ background: {C.ACCENT_BG}; color: {C.ACCENT}; "
+        f"border: 1px solid {C.ACCENT_DIM}; border-radius: 3px; "
         f"padding: 1px 6px; font-size: 10px; }}"
-        f"QPushButton:hover {{ background: {C.CYAN_BG_HOV}; }}"
+        f"QPushButton:hover {{ background: {C.ACCENT_BG_HOV}; }}"
     )
     BTN_DET_OFF = (
         f"QPushButton {{ background: {C.BG_MID}; color: {C.TEXT_DARK}; "
@@ -158,7 +166,7 @@ class SS:
         f"padding: 1px 6px; font-size: 10px; }}"
     )
     BTN_DET_DISABLED = (
-        f"QPushButton {{ background: #222222; color: #444444; "
+        f"QPushButton {{ background: {C.BG_DEEP}; color: {C.TEXT_DARK}; "
         f"border: 1px solid {C.BORDER_SOFT}; border-radius: 3px; "
         f"padding: 1px 6px; font-size: 10px; }}"
     )
@@ -176,34 +184,34 @@ class SS:
 
     SLIDER_VIEW = (
         f"QSlider::groove:horizontal {{ background: {C.BG_RAISED}; height: 4px; border-radius: 2px; }}"
-        f"QSlider::handle:horizontal {{ background: {C.CYAN}; width: 10px; height: 10px;"
+        f"QSlider::handle:horizontal {{ background: {C.ACCENT}; width: 10px; height: 10px;"
         f" margin: -3px 0; border-radius: 5px; }}"
-        f"QSlider::sub-page:horizontal {{ background: {C.CYAN_DIM}; border-radius: 2px; }}"
+        f"QSlider::sub-page:horizontal {{ background: {C.ACCENT_DIM}; border-radius: 2px; }}"
     )
 
     SLIDER_MASK = (
         f"QSlider::groove:horizontal {{ background: {C.BG_RAISED}; height: 4px; border-radius: 2px; }}"
-        f"QSlider::handle:horizontal {{ background: {C.RED}; width:10px; height: 10px;"
+        f"QSlider::handle:horizontal {{ background: {C.DANGER}; width:10px; height: 10px;"
         f" margin: -3px 0; border-radius: 5px; }}"
-        f"QSlider::sub-page:horizontal {{ background: {C.RED_DIM}; border-radius: 2px; }}"
+        f"QSlider::sub-page:horizontal {{ background: {C.DANGER_DIM}; border-radius: 2px; }}"
     )
 
     # ── Group boxes ───────────────────────────────────────────────────────────
 
-    # Primary sections — yellow title; set objectName("plain") for the gray variant.
-    GROUP_A = f"""
+    # Primary sections — gold title; set objectName("plain") for the gray variant.
+    GROUP_PRIMARY = f"""
     QGroupBox {{
         margin-top: 14px;
-        border: 1px {C.TITLE_PRIMARY};
+        border: 1px {C.TITLE};
         border-radius: 0px;
-        background-color: {C.BG_SUBTLE};
+        background-color: {C.BG_SECTION};
     }}
     QGroupBox::title {{
         subcontrol-origin: margin;
         padding: 0px 2px;
         font-size: 12pt;
         font-weight: bold;
-        color: {C.TITLE_PRIMARY};
+        color: {C.TITLE};
     }}
     QGroupBox#plain::title {{
         subcontrol-origin: margin;
@@ -215,7 +223,7 @@ class SS:
     """
 
     # Secondary / nested sections — amber title.
-    GROUP_B = f"""
+    GROUP_NESTED = f"""
     QGroupBox {{
         margin-top: 1px;
     }}
@@ -224,12 +232,12 @@ class SS:
         padding: 0px 2px;
         font-size: 12pt;
         font-weight: bold;
-        color: {C.TITLE_SECONDARY};
+        color: {C.TITLE_NESTED};
     }}
     """
 
-    # Top-level container title in cyan — used for FLIM View and similar dock wrappers.
-    GROUP_TITLE = f"""
+    # Top-level dock container title in teal — used for FLIM View and similar wrappers.
+    GROUP_DOCK = f"""
     QGroupBox {{
         margin-top: 14px;
     }}
@@ -237,7 +245,7 @@ class SS:
         subcontrol-origin: margin;
         padding: 0px 2px;
         font-size: 12pt;
-        color: {C.CYAN_DIM};
+        color: {C.ACCENT_DIM};
     }}
     """
 
@@ -261,7 +269,7 @@ class SS:
     # ── Log / console ─────────────────────────────────────────────────────────
 
     LOG = (
-        f"QPlainTextEdit {{ background: #000000; color: {C.TEXT_MUTED}; "
+        f"QPlainTextEdit {{ background: {C.BG_DEEP}; color: {C.TEXT_MUTED}; "
         f"border: 1px solid {C.BORDER_SOFT}; font-family: monospace; font-size: 9px; }}"
     )
 
@@ -281,11 +289,11 @@ def apply_style(widget, style_string: str) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-class MPL:
+class MPL:  # "Plot" — matplotlib colour values
     """Colour values for matplotlib figure/axes styling (not Qt stylesheets)."""
 
     FIG_BG = C.BG_DARK  # figure.facecolor
     AXES_BG = C.BG_MID  # axes.facecolor
     TICK = C.TEXT  # tick label colour
     SPINE = C.TEXT_DARK  # axes spine colour
-    GRID = "#3a3a3a"  # grid line colour
+    GRID = "#333842"  # grid line colour

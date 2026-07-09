@@ -173,7 +173,7 @@ class PhasorPanel(QWidget):
 
         # -- Mode group --
         mode_box = QGroupBox("Mode")
-        apply_style(mode_box, SS.GROUP_A)
+        apply_style(mode_box, SS.GROUP_PRIMARY)
         mode_lay = QVBoxLayout(mode_box)
         mode_lay.setSpacing(2)
         self._per_object_radio = QRadioButton("Per Object")
@@ -239,7 +239,7 @@ class PhasorPanel(QWidget):
 
         # -- Mask + cmap --
         mask_box = QGroupBox("Mask")
-        apply_style(mask_box, SS.GROUP_A)
+        apply_style(mask_box, SS.GROUP_PRIMARY)
         mask_lay = QGridLayout(mask_box)
         mask_lay.setVerticalSpacing(3)
 

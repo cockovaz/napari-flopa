@@ -113,7 +113,7 @@ class PtuPanel(QWidget):
 
         # --- File loading ---
         file_group = QGroupBox("Load Data")
-        apply_style(file_group, SS.GROUP_A)
+        apply_style(file_group, SS.GROUP_PRIMARY)
         file_layout = QVBoxLayout(file_group)
         self.file_label = QLabel("No file selected.")
         btn_row = QHBoxLayout()
@@ -132,7 +132,7 @@ class PtuPanel(QWidget):
 
         # --- Header info (summary only, full header via button) ---
         self.header_group = QGroupBox("Header Info")
-        apply_style(self.header_group, SS.GROUP_A)
+        apply_style(self.header_group, SS.GROUP_PRIMARY)
         header_layout = QVBoxLayout(self.header_group)
         self.header_info = QTextEdit()
         self.header_info.setReadOnly(True)
@@ -162,7 +162,7 @@ class PtuPanel(QWidget):
 
         # --- Reconstruction ---
         self.recon_group = QGroupBox("Reconstruction")
-        apply_style(self.recon_group, SS.GROUP_A)
+        apply_style(self.recon_group, SS.GROUP_PRIMARY)
         recon_layout = QVBoxLayout(self.recon_group)
 
         output_row = QHBoxLayout()
@@ -194,7 +194,7 @@ class PtuPanel(QWidget):
 
         # --- Info / log ---
         self.info_group = QGroupBox("Log")
-        apply_style(self.info_group, SS.GROUP_A)
+        apply_style(self.info_group, SS.GROUP_PRIMARY)
         info_layout = QVBoxLayout(self.info_group)
         self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
@@ -212,7 +212,7 @@ class PtuPanel(QWidget):
 
     def _build_config_group(self) -> QGroupBox:
         group = QGroupBox("Scan Configuration")
-        apply_style(group, SS.GROUP_A)
+        apply_style(group, SS.GROUP_PRIMARY)
         main_layout = QVBoxLayout(group)
 
         grid = QGridLayout()
@@ -321,7 +321,7 @@ class PtuPanel(QWidget):
         # Bidirectional
         self.bidir_group = QGroupBox("Bidirectional Scan")
         self.bidir_group.setObjectName("plain")
-        apply_style(self.bidir_group, SS.GROUP_A)
+        apply_style(self.bidir_group, SS.GROUP_PRIMARY)
         self.bidir_group.setCheckable(True)
         self.bidir_group.setChecked(False)
         bidir_layout = QHBoxLayout(self.bidir_group)

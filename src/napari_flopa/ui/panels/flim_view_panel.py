@@ -89,7 +89,7 @@ class FlimViewPanel(QWidget):
         main_layout.setContentsMargins(2, 0, 2, 0)
 
         self.container = QGroupBox("FLIM VIEW")
-        apply_style(self.container, SS.GROUP_TITLE)
+        apply_style(self.container, SS.GROUP_DOCK)
         self.view_layout = QVBoxLayout(self.container)
         self.view_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(self.container)
@@ -173,7 +173,7 @@ class FlimViewPanel(QWidget):
 
         # ---- Col 0: slicing selectors ----
         sel_group = QGroupBox("Dims")
-        apply_style(sel_group, SS.GROUP_A)
+        apply_style(sel_group, SS.GROUP_PRIMARY)
         sel_group.setFlat(True)
         sf = QGridLayout(sel_group)
         sf.setVerticalSpacing(1)
@@ -220,7 +220,7 @@ class FlimViewPanel(QWidget):
 
         # ---- Col 1: Intensity ----
         int_group = QGroupBox("Intensity")
-        apply_style(int_group, SS.GROUP_A)
+        apply_style(int_group, SS.GROUP_PRIMARY)
         int_group.setEnabled(has_intensity)
         ig = QHBoxLayout(int_group)
         ig.setSpacing(1)
@@ -300,7 +300,7 @@ class FlimViewPanel(QWidget):
 
         # ---- Col 2: Lifetime ----
         lt_group = QGroupBox(f"Lifetime ({lifetime_unit})")
-        apply_style(lt_group, SS.GROUP_A)
+        apply_style(lt_group, SS.GROUP_PRIMARY)
         lt_group.setEnabled(has_lifetime)
         lg = QHBoxLayout(lt_group)
         lg.setSpacing(1)
@@ -377,7 +377,7 @@ class FlimViewPanel(QWidget):
 
         # ---- Col 3: Export ----
         exp_group = QGroupBox("Export")
-        apply_style(exp_group, SS.GROUP_A)
+        apply_style(exp_group, SS.GROUP_PRIMARY)
         el = QVBoxLayout(exp_group)
         el.setSpacing(4)
         el.setContentsMargins(4, 4, 4, 4)

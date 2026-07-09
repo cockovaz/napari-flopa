@@ -174,7 +174,7 @@ class DecayPanel(QWidget):
         sr.setSpacing(6)
 
         agg_box = QGroupBox("Aggregate")
-        apply_style(agg_box, SS.GROUP_A)
+        apply_style(agg_box, SS.GROUP_PRIMARY)
         agg_lay = QHBoxLayout(agg_box)
         agg_lay.setSpacing(6)
         agg_lay.setContentsMargins(6, 2, 6, 2)
@@ -190,7 +190,7 @@ class DecayPanel(QWidget):
         sr.addWidget(agg_box)
 
         shift_box = QGroupBox("Shift (bins)")
-        apply_style(shift_box, SS.GROUP_A)
+        apply_style(shift_box, SS.GROUP_PRIMARY)
         shift_lay = QHBoxLayout(shift_box)
         shift_lay.setContentsMargins(6, 2, 6, 2)
         self._shift_spin = QSpinBox()
