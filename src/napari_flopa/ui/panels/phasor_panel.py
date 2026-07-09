@@ -271,7 +271,8 @@ class PhasorPanel(QWidget):
         smooth_box.setChecked(False)
         smooth_lay = QFormLayout(smooth_box)
         self._smooth_spin = QSpinBox()
-        self._smooth_spin.setRange(2, 20)
+        self._smooth_spin.setRange(3, 19)
+        self._smooth_spin.setSingleStep(2)  # odd kernel sizes only
         self._smooth_spin.setValue(3)
         smooth_lay.addRow("Kernel:", self._smooth_spin)
         self._smooth_group = smooth_box
@@ -601,6 +602,10 @@ class PhasorPanel(QWidget):
         # ── Smoothing ───────────────────────────────────────────────────
         if self._smooth_group.isChecked() and photon_count is not None:
             k = self._smooth_spin.value()
+            if (
+                k % 2 == 0
+            ):  # tttrkit smooth_phasor shifts ½px with even kernels
+                k += 1
             from ptuio.utils import smooth_phasor
 
             phasor_c_smooth = smooth_phasor(

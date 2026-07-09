@@ -31,7 +31,9 @@ def smooth_weighted(
         array.shape == count.shape
     ), "array and count must have the same shape"
     if not (isinstance(size, int) and size > 0):
-        raise ValueError("size must be a positive integer")
+        raise ValueError("kernel size must be a positive integer")
+    if size % 2 == 0:  # even kernel has no centre → mode="same" shifts by ½px
+        size += 1
     kernel = np.ones((size, size), dtype=np.float32)
     valid = np.isfinite(array) & (count > 0)
     num = convolve2d(
@@ -50,19 +52,24 @@ def smooth_weighted(
 
 def smooth_count(
     count: NDArray[np.integer], size: int = 3
-) -> NDArray[np.uint32]:
+) -> NDArray[np.float32]:
     """
-    Box-sum smoothing of a photon-count array.
+    Edge-corrected box-*mean* smoothing of a photon-count array.
 
-    Complements smooth_weighted for cases where
-    only the accumulated count (not the weighted scalar) is needed — e.g.
-    updating the intensity layer after smoothing.
+    Each window is normalised by the number of in-bounds pixels, so border
+    pixels are NOT darkened by zero-padding — the same den-normalisation that
+    smooth_weighted (and tttrkit's smooth_phasor) use. Returns a float32 local
+    average count; display contrast is handled by the histogram slider.
     """
-    count = np.asarray(count)
+    count = np.asarray(count, dtype=np.float32)
     if count.ndim != 2:
         raise ValueError("count must be a 2D array")
+    if size % 2 == 0:  # keep the kernel centred (odd); even shifts by ½px
+        size += 1
     kernel = np.ones((size, size), dtype=np.float32)
-    return np.asarray(convolve2d(count, kernel, mode="same"), dtype=np.uint32)
+    total = convolve2d(count, kernel, mode="same")
+    norm = convolve2d(np.ones_like(count), kernel, mode="same")
+    return np.asarray(total / norm, dtype=np.float32)
 
 
 def aggregate_dataset(ds: xr.Dataset, dims) -> xr.Dataset:

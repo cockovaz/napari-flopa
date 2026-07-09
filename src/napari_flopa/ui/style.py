@@ -80,12 +80,13 @@ class C:
     STALE_STALE = "#ff4444"
     STALE_FRESH = "#44cc44"
 
-    # Parameter provenance (source: metadata / default / user)
-    # Yellow=metadata; grey=default; blue=user. (Red/green are reserved for
-    # the plot stale/fresh indicator.)
+    # Parameter provenance (source: metadata / default / user / estimated)
+    # Yellow=metadata; grey=default; blue=user; orange=estimated (heuristic,
+    # verify me). (Red/green are reserved for the plot stale/fresh indicator.)
     PROV_METADATA = "#f5df1d"
     PROV_DEFAULT = "#888888"
     PROV_USER = "#4a90d9"
+    PROV_ESTIMATED = "#ffaa44"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -103,6 +104,7 @@ class SS:
         "metadata": f"color: {C.PROV_METADATA}; font-size: 11px;",
         "default": f"color: {C.PROV_DEFAULT}; font-size: 11px;",
         "user": f"color: {C.PROV_USER}; font-size: 11px;",
+        "estimated": f"color: {C.PROV_ESTIMATED}; font-size: 11px;",
     }
 
     STATUS = f"color: {C.TEXT_DIM}; font-size: 10px;"

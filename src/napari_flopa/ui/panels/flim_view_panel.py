@@ -1,4 +1,5 @@
 import traceback
+from pathlib import Path
 
 import numpy as np
 import xarray as xr
@@ -49,8 +50,9 @@ class FlimViewPanel(QWidget):
       • Colormap selectors; FLIM RGB composite mode when both layers are ON.
       • "→ Int. Mask" / "→ Lt. Mask" buttons create uniquely named Labels
         layers from the current red-slider threshold range.
-      • Export buttons for Intensity (uint16 TIFF), Lifetime (float32 TIFF),
-        and FLIM RGB composite (PNG or TIFF).
+      • Export buttons for Intensity (uint32 photon-count TIFF), Lifetime
+        (float32 ns/ch TIFF), and FLIM RGB composite (PNG/TIFF + a .txt sidecar
+        recording the colormap and contrast ranges).
 
     The widget is hidden until update_data() is called with a valid dataset.
     Emits view_changed(dict) whenever the selection or aggregation changes so
@@ -133,8 +135,7 @@ class FlimViewPanel(QWidget):
         closures that capture the local helpers defined in this method.
 
         Inner helpers (not accessible outside this method):
-          _make_lut(cmap_name)      — build 256×3 uint8 LUT from a matplotlib cmap
-          _fast_flim(ci, cl)        — compute FLIM RGB array from cached arrays + LUT
+          _make_lut(cmap_name)      — build 256×3 uint8 LUT (for export + RGB layer)
           _get_sel_key()            — return (sel dict, dims_to_sum list) from selectors
           _get_raw_arrays(sel, sums)— isel + optional aggregate with LRU cache (64 entries)
           _get_smoothed(raw_i, raw_l)— apply smoothing kernels with LRU cache (32 entries)
@@ -159,6 +160,7 @@ class FlimViewPanel(QWidget):
         instrument_params = ds.attrs.get("instrument_params", {})
         tcspc_res_ns = instrument_params.get("tcspc_resolution_ns", 1.0)
         lifetime_unit = instrument_params.get("resolution_unit", "ch")
+        self._lifetime_unit = lifetime_unit  # for the RGB export sidecar
 
         grid = QGridLayout()
         grid.setSpacing(2)
@@ -254,7 +256,8 @@ class FlimViewPanel(QWidget):
         )
         int_row1.addWidget(self.smooth_int_check)
         self.smooth_int_spin = QSpinBox()
-        self.smooth_int_spin.setRange(2, 50)
+        self.smooth_int_spin.setRange(3, 49)
+        self.smooth_int_spin.setSingleStep(2)  # odd kernel sizes only
         self.smooth_int_spin.setValue(3)
         self.smooth_int_spin.setEnabled(False)
         self.smooth_int_check.toggled.connect(self.smooth_int_spin.setEnabled)
@@ -329,7 +332,8 @@ class FlimViewPanel(QWidget):
         self.smooth_lt_check.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         lt_row1.addWidget(self.smooth_lt_check)
         self.smooth_lt_spin = QSpinBox()
-        self.smooth_lt_spin.setRange(2, 50)
+        self.smooth_lt_spin.setRange(3, 49)
+        self.smooth_lt_spin.setSingleStep(2)  # odd kernel sizes only
         self.smooth_lt_spin.setValue(3)
         self.smooth_lt_spin.setEnabled(False)
         self.smooth_lt_check.toggled.connect(self.smooth_lt_spin.setEnabled)
@@ -428,6 +432,17 @@ class FlimViewPanel(QWidget):
         self.export_save_btn.clicked.connect(self._on_export_save)
         el.addWidget(self.export_save_btn)
 
+        # Add the current FLIM RGB composite as a static napari layer (same
+        # image as the RGB export, but kept in the viewer).
+        self.gen_flim_btn = QPushButton("→ RGB FLIM layer")
+        self.gen_flim_btn.setEnabled(has_flim)
+        self.gen_flim_btn.setToolTip(
+            "Add the current FLIM RGB composite (current view, contrast,\n"
+            "colormap and smoothing) as a static napari image layer."
+        )
+        self.gen_flim_btn.clicked.connect(self._generate_flim_layer)
+        el.addWidget(self.gen_flim_btn)
+
         grid.addWidget(exp_group, 0, 3)
 
         self.int_auto_btn.clicked.connect(
@@ -474,16 +489,17 @@ class FlimViewPanel(QWidget):
         def _make_lut(cmap_name: str) -> np.ndarray:
             return colormap_to_lut(cmap_name)
 
-        def _fast_flim(ci, cl):
-            # Thin wrapper: pull live slider/LUT state and delegate the
-            # compositing to core.flim_rgb (same call the exporter uses).
-            return flim_rgb(
-                ci,
-                cl,
-                self._lut,
-                self.lifetime_slider.value(),
-                self.intensity_slider.value(),
+        def _int_cmap():
+            # In FLIM mode (both layers shown) intensity MUST be gray so the
+            # multiplicative composite = gray_intensity x lifetime_colour.
+            # Otherwise honour the user's intensity colormap combo.
+            both = (
+                has_intensity
+                and has_lifetime
+                and self.show_intensity.isChecked()
+                and self.show_lifetime.isChecked()
             )
+            return "gray" if both else self.int_colormap.currentText()
 
         def _get_sel_key():
             sel, dims_to_sum = {}, []
@@ -561,63 +577,42 @@ class FlimViewPanel(QWidget):
                 cl = self._cached_lifetime
                 show_i = self.show_intensity.isChecked() and has_intensity
                 show_l = self.show_lifetime.isChecked() and has_lifetime
-                flim_mode = show_i and show_l
-                int_mode = show_i and not flim_mode
-                lt_mode = show_l and not flim_mode
 
                 if not self._layers_created:
                     for name in ["FLIM", "Intensity", "Lifetime"]:
                         if name in self.viewer.layers:
                             self.viewer.layers.remove(name)
-                    if ci is not None and cl is not None:
-                        self.viewer.add_image(
-                            np.zeros((*ci.shape, 3), dtype=np.float32),
-                            name="FLIM",
-                            rgb=True,
-                        )
+                    # Intensity = gray base; Lifetime sits on top with
+                    # multiplicative blending, so napari composites the FLIM
+                    # look on the GPU (Intensity x colormapped Lifetime).
                     if ci is not None:
                         self.viewer.add_image(
                             ci, name="Intensity", colormap="gray"
                         )
                     if cl is not None:
                         self.viewer.add_image(
-                            cl, name="Lifetime", colormap="rainbow"
+                            cl,
+                            name="Lifetime",
+                            colormap="rainbow",
+                            blending="multiplicative",
                         )
                     self._layers_created = True
 
-                _set_visible("FLIM", flim_mode)
-                if "FLIM" in self.viewer.layers:
-                    if (
-                        flim_mode
-                        and ci is not None
-                        and cl is not None
-                        and self._lut is not None
-                    ):
-                        self.viewer.layers["FLIM"].data = _fast_flim(ci, cl)
+                # Both layers always carry their own data / contrast / colormap;
+                # the ON checkboxes just toggle visibility. Both visible = FLIM.
+                _set_visible("Intensity", show_i)
+                if "Intensity" in self.viewer.layers and ci is not None:
+                    layer = self.viewer.layers["Intensity"]
+                    layer.data = ci
+                    layer.contrast_limits = self.intensity_slider.value()
+                    layer.colormap = _int_cmap()
 
-                _set_visible("Intensity", int_mode)
-                if "Intensity" in self.viewer.layers:
-                    if ci is not None:
-                        self.viewer.layers["Intensity"].data = ci
-                        if int_mode:
-                            self.viewer.layers["Intensity"].contrast_limits = (
-                                self.intensity_slider.value()
-                            )
-                            self.viewer.layers["Intensity"].colormap = (
-                                self.int_colormap.currentText()
-                            )
-
-                _set_visible("Lifetime", lt_mode)
-                if "Lifetime" in self.viewer.layers:
-                    if cl is not None:
-                        self.viewer.layers["Lifetime"].data = cl
-                        if lt_mode:
-                            self.viewer.layers["Lifetime"].contrast_limits = (
-                                self.lifetime_slider.value()
-                            )
-                            self.viewer.layers["Lifetime"].colormap = (
-                                self.lt_colormap.currentText()
-                            )
+                _set_visible("Lifetime", show_l)
+                if "Lifetime" in self.viewer.layers and cl is not None:
+                    layer = self.viewer.layers["Lifetime"]
+                    layer.data = cl
+                    layer.contrast_limits = self.lifetime_slider.value()
+                    layer.colormap = self.lt_colormap.currentText()
 
                 # enable Save button whenever any cached data is available
                 self.export_save_btn.setEnabled(
@@ -627,38 +622,24 @@ class FlimViewPanel(QWidget):
                 traceback.print_exc()
 
         def _fast_display():
-            """Slider drag — only update contrast/FLIM, no data copy."""
+            """Slider drag — update contrast only; napari re-composites on GPU."""
             try:
-                ci = self._cached_intensity
-                cl = self._cached_lifetime
-                show_i = self.show_intensity.isChecked() and has_intensity
-                show_l = self.show_lifetime.isChecked() and has_lifetime
-                flim_mode = show_i and show_l
                 if (
-                    flim_mode
-                    and ci is not None
-                    and cl is not None
-                    and self._lut is not None
+                    has_intensity
+                    and "Intensity" in self.viewer.layers
+                    and self._cached_intensity is not None
                 ):
-                    if "FLIM" in self.viewer.layers:
-                        self.viewer.layers["FLIM"].data = _fast_flim(ci, cl)
-                else:
-                    if (
-                        show_i
-                        and "Intensity" in self.viewer.layers
-                        and ci is not None
-                    ):
-                        self.viewer.layers["Intensity"].contrast_limits = (
-                            self.intensity_slider.value()
-                        )
-                    if (
-                        show_l
-                        and "Lifetime" in self.viewer.layers
-                        and cl is not None
-                    ):
-                        self.viewer.layers["Lifetime"].contrast_limits = (
-                            self.lifetime_slider.value()
-                        )
+                    self.viewer.layers["Intensity"].contrast_limits = (
+                        self.intensity_slider.value()
+                    )
+                if (
+                    has_lifetime
+                    and "Lifetime" in self.viewer.layers
+                    and self._cached_lifetime is not None
+                ):
+                    self.viewer.layers["Lifetime"].contrast_limits = (
+                        self.lifetime_slider.value()
+                    )
             except Exception:
                 traceback.print_exc()
 
@@ -717,57 +698,39 @@ class FlimViewPanel(QWidget):
                 traceback.print_exc()
 
         def _update_colormaps():
-            if has_intensity:
-                self.intensity_slider.set_colormap(
-                    cm.get_cmap(self.int_colormap.currentText())
-                )
-            if has_lifetime:
-                self.lifetime_slider.set_colormap(
-                    cm.get_cmap(self.lt_colormap.currentText())
-                )
-                self._lut = _make_lut(self.lt_colormap.currentText())
             try:
-                show_i = self.show_intensity.isChecked() and has_intensity
-                show_l = self.show_lifetime.isChecked() and has_lifetime
-                flim_mode = show_i and show_l
-                if not flim_mode:
-                    if show_i and "Intensity" in self.viewer.layers:
-                        self.viewer.layers["Intensity"].colormap = (
-                            self.int_colormap.currentText()
-                        )
-                    if show_l and "Lifetime" in self.viewer.layers:
+                if has_intensity:
+                    self.intensity_slider.set_colormap(
+                        cm.get_cmap(self.int_colormap.currentText())
+                    )
+                    if "Intensity" in self.viewer.layers:
+                        self.viewer.layers["Intensity"].colormap = _int_cmap()
+                if has_lifetime:
+                    self.lifetime_slider.set_colormap(
+                        cm.get_cmap(self.lt_colormap.currentText())
+                    )
+                    # LUT still drives the RGB export + "→ RGB FLIM layer".
+                    self._lut = _make_lut(self.lt_colormap.currentText())
+                    if "Lifetime" in self.viewer.layers:
                         self.viewer.layers["Lifetime"].colormap = (
                             self.lt_colormap.currentText()
                         )
-                elif (
-                    "FLIM" in self.viewer.layers
-                    and self._cached_intensity is not None
-                    and self._cached_lifetime is not None
-                ):
-                    self.viewer.layers["FLIM"].data = _fast_flim(
-                        self._cached_intensity, self._cached_lifetime
-                    )
             except Exception:
                 traceback.print_exc()
 
         def _visibility_changed():
             try:
-                show_i = self.show_intensity.isChecked() and has_intensity
-                show_l = self.show_lifetime.isChecked() and has_lifetime
-                flim_mode = show_i and show_l
-                _set_visible("FLIM", flim_mode)
-                if "FLIM" in self.viewer.layers:
-                    if (
-                        flim_mode
-                        and self._cached_intensity is not None
-                        and self._cached_lifetime is not None
-                        and self._lut is not None
-                    ):
-                        self.viewer.layers["FLIM"].data = _fast_flim(
-                            self._cached_intensity, self._cached_lifetime
-                        )
-                _set_visible("Intensity", show_i and not flim_mode)
-                _set_visible("Lifetime", show_l and not flim_mode)
+                _set_visible(
+                    "Intensity",
+                    self.show_intensity.isChecked() and has_intensity,
+                )
+                _set_visible(
+                    "Lifetime",
+                    self.show_lifetime.isChecked() and has_lifetime,
+                )
+                # Entering/leaving FLIM mode flips intensity gray <-> combo.
+                if "Intensity" in self.viewer.layers:
+                    self.viewer.layers["Intensity"].colormap = _int_cmap()
             except Exception:
                 traceback.print_exc()
 
@@ -843,8 +806,6 @@ class FlimViewPanel(QWidget):
 
     def _on_export_save(self):
         """Unified Save handler — asks for base name/directory once, saves all checked types."""
-        from pathlib import Path
-
         do_int = self.exp_int_chk.isChecked() and self.exp_int_chk.isEnabled()
         do_lt = self.exp_lt_chk.isChecked() and self.exp_lt_chk.isEnabled()
         do_flim = (
@@ -882,17 +843,44 @@ class FlimViewPanel(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
+    def _generate_flim_layer(self):
+        """Add the current FLIM RGB composite as a static napari image layer.
+
+        Uses the same core.flim_rgb as the file export, so this layer matches an
+        exported ``_flim.png`` (current view / contrast / colormap / smoothing).
+        """
+        ci, cl = self._cached_intensity, self._cached_lifetime
+        if ci is None or cl is None or self._lut is None:
+            return
+        rgb = flim_rgb(
+            ci,
+            cl,
+            self._lut,
+            self.lifetime_slider.value(),
+            self.intensity_slider.value(),
+        )
+        existing = {layer.name for layer in self.viewer.layers}
+        name, i = "FLIM RGB", 1
+        while name in existing:
+            name = f"FLIM RGB [{i}]"
+            i += 1
+        self.viewer.add_image(
+            rgb,
+            rgb=True,
+            name=name,
+            metadata={"flim": self._flim_export_info()},
+        )
+
     def _save_intensity(self, path):
-        """Write cached intensity as uint16 TIFF (normalised to 0–65535)."""
+        """Write cached intensity as actual photon counts (uint32 TIFF).
+
+        Not rescaled — pixel values are the real counts (rounded when the view
+        is smoothed/aggregated), so the TIFF stays quantitative.
+        """
         from skimage.io import imsave
 
-        arr = self._cached_intensity
-        mn, mx = float(arr.min()), float(arr.max())
-        if mx > mn:
-            scaled = ((arr - mn) / (mx - mn) * 65535).astype(np.uint16)
-        else:
-            scaled = np.zeros_like(arr, dtype=np.uint16)
-        imsave(str(path), scaled, check_contrast=False)
+        counts = np.rint(self._cached_intensity).astype(np.uint32)
+        imsave(str(path), counts, check_contrast=False)
 
     def _save_lifetime(self, path):
         """Write cached lifetime as float32 TIFF (values in ns)."""
@@ -921,4 +909,21 @@ class FlimViewPanel(QWidget):
             str(path),
             (rgb_f32 * 255).clip(0, 255).astype(np.uint8),
             check_contrast=False,
+        )
+        # Sidecar text so the RGB is interpretable (colormap + contrast ranges).
+        Path(path).with_suffix(".txt").write_text(
+            self._flim_export_info(), encoding="utf-8"
+        )
+
+    def _flim_export_info(self) -> str:
+        """Human-readable mapping baked into the FLIM RGB (for the sidecar)."""
+        lt_lo, lt_hi = self.lifetime_slider.value()
+        int_lo, int_hi = self.intensity_slider.value()
+        unit = getattr(self, "_lifetime_unit", "ch")
+        return (
+            "FLIM RGB export\n"
+            f"lifetime colormap : {self.lt_colormap.currentText()}\n"
+            f"lifetime range    : {lt_lo:.4g} .. {lt_hi:.4g} {unit}\n"
+            f"intensity range   : {int_lo:.4g} .. {int_hi:.4g} "
+            "photon counts (normalised 0..1 into this range)\n"
         )

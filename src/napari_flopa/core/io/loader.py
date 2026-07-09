@@ -128,9 +128,9 @@ def read_ptu_file(
         "tcspc_resolution": res_src,
         "tcspc_resolution_ns": res_src,
         "resolution_unit": res_src,
-        "tcspc_bins": derived_src,
+        "tcspc_bins": provenance.ESTIMATED,  # heuristic estimate + buffer
         "wrap": _src("TTResultFormat_WrapAround"),
-        "omega": derived_src,
+        "omega": derived_src,  # exact: 2*pi*rep*res
     }
 
     summary_text = format_ptu_header(
