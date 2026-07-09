@@ -125,3 +125,50 @@ def aggregate_dataset(ds: xr.Dataset, dims) -> xr.Dataset:
                 coord_ds[d] = xr.DataArray(np.arange(1), dims=(d,))
 
     return xr.merge([out_ds, coord_ds], compat="override")
+
+
+def colormap_to_lut(cmap_name: str, n: int = 256) -> NDArray[np.uint8]:
+    """Build an (n, 3) uint8 RGB lookup table from a matplotlib colormap name.
+
+    Pre-building the LUT once lets `flim_rgb` recolour interactively (a uint8
+    index lookup) instead of evaluating the colormap on every slider move.
+    """
+    from matplotlib import cm
+
+    cmap = cm.get_cmap(cmap_name)
+    return (cmap(np.linspace(0, 1, n))[:, :3] * 255).astype(np.uint8)
+
+
+def flim_rgb(
+    intensity: NDArray[np.floating],
+    lifetime: NDArray[np.floating],
+    lut: NDArray[np.uint8],
+    lt_range: tuple[float, float],
+    int_range: tuple[float, float],
+) -> NDArray[np.float32]:
+    """Composite a FLIM RGB image: lifetime → colour (via ``lut``) × intensity.
+
+    Lifetime is normalised into ``lt_range`` and quantised to ``len(lut)`` colour
+    bins; intensity is normalised into ``int_range`` (0..1) and scales the colour.
+    NaN lifetimes map to the low end of ``lt_range``; NaN intensities map to 0.
+
+    Returns an (H, W, 3) float32 array in [0, 1]. This is the single source of
+    truth for both the interactive display and the exported image, so the two
+    always match (and it is equivalent to a quantised tttrkit ``create_FLIM_image``).
+    """
+    lt_lo, lt_hi = lt_range
+    span = lt_hi - lt_lo if lt_hi > lt_lo else 1.0
+    lt_f = np.where(np.isfinite(lifetime), lifetime, lt_lo).astype(np.float32)
+    n = lut.shape[0]
+    lt_idx = np.clip((lt_f - lt_lo) / span * (n - 1), 0, n - 1).astype(
+        np.uint16
+    )
+
+    int_lo, int_hi = int_range
+    int_span = int_hi - int_lo if int_hi > int_lo else 1.0
+    int_f = np.where(np.isfinite(intensity), intensity, int_lo).astype(
+        np.float32
+    )
+    int_norm = np.clip((int_f - int_lo) / int_span, 0, 1)
+
+    return (lut[lt_idx].astype(np.float32) / 255.0) * int_norm[..., np.newaxis]

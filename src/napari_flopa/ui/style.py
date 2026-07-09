@@ -80,6 +80,13 @@ class C:
     STALE_STALE = "#ff4444"
     STALE_FRESH = "#44cc44"
 
+    # Parameter provenance (source: metadata / default / user)
+    # Yellow=metadata; grey=default; blue=user. (Red/green are reserved for
+    # the plot stale/fresh indicator.)
+    PROV_METADATA = "#f5df1d"
+    PROV_DEFAULT = "#888888"
+    PROV_USER = "#4a90d9"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Qt stylesheet strings
@@ -90,6 +97,13 @@ class SS:
     """Qt stylesheet strings for common widget roles."""
 
     # ── Labels ────────────────────────────────────────────────────────────────
+
+    # Provenance dot, keyed by source ('metadata' | 'default' | 'user')
+    PROV_DOT = {
+        "metadata": f"color: {C.PROV_METADATA}; font-size: 11px;",
+        "default": f"color: {C.PROV_DEFAULT}; font-size: 11px;",
+        "user": f"color: {C.PROV_USER}; font-size: 11px;",
+    }
 
     STATUS = f"color: {C.TEXT_DIM}; font-size: 10px;"
     HINT = f"color: {C.TEXT_FAINT}; font-size: 9px; font-weight: normal;"

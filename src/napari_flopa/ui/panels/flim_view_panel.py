@@ -23,6 +23,8 @@ from qtpy.QtWidgets import (
 
 from napari_flopa.core.processing.image_utils import (
     aggregate_dataset,
+    colormap_to_lut,
+    flim_rgb,
     smooth_count,
     smooth_weighted,
 )
@@ -470,23 +472,18 @@ class FlimViewPanel(QWidget):
                 self.viewer.layers[name].visible = value
 
         def _make_lut(cmap_name: str) -> np.ndarray:
-            cmap = cm.get_cmap(cmap_name)
-            return (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
+            return colormap_to_lut(cmap_name)
 
         def _fast_flim(ci, cl):
-            lt_lo, lt_hi = self.lifetime_slider.value()
-            lt_range = lt_hi - lt_lo if lt_hi > lt_lo else 1.0
-            cl_f = np.where(np.isfinite(cl), cl, lt_lo).astype(np.float32)
-            lt_idx = np.clip((cl_f - lt_lo) / lt_range * 255, 0, 255).astype(
-                np.uint8
+            # Thin wrapper: pull live slider/LUT state and delegate the
+            # compositing to core.flim_rgb (same call the exporter uses).
+            return flim_rgb(
+                ci,
+                cl,
+                self._lut,
+                self.lifetime_slider.value(),
+                self.intensity_slider.value(),
             )
-            int_lo, int_hi = self.intensity_slider.value()
-            int_range = int_hi - int_lo if int_hi > int_lo else 1.0
-            ci_f = np.where(np.isfinite(ci), ci, int_lo).astype(np.float32)
-            int_norm = np.clip((ci_f - int_lo) / int_range, 0, 1)
-            return (self._lut[lt_idx].astype(np.float32) / 255.0) * int_norm[
-                ..., np.newaxis
-            ]
 
         def _get_sel_key():
             sel, dims_to_sum = {}, []
@@ -911,18 +908,15 @@ class FlimViewPanel(QWidget):
         """Write FLIM RGB composite as uint8 PNG/TIFF using current LUT and contrast."""
         from skimage.io import imsave
 
-        ci, cl = self._cached_intensity, self._cached_lifetime
-        lt_lo, lt_hi = self.lifetime_slider.value()
-        lt_range = lt_hi - lt_lo if lt_hi > lt_lo else 1.0
-        lt_idx = np.clip(
-            (cl.astype(np.float32) - lt_lo) / lt_range * 255, 0, 255
-        ).astype(np.uint8)
-        int_lo, int_hi = self.intensity_slider.value()
-        int_range = int_hi - int_lo if int_hi > int_lo else 1.0
-        int_norm = np.clip((ci.astype(np.float32) - int_lo) / int_range, 0, 1)
-        rgb_f32 = (self._lut[lt_idx].astype(np.float32) / 255.0) * int_norm[
-            ..., np.newaxis
-        ]
+        # Use the exact same compositing as the interactive display so the
+        # exported image matches what is on screen (incl. NaN handling).
+        rgb_f32 = flim_rgb(
+            self._cached_intensity,
+            self._cached_lifetime,
+            self._lut,
+            self.lifetime_slider.value(),
+            self.intensity_slider.value(),
+        )
         imsave(
             str(path),
             (rgb_f32 * 255).clip(0, 255).astype(np.uint8),

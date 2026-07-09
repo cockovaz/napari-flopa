@@ -4,11 +4,15 @@ from ptuio.marker import get_marker_distribution, marker_events
 from ptuio.reader import TTTRReader
 from ptuio.utils import estimate_tcspc_bins
 
+from napari_flopa.core import provenance
 from napari_flopa.core.logger import ProgressLogger
 
 
 def format_ptu_header(
-    header_tags: dict, constants: dict, full_header: bool = False
+    header_tags: dict,
+    constants: dict,
+    full_header: bool = False,
+    constants_source: dict = None,
 ) -> str:
     """
     Generates a formatted string summary of PTU header and constants.
@@ -17,11 +21,18 @@ def format_ptu_header(
         header_tags: The dictionary of header tags from the PTU file.
         constants: The dictionary of calculated constants.
         full_header: If True, appends the entire raw header dump.
+        constants_source: Optional {name: 'metadata'|'default'|'user'} map. When
+            given, each key parameter is annotated with an [M]/[D]/[U] letter.
 
     Returns:
         A formatted, multi-line string with the summary.
     """
     lines = []
+
+    def _tag(name: str) -> str:
+        if constants_source and name in constants_source:
+            return f"  [{provenance.letter(constants_source[name])}]"
+        return ""
 
     measurement_sub_mode = header_tags.get("Measurement_SubMode")
     if measurement_sub_mode is not None and measurement_sub_mode < 1:
@@ -29,12 +40,12 @@ def format_ptu_header(
 
     lines += [
         "--- Key Parameters ---",
-        f"Repetition Rate:   {constants['repetition_rate']:.2e} Hz",
-        f"TCSPC Resolution:  {constants['tcspc_resolution_ns']:.2e}",
+        f"Repetition Rate:   {constants['repetition_rate']:.2e} Hz{_tag('repetition_rate')}",
+        f"TCSPC Resolution:  {constants['tcspc_resolution_ns']:.2e}{_tag('tcspc_resolution')}",
         f"Resolution Unit:   {constants['resolution_unit']}",
-        f"TCSPC Bins:        {constants['tcspc_bins']}",
-        f"Wrap Around:       {constants['wrap']}",
-        f"Omega:             {constants['omega']:.4e} rad/s",
+        f"TCSPC Bins:        {constants['tcspc_bins']}{_tag('tcspc_bins')}",
+        f"Wrap Around:       {constants['wrap']}{_tag('wrap')}",
+        f"Omega:             {constants['omega']:.4e} rad/s{_tag('omega')}",
         "",
         "--- Image Header ---",
         f"Pixels X:          {header_tags.get('ImgHdr_PixX', 'N/A')}",
@@ -71,11 +82,34 @@ def read_ptu_file(
     reader = TTTRReader(path)
     header_tags = reader.header.tags
 
+    # Provenance first: which values did the header actually supply?
+    def _src(tag: str) -> str:
+        return (
+            provenance.METADATA if tag in header_tags else provenance.DEFAULT
+        )
+
+    rep_src = _src("TTResult_SyncRate")
+    res_src = _src("MeasDesc_Resolution")
+    # tcspc_bins and omega are computed from rep_rate + resolution, so they are
+    # "metadata" only when BOTH of those were read from the header.
+    derived_src = (
+        provenance.METADATA
+        if rep_src == provenance.METADATA and res_src == provenance.METADATA
+        else provenance.DEFAULT
+    )
+
     repetition_rate = header_tags.get("TTResult_SyncRate", 40e6)
     tcspc_resolution = header_tags.get("MeasDesc_Resolution", 1 / 1e9)
     tcspc_resolution_ns = tcspc_resolution * 1e9
-    resolution_unit = "ch" if tcspc_resolution_ns == 1.0 else "ns"
-    tcspc_bins = estimate_tcspc_bins(header_tags, buffer=0)
+    # MeasDesc_Resolution is always in seconds when present (PTU has no unit
+    # tag). So the unit is 'ns' when the resolution came from the file, and
+    # 'ch' (raw TCSPC channels) when it was missing — decided by provenance,
+    # not the value, so a genuine 1 ns resolution is not mislabelled as 'ch'.
+    resolution_unit = "ns" if res_src == provenance.METADATA else "ch"
+    # buffer=10 spare channels absorbs photons landing just past one laser
+    # period (avoids most TCSPC overflow warnings). The user can still override
+    # the final count via the "TCSPC Bins" field (tcspc_channels_override).
+    tcspc_bins = estimate_tcspc_bins(header_tags, buffer=10)
     wrap = header_tags.get("TTResultFormat_WrapAround", 1024)
     omega = 2 * np.pi * repetition_rate * tcspc_resolution
 
@@ -89,8 +123,21 @@ def read_ptu_file(
         "omega": omega,
     }
 
+    constants_source = {
+        "repetition_rate": rep_src,
+        "tcspc_resolution": res_src,
+        "tcspc_resolution_ns": res_src,
+        "resolution_unit": res_src,
+        "tcspc_bins": derived_src,
+        "wrap": _src("TTResultFormat_WrapAround"),
+        "omega": derived_src,
+    }
+
     summary_text = format_ptu_header(
-        header_tags, constants, full_header=header
+        header_tags,
+        constants,
+        full_header=header,
+        constants_source=constants_source,
     )
     logger.log(summary_text)
 
@@ -98,6 +145,7 @@ def read_ptu_file(
         "reader": reader,
         "header": header_tags,
         "constants": constants,
+        "constants_source": constants_source,
     }
 
 

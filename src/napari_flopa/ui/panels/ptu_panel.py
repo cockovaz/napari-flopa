@@ -36,6 +36,7 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from napari_flopa.core import provenance
 from napari_flopa.core.demo import load_demo
 from napari_flopa.core.io.loader import (
     _format_marker_suggestions,
@@ -72,7 +73,31 @@ class PtuPanel(QWidget):
         self.shift_plot_data = None
         self._log_buffer: list[str] = []
 
+        # Parameter provenance: name -> 'metadata'|'default'|'user', plus the
+        # coloured dot widgets. `_autofill` guards programmatic setValue() calls
+        # so auto-filling from the header doesn't mark fields as user-edited.
+        self._param_source: dict[str, str] = {}
+        self._param_dots: dict[str, object] = {}
+        self._autofill = False
+
         self._build_ui()
+
+    # ------------------------------------------------------------------ #
+    # Parameter provenance                                                 #
+    # ------------------------------------------------------------------ #
+
+    def _set_param_source(self, name: str, source: str):
+        """Record a parameter's source and recolour its dot."""
+        self._param_source[name] = source
+        dot = self._param_dots.get(name)
+        if dot is not None:
+            dot.setStyleSheet(SS.PROV_DOT.get(source, ""))
+            dot.setToolTip(f"Value source: {source}")
+
+    def _on_param_edited(self, name: str):
+        """A manual spinbox edit flips the field to 'user' (ignored while auto-filling)."""
+        if not self._autofill:
+            self._set_param_source(name, provenance.USER)
 
     # ------------------------------------------------------------------ #
     # UI construction                                                      #
@@ -189,10 +214,19 @@ class PtuPanel(QWidget):
         left.setFlat(True)
         lf = QFormLayout(left)
 
-        def _spin_row(spinbox):
+        def _spin_row(name, spinbox):
+            # Row = [spinbox] [provenance dot] [stretch]; registers the field
+            # so its source dot updates and flips to "user" on manual edits.
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.addWidget(spinbox)
+            dot = QLabel("●")
+            self._param_dots[name] = dot
+            self._set_param_source(name, provenance.DEFAULT)
+            spinbox.valueChanged.connect(
+                lambda *_: self._on_param_edited(name)
+            )
+            row.addWidget(dot)
             row.addStretch()
             return row
 
@@ -200,31 +234,33 @@ class PtuPanel(QWidget):
         self.lines_spin.setRange(1, 10000)
         self.lines_spin.setValue(512)
         self.lines_spin.setMinimumWidth(40)
-        lf.addRow("Lines:", _spin_row(self.lines_spin))
+        lf.addRow("Lines:", _spin_row("lines", self.lines_spin))
 
         self.pixels_spin = QSpinBox()
         self.pixels_spin.setRange(1, 10000)
         self.pixels_spin.setValue(512)
         self.pixels_spin.setMinimumWidth(40)
-        lf.addRow("Pixels:", _spin_row(self.pixels_spin))
+        lf.addRow("Pixels:", _spin_row("pixels", self.pixels_spin))
 
         self.frames_spin = QSpinBox()
         self.frames_spin.setRange(1, 1000)
         self.frames_spin.setValue(1)
         self.frames_spin.setMinimumWidth(40)
-        lf.addRow("Frames:", _spin_row(self.frames_spin))
+        lf.addRow("Frames:", _spin_row("frames", self.frames_spin))
 
         self.tcspc_bins_spin = QSpinBox()
         self.tcspc_bins_spin.setRange(1, 65536)
         self.tcspc_bins_spin.setValue(4096)
         self.tcspc_bins_spin.setMinimumWidth(40)
-        lf.addRow("TCSPC Bins:", _spin_row(self.tcspc_bins_spin))
+        lf.addRow("TCSPC Bins:", _spin_row("tcspc_bins", self.tcspc_bins_spin))
 
         self.max_detector_spin = QSpinBox()
         self.max_detector_spin.setRange(1, 128)
         self.max_detector_spin.setValue(2)
         self.max_detector_spin.setMinimumWidth(40)
-        lf.addRow("Max Det.:", _spin_row(self.max_detector_spin))
+        lf.addRow(
+            "Max Det.:", _spin_row("max_detector", self.max_detector_spin)
+        )
 
         grid.addWidget(left, 0, 0)
 
@@ -244,7 +280,7 @@ class PtuPanel(QWidget):
             "Used for phasor calibration and lifetime calculation."
         )
         self.frep_spin.valueChanged.connect(lambda v: self.state.set_frep(v))
-        rf.addRow("Rep. rate (MHz):", _spin_row(self.frep_spin))
+        rf.addRow("Rep. rate (MHz):", _spin_row("frep", self.frep_spin))
 
         self.sequences_spin = QSpinBox()
         self.sequences_spin.setRange(1, 16)
@@ -253,7 +289,7 @@ class PtuPanel(QWidget):
         self.sequences_spin.valueChanged.connect(
             self._update_accumulation_widgets
         )
-        rf.addRow("N Sequences:", _spin_row(self.sequences_spin))
+        rf.addRow("N Sequences:", _spin_row("sequences", self.sequences_spin))
 
         self.accu_scroll = QScrollArea()
         self.accu_scroll.setWidgetResizable(True)
@@ -364,27 +400,41 @@ class PtuPanel(QWidget):
             self.ptu_data = read_ptu_file(str(self.ptu_filepath), header=False)
             tags = self.ptu_data["header"]
             constants = self.ptu_data["constants"]
+            csrc = self.ptu_data.get("constants_source", {})
 
             # Summary (no full header) — full header via button
-            summary = format_ptu_header(tags, constants, full_header=False)
+            summary = format_ptu_header(
+                tags, constants, full_header=False, constants_source=csrc
+            )
             self.header_info.setPlainText(summary)
 
-            # Auto-fill from header
+            # Auto-fill from header (guarded so setValue doesn't mark 'user')
+            self._autofill = True
             px_x = tags.get("ImgHdr_PixX")
             px_y = tags.get("ImgHdr_PixY")
             n_frames = tags.get("ImgHdr_NumberOfFrames")
             if isinstance(px_x, (int, float)):
                 self.pixels_spin.setValue(int(px_x))
+                self._set_param_source("pixels", provenance.METADATA)
             if isinstance(px_y, (int, float)):
                 self.lines_spin.setValue(int(px_y))
+                self._set_param_source("lines", provenance.METADATA)
             if isinstance(n_frames, (int, float)) and n_frames > 0:
                 self.frames_spin.setValue(int(n_frames))
+                self._set_param_source("frames", provenance.METADATA)
             self.tcspc_bins_spin.setValue(constants.get("tcspc_bins", 4096))
+            self._set_param_source(
+                "tcspc_bins", csrc.get("tcspc_bins", provenance.DEFAULT)
+            )
             rep = constants.get("repetition_rate") or constants.get(
                 "sync_rate_hz"
             )
             if rep:
                 self.frep_spin.setValue(float(rep) / 1e6)
+                self._set_param_source(
+                    "frep", csrc.get("repetition_rate", provenance.DEFAULT)
+                )
+            self._autofill = False
 
             self.header_group.setVisible(True)
             self.config_group.setVisible(True)
@@ -411,15 +461,28 @@ class PtuPanel(QWidget):
             self.ptu_data = read_ptu_file(str(ptu_path), header=False)
             tags = self.ptu_data["header"]
             constants = self.ptu_data["constants"]
-            summary = format_ptu_header(tags, constants, full_header=False)
+            csrc = self.ptu_data.get("constants_source", {})
+            summary = format_ptu_header(
+                tags, constants, full_header=False, constants_source=csrc
+            )
             self.header_info.setPlainText(summary)
 
-            # Apply demo params
+            # Apply demo params (a hard-coded preset config → 'user'), while
+            # file-derived values (tcspc bins, rep. rate) keep their source.
+            self._autofill = True
             self.lines_spin.setValue(params["lines"])
             self.pixels_spin.setValue(params["pixels"])
             self.frames_spin.setValue(params["frames"])
             self.max_detector_spin.setValue(params["max_detector"])
             self.sequences_spin.setValue(params["sequences"])
+            for name in (
+                "lines",
+                "pixels",
+                "frames",
+                "max_detector",
+                "sequences",
+            ):
+                self._set_param_source(name, provenance.USER)
             self._update_accumulation_widgets()
             for i, acc in enumerate(params["accumulations"]):
                 if i < len(self.accu_spinboxes):
@@ -429,11 +492,18 @@ class PtuPanel(QWidget):
                 params.get("bidirectional_phase_shift", 0.0)
             )
             self.tcspc_bins_spin.setValue(constants.get("tcspc_bins", 4096))
+            self._set_param_source(
+                "tcspc_bins", csrc.get("tcspc_bins", provenance.DEFAULT)
+            )
             rep = constants.get("repetition_rate") or constants.get(
                 "sync_rate_hz"
             )
             if rep:
                 self.frep_spin.setValue(float(rep) / 1e6)
+                self._set_param_source(
+                    "frep", csrc.get("repetition_rate", provenance.DEFAULT)
+                )
+            self._autofill = False
 
             self.header_group.setVisible(True)
             self.config_group.setVisible(True)
@@ -453,6 +523,7 @@ class PtuPanel(QWidget):
         constants = self.ptu_data["constants"]
         full_text = format_ptu_header(tags, constants, full_header=True)
         dlg = QDialog(self)
+        dlg.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         dlg.setWindowTitle("Full PTU Header")
         dlg.resize(600, 500)
         layout = QVBoxLayout(dlg)
@@ -570,6 +641,7 @@ class PtuPanel(QWidget):
         if self.shift_plot_data is None:
             return
         dlg = QDialog(self)
+        dlg.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         dlg.setWindowTitle("Bidirectional Shift Estimation")
         dlg.resize(500, 350)
         layout = QVBoxLayout(dlg)
