@@ -28,6 +28,7 @@ from qtpy.QtWidgets import (
     QLabel,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -61,6 +62,9 @@ class PtuPanel(QWidget):
     """
 
     reconstruction_finished = Signal(object)  # xr.Dataset
+    # (done_chunks, total_chunks) — emitted from the worker thread, delivered
+    # to the main thread so the progress bar updates safely.
+    reconstruction_progress = Signal(int, int)
 
     def __init__(self, state: FlopaState, viewer, parent=None):
         super().__init__(parent)
@@ -178,6 +182,12 @@ class PtuPanel(QWidget):
         self.reconstruct_btn.clicked.connect(self._run_reconstruction)
         output_row.addWidget(self.reconstruct_btn)
         recon_layout.addLayout(output_row)
+
+        self.recon_progress = QProgressBar()
+        self.recon_progress.setTextVisible(True)
+        self.recon_progress.setVisible(False)
+        recon_layout.addWidget(self.recon_progress)
+        self.reconstruction_progress.connect(self._on_reconstruction_progress)
 
         main_layout.addWidget(self.recon_group)
         self.recon_group.setVisible(False)
@@ -733,6 +743,8 @@ class PtuPanel(QWidget):
             return
         self.log_text.clear()
         self.reconstruct_btn.setEnabled(False)
+        self.recon_progress.setValue(0)
+        self.recon_progress.setVisible(True)
         self._log("Starting reconstruction...")
         QApplication.processEvents()
 
@@ -741,6 +753,8 @@ class PtuPanel(QWidget):
         tcspc_override = self.tcspc_bins_spin.value()
         ptu_data = self.ptu_data
         logger = ProgressLogger(mode="collect")
+        # Emitting the signal is thread-safe; the slot runs on the main thread.
+        emit_progress = self.reconstruction_progress.emit
 
         def _run():
             return reconstruct_ptu_to_dataset(
@@ -749,6 +763,7 @@ class PtuPanel(QWidget):
                 outputs=outputs,
                 tcspc_channels_override=tcspc_override,
                 logger=logger,
+                progress_callback=emit_progress,
             )
 
         worker = Worker(_run)
@@ -756,10 +771,23 @@ class PtuPanel(QWidget):
             lambda ds: self._on_reconstruction_result(ds, scan_config)
         )
         worker.signals.error.connect(self._on_reconstruction_error)
-        worker.signals.finished.connect(
-            lambda: self.reconstruct_btn.setEnabled(True)
-        )
+        worker.signals.finished.connect(self._reconstruction_cleanup)
         self.threadpool.start(worker)
+
+    def _reconstruction_cleanup(self):
+        self.reconstruct_btn.setEnabled(True)
+        self.recon_progress.setVisible(False)
+
+    @Slot(int, int)
+    def _on_reconstruction_progress(self, done: int, total: int):
+        if total > 0:
+            self.recon_progress.setRange(0, total)
+            self.recon_progress.setValue(done)
+            self.recon_progress.setFormat(f"chunk {done}/{total}")
+        else:
+            # Unknown record count → indeterminate "busy" bar.
+            self.recon_progress.setRange(0, 0)
+            self.recon_progress.setFormat(f"chunk {done}")
 
     @Slot(object)
     def _on_reconstruction_result(self, ds, scan_config):

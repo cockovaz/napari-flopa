@@ -53,7 +53,7 @@ class C:
     # Accent — cyan (contrast / view slider)
     CYAN = "#00dcdc"
     CYAN_DIM = "#00aaaa"
-    CYAN_BG = "#2a4a4a"
+    CYAN_BG = "#1d3535" # "#2a4a4a"
     CYAN_BG_HOV = "#2e5555"
 
     # Accent — red (mask / danger)

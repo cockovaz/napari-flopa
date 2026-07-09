@@ -21,5 +21,5 @@ LETTER = {METADATA: "M", DEFAULT: "D", USER: "U", ESTIMATED: "E"}
 
 
 def letter(source: str) -> str:
-    """One-letter code (M/D/U) for a provenance source; '?' if unknown."""
+    """One-letter code (M/D/U/E) for a provenance source; '?' if unknown."""
     return LETTER.get(source, "?")

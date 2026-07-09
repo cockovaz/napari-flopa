@@ -11,6 +11,7 @@ def reconstruct_ptu_to_dataset(
     outputs: list = None,
     tcspc_channels_override: int = None,
     logger: ProgressLogger = None,
+    progress_callback=None,
 ) -> xr.Dataset:
     """
     Full pipeline: reconstruct from already-loaded PTU data → xarray Dataset.
@@ -22,6 +23,8 @@ def reconstruct_ptu_to_dataset(
                  If None, all outputs are computed.
         tcspc_channels_override: Override the tcspc_bins from constants if provided.
         logger: Optional ProgressLogger.
+        progress_callback: Optional ``callable(done_chunks, total_chunks)`` invoked
+            after each chunk (total_chunks is 0 if the record count is unknown).
 
     Returns:
         xr.Dataset with dimensions (frame, sequence, line, pixel, channel).
@@ -53,12 +56,21 @@ def reconstruct_ptu_to_dataset(
 
     corrector = T3OverflowCorrector(wraparound=constants["wrap"])
 
+    chunk_size = 1_000_000
+    total_records = ptu_data.get("header", {}).get(
+        "TTResult_NumberOfRecords", 0
+    )
+    # ceil division; 0 if the header did not report the record count
+    total_chunks = -(-total_records // chunk_size) if total_records else 0
+
     for chunk_num, chunk in enumerate(
-        reader.iter_chunks(chunk_size=1_000_000), start=1
+        reader.iter_chunks(chunk_size=chunk_size), start=1
     ):
         corrected = corrector.correct(chunk)
         recon.update(corrected)
         logger.log(f"Processed chunk {chunk_num}...")
+        if progress_callback is not None:
+            progress_callback(chunk_num, total_chunks)
         if recon._finished:
             break
 
