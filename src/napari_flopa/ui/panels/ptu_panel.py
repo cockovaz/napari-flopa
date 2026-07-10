@@ -175,16 +175,22 @@ class PtuPanel(QWidget):
         recon_layout = QVBoxLayout(self.recon_group)
 
         output_row = QHBoxLayout()
-        output_row.addWidget(QLabel("Out:"))
+        output_row.addWidget(QLabel("Output:"))
         self.out_combo = QComboBox()
         self.out_combo.addItems(
             [
-                "Intensity only",
-                "Intensity + Mean Lifetime",
-                "All (+ Phasor & Decay)",
+                "Intensity (I)",
+                "I + τ",
+                "All",
             ]
         )
         self.out_combo.setCurrentIndex(2)
+        self.out_combo.setToolTip(
+            "Reconstruction outputs:\n"
+            "Intensity (I): photon-count image only\n"
+            "I + τ: intensity + mean arrival-time (lifetime)\n"
+            "All: also compute phasor coordinates + TCSPC decay"
+        )
         # Without this the combo's minimum fits its longest item
         # ("All (+ Phasor & Decay)"), which alone forced the whole File panel
         # to ~750px min width. AdjustToMinimumContentsLength + a small minimum

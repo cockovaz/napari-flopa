@@ -239,7 +239,7 @@ class FlimViewPanel(QWidget):
         self.intensity_slider.set_name("Counts")
 
         int_ctrl = QVBoxLayout()
-        int_ctrl.setSpacing(2)
+        int_ctrl.setSpacing(3)
         int_ctrl.setContentsMargins(6, 4, 6, 0)
 
         int_row1 = QHBoxLayout()
@@ -319,7 +319,7 @@ class FlimViewPanel(QWidget):
         self.lifetime_slider.set_name("Counts")
 
         lt_ctrl = QVBoxLayout()
-        lt_ctrl.setSpacing(2)
+        lt_ctrl.setSpacing(3)
         lt_ctrl.setContentsMargins(6, 4, 6, 0)
 
         lt_row1 = QHBoxLayout()

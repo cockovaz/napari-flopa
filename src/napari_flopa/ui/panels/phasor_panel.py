@@ -41,7 +41,6 @@ from qtpy.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -158,6 +157,16 @@ class PhasorPanel(QWidget):
 
         tb.addStretch()
 
+        # Monoexponential-lifetime reference overlay — short label here (between
+        # Plot and Save), full explanation in the tooltip.
+        self._lifetimes_check = QCheckBox("τ marks")
+        self._lifetimes_check.setToolTip(
+            "Overlay single-exponential lifetime reference marks on the "
+            "universal semicircle (…, 1 ns, 2 ns, 3 ns …) for the current "
+            "repetition rate, so apparent lifetimes can be read off the plot."
+        )
+        tb.addWidget(self._lifetimes_check)
+        tb.addStretch()
         self._export_combo = QComboBox()
         self._export_combo.addItem("Save plot…", "plot")
         self._export_combo.addItem("Save table…", "table")
@@ -168,26 +177,33 @@ class PhasorPanel(QWidget):
 
         root.addLayout(tb)
 
-        # ── Setup row ──────────────────────────────────────────────────
-        setup_row = QHBoxLayout()
-
-        # -- Mode group --
+        # ── Mode — row 1: Per Object / Per Pixel; row 2: per-pixel display ─
         mode_box = QGroupBox("Mode")
         apply_style(mode_box, SS.GROUP_PRIMARY)
-        mode_lay = QVBoxLayout(mode_box)
-        mode_lay.setSpacing(2)
+        mode_outer = QVBoxLayout(mode_box)
+        mode_outer.setSpacing(3)  # minimal gap between the two rows
+        mode_outer.setContentsMargins(6, 2, 6, 2)
+
+        # Row 1 — object vs pixel
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(10)
         self._per_object_radio = QRadioButton("Per Object")
         self._per_pixel_radio = QRadioButton("Per Pixel")
         self._per_object_radio.setChecked(True)
-        mode_lay.addWidget(self._per_object_radio)
-        mode_lay.addWidget(self._per_pixel_radio)
+        mode_row.addWidget(self._per_object_radio)
+        mode_row.addWidget(self._per_pixel_radio)
+        mode_row.addStretch()
         self._per_object_radio.toggled.connect(
             lambda _: self._cancel_roi_if_active()
         )
         self._per_pixel_radio.toggled.connect(
             lambda _: self._cancel_roi_if_active()
         )
+        mode_outer.addLayout(mode_row)
 
+        # Row 2 — per-pixel display controls (enabled only in Per Pixel mode)
+        px_row = QHBoxLayout()
+        px_row.setSpacing(6)
         self._pixel_mode_group = QButtonGroup(self)
         self._pm_scatter = QRadioButton("Scatter")
         self._pm_intensity = QRadioButton("Intensity α")
@@ -201,74 +217,60 @@ class PhasorPanel(QWidget):
             "(brighter = more photons, color stays the same)"
         )
         self._pm_density.setToolTip(
-            "2D histogram density (imshow, uses Cmap below)"
+            "2D histogram density (imshow / hexbin, uses Cmap)"
         )
-        for rb in (self._pm_scatter, self._pm_intensity, self._pm_density):
-            self._pixel_mode_group.addButton(
-                rb,
-                {
-                    self._pm_scatter: self.PM_SCATTER,
-                    self._pm_intensity: self.PM_INTENSITY,
-                    self._pm_density: self.PM_DENSITY,
-                }[rb],
-            )
-            if rb is self._pm_density:
-                density_row = QHBoxLayout()
-                density_row.setSpacing(4)
-                density_row.addWidget(self._pm_density)
-                self._hexbin_check = QCheckBox("Hexbin")
-                self._hexbin_check.setToolTip(
-                    "Unchecked: square histogram (imshow)\n"
-                    "Checked: hexagonal bins (hexbin)"
-                )
-                density_row.addWidget(self._hexbin_check)
-                mode_lay.addLayout(density_row)
-            else:
-                mode_lay.addWidget(rb)
+        for rb, mode_id in (
+            (self._pm_scatter, self.PM_SCATTER),
+            (self._pm_intensity, self.PM_INTENSITY),
+            (self._pm_density, self.PM_DENSITY),
+        ):
+            self._pixel_mode_group.addButton(rb, mode_id)
+            px_row.addWidget(rb)
 
-        self._pixel_submode_widget = QWidget()
-        # pixel sub-mode widgets are already added to mode_lay above,
-        # keep a reference to enable/disable them together
-        self._pixel_submodes = [
-            self._pm_scatter,
-            self._pm_intensity,
-            self._pm_density,
-        ]
+        self._hexbin_check = QCheckBox("Hex")
+        self._hexbin_check.setToolTip(
+            "Density bin shape — unchecked: square histogram (imshow); "
+            "checked: hexagonal bins (hexbin). Density mode only."
+        )
+        px_row.addWidget(self._hexbin_check)
 
-        setup_row.addWidget(mode_box)
-
-        # -- Mask + cmap --
-        mask_box = QGroupBox("Mask")
-        apply_style(mask_box, SS.GROUP_PRIMARY)
-        mask_lay = QGridLayout(mask_box)
-        mask_lay.setVerticalSpacing(3)
-
-        mask_lay.addWidget(QLabel("Mask layer:"), 0, 0)
-        self._mask_combo = QComboBox()
-        self._mask_combo.addItem("None")
-        self._mask_combo.setMinimumWidth(100)
-        mask_lay.addWidget(self._mask_combo, 0, 1)
-
-        mask_lay.addWidget(QLabel("Cmap (density):"), 1, 0)
+        # px_row.addWidget(QLabel("Cmap:"))
         self._cmap_combo = QComboBox()
         self._cmap_combo.addItems(
             ["hot", "inferno", "plasma", "viridis", "magma", "rainbow"]
         )
         self._cmap_combo.setMaximumWidth(85)
-        mask_lay.addWidget(self._cmap_combo, 1, 1)
+        px_row.addWidget(self._cmap_combo)
+        px_row.addStretch()
+        mode_outer.addLayout(px_row)
 
-        self._lifetimes_check = QCheckBox("Monoexp. τ on circle")
-        self._lifetimes_check.setToolTip(
-            "Draw 1 ns, 2 ns, … tick marks on the universal semicircle"
+        self._pixel_submodes = [
+            self._pm_scatter,
+            self._pm_intensity,
+            self._pm_density,
+        ]
+        root.addWidget(mode_box)
+
+        # ── Mask ───────────────────────────────────────────────────────
+        mask_box = QGroupBox("Mask")
+        apply_style(mask_box, SS.GROUP_PRIMARY)
+        mask_lay = QHBoxLayout(mask_box)
+        mask_lay.setSpacing(6)
+        mask_lay.setContentsMargins(6, 2, 6, 2)
+        mask_lay.addWidget(QLabel("Mask layer:"))
+        self._mask_combo = QComboBox()
+        self._mask_combo.addItem("None")
+        self._mask_combo.setMinimumWidth(100)
+        # Give the combo the row's spare width (stretch factor 1) instead of an
+        # addStretch() spacer, so it expands from the label to the end and shows
+        # long layer names — no fixed width.
+        self._mask_combo.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed
         )
-        mask_lay.addWidget(self._lifetimes_check, 2, 0, 1, 2)
+        mask_lay.addWidget(self._mask_combo, 1)
+        root.addWidget(mask_box)
 
-        setup_row.addWidget(mask_box)
-
-        # setup_row now holds only Mode + Mask (2 columns) to keep the tab narrow.
-        root.addLayout(setup_row)
-
-        # -- Smoothing (moved out of setup_row to its own row above Calibration) --
+        # -- Smoothing (own row, above Calibration) --
         smooth_box = QGroupBox("Smoothing")
         apply_style(smooth_box, SS.GROUP_CHECKABLE)
         smooth_box.setCheckable(True)
