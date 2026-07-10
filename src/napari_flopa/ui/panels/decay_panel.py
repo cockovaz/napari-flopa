@@ -202,7 +202,7 @@ class DecayPanel(QWidget):
         shift_lay.addWidget(self._shift_spin)
         sr.addWidget(shift_box)
 
-        #sr.addStretch()
+        # sr.addStretch()
         root.addLayout(sr)
         root.addStretch()
         # ── Matplotlib canvas ──────────────────────────────────────────

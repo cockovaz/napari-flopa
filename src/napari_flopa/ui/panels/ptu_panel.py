@@ -190,10 +190,10 @@ class PtuPanel(QWidget):
         # to ~750px min width. AdjustToMinimumContentsLength + a small minimum
         # lets it shrink (eliding) when the dock is narrow; stretch=1 makes it
         # expand to show the full text when there's room.
-        #self.out_combo.setSizeAdjustPolicy(
+        # self.out_combo.setSizeAdjustPolicy(
         #     QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLength
         # )
-        #self.out_combo.setMinimumContentsLength(8)
+        # self.out_combo.setMinimumContentsLength(8)
         output_row.addWidget(self.out_combo, 1)
         self.reconstruct_btn = QPushButton("Reconstruct")
         self.reconstruct_btn.clicked.connect(self._run_reconstruction)
@@ -338,7 +338,7 @@ class PtuPanel(QWidget):
         self.bidir_group.setCheckable(True)
         self.bidir_group.setChecked(False)
         bidir_layout = QHBoxLayout(self.bidir_group)
-        bidir_layout.setContentsMargins(0,0, 0, 0)
+        bidir_layout.setContentsMargins(0, 0, 0, 0)
 
         bidir_layout.addWidget(QLabel("Phase Shift:"))
         self.bidir_phase_spin = QDoubleSpinBox()
@@ -346,9 +346,9 @@ class PtuPanel(QWidget):
         self.bidir_phase_spin.setSingleStep(0.0001)
         self.bidir_phase_spin.setDecimals(5)
         self.bidir_phase_spin.setValue(0.0)
-        #self.bidir_phase_spin.setMinimumWidth(70)
+        # self.bidir_phase_spin.setMinimumWidth(70)
         bidir_layout.addWidget(self.bidir_phase_spin)
-        #bidir_layout.addStretch()
+        # bidir_layout.addStretch()
 
         # Compact Est./Plot buttons, matched to the same small height.
         self.estimate_btn = QPushButton("Est.")
@@ -696,7 +696,7 @@ class PtuPanel(QWidget):
         ax.set_xlabel("Phase shift", fontsize=8, color=MPL.TICK)
         ax.set_ylabel("Score", fontsize=8, color=MPL.TICK)
         ax.tick_params(labelsize=7, colors=MPL.TICK)
-        ax.tick_params(axis='x', labelrotation = 45)
+        ax.tick_params(axis="x", labelrotation=45)
         for spine in ax.spines.values():
             spine.set_color(MPL.SPINE)
         ax.legend(fontsize=7, labelcolor=MPL.TICK, facecolor=MPL.AXES_BG)
