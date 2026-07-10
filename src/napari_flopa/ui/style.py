@@ -236,6 +236,29 @@ class SS:  # "Style" — Qt stylesheet strings
     }}
     """
 
+    # Checkable subsection (e.g. Bidirectional Scan, Smoothing, Calibration).
+    # Explicit BG_SECTION fill so it matches a surrounding section exactly (a
+    # stylesheet with no background-color makes Qt paint the darker default
+    # window colour instead). Extra top margin keeps the checkable title clear
+    # of the row below it; plain gray title.
+    GROUP_CHECKABLE = f"""
+    QGroupBox {{
+        background-color: {C.BG_SECTION};
+        border: none;
+        margin-top: 16px;
+        padding-top: 2px;
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        subcontrol-position: top left;
+        left: 2px;
+        padding: 0px 3px;
+        font-size: 11pt;
+        color: {C.TITLE_PLAIN};
+        background-color: {C.BG_SECTION};
+    }}
+    """
+
     # Top-level dock container title in teal — used for FLIM View and similar wrappers.
     GROUP_DOCK = f"""
     QGroupBox {{
@@ -266,11 +289,14 @@ class SS:  # "Style" — Qt stylesheet strings
     }}
     """
 
-    # ── Log / console ─────────────────────────────────────────────────────────
+    # ── Log / console / header views ──────────────────────────────────────────
+    # Shared by the reconstruction log (QPlainTextEdit) and the header info
+    # summary + full-header dialog (QTextEdit) so all mono text panels match.
 
     LOG = (
-        f"QPlainTextEdit {{ background: {C.BG_DEEP}; color: {C.TEXT_MUTED}; "
-        f"border: 1px solid {C.BORDER_SOFT}; font-family: monospace; font-size: 9px; }}"
+        f"QPlainTextEdit, QTextEdit {{ background: {C.BG_DEEP}; color: {C.TEXT_MUTED}; "
+        f"border: 1px solid {C.BORDER_SOFT}; font-family: Courier, monospace; "
+        f"font-size: 8pt; }}"
     )
 
 

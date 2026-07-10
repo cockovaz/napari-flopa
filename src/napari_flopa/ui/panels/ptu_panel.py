@@ -14,7 +14,6 @@ from matplotlib.figure import Figure
 from ptuio.reconstructor import ScanConfig
 from ptuio.utils import estimate_bidirectional_shift
 from qtpy.QtCore import Qt, QThreadPool, Signal, Slot
-from qtpy.QtGui import QFont
 from qtpy.QtWidgets import (
     QApplication,
     QComboBox,
@@ -22,7 +21,6 @@ from qtpy.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -31,6 +29,7 @@ from qtpy.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTextEdit,
     QVBoxLayout,
@@ -51,7 +50,7 @@ from napari_flopa.core.processing.reconstruction import (
     reconstruct_ptu_to_dataset,
 )
 from napari_flopa.ui.state import FlopaState
-from napari_flopa.ui.style import SS, apply_style
+from napari_flopa.ui.style import MPL, SS, apply_style
 from napari_flopa.ui.utils.threading import Worker
 
 
@@ -116,16 +115,25 @@ class PtuPanel(QWidget):
         apply_style(file_group, SS.GROUP_PRIMARY)
         file_layout = QVBoxLayout(file_group)
         self.file_label = QLabel("No file selected.")
+        # Long .ptu names would otherwise stretch the whole panel wide; wrap
+        # (breaking anywhere, since filenames have no spaces) so the label's
+        # width stops driving the panel's minimum width.
+        self.file_label.setWordWrap(True)
+        self.file_label.setMinimumWidth(1)
+        self.file_label.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred
+        )
         btn_row = QHBoxLayout()
-        self.select_ptu_btn = QPushButton("Read PTU file...")
+        self.select_ptu_btn = QPushButton("Read PTU...")
         self.select_ptu_btn.clicked.connect(self._select_ptu_file)
-        self.load_demo_btn = QPushButton("Load Demo file...")
+        self.load_demo_btn = QPushButton("Load Demo")
         self.load_demo_btn.setToolTip(
             "Load the bundled demo PTU file with preset scan parameters"
         )
         self.load_demo_btn.clicked.connect(self._on_load_demo)
         btn_row.addWidget(self.select_ptu_btn)
         btn_row.addWidget(self.load_demo_btn)
+        btn_row.addStretch()
         file_layout.addWidget(self.file_label)
         file_layout.addLayout(btn_row)
         main_layout.addWidget(file_group)
@@ -136,8 +144,8 @@ class PtuPanel(QWidget):
         header_layout = QVBoxLayout(self.header_group)
         self.header_info = QTextEdit()
         self.header_info.setReadOnly(True)
-        self.header_info.setFont(QFont("Courier", 6))
         self.header_info.setFixedHeight(100)
+        apply_style(self.header_info, SS.LOG)  # match the log editor look
         header_layout.addWidget(self.header_info)
 
         marker_row = QHBoxLayout()
@@ -151,6 +159,7 @@ class PtuPanel(QWidget):
         self.full_header_btn.clicked.connect(self._show_full_header)
         marker_row.addWidget(self.markers_btn)
         marker_row.addWidget(self.full_header_btn)
+        marker_row.addStretch()
         header_layout.addLayout(marker_row)
         main_layout.addWidget(self.header_group)
         self.header_group.setVisible(False)
@@ -166,7 +175,7 @@ class PtuPanel(QWidget):
         recon_layout = QVBoxLayout(self.recon_group)
 
         output_row = QHBoxLayout()
-        output_row.addWidget(QLabel("Output:"))
+        output_row.addWidget(QLabel("Out:"))
         self.out_combo = QComboBox()
         self.out_combo.addItems(
             [
@@ -176,9 +185,17 @@ class PtuPanel(QWidget):
             ]
         )
         self.out_combo.setCurrentIndex(2)
-        output_row.addWidget(self.out_combo)
-        output_row.addStretch()
-        self.reconstruct_btn = QPushButton("Reconstruct Image")
+        # Without this the combo's minimum fits its longest item
+        # ("All (+ Phasor & Decay)"), which alone forced the whole File panel
+        # to ~750px min width. AdjustToMinimumContentsLength + a small minimum
+        # lets it shrink (eliding) when the dock is narrow; stretch=1 makes it
+        # expand to show the full text when there's room.
+        #self.out_combo.setSizeAdjustPolicy(
+        #     QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLength
+        # )
+        #self.out_combo.setMinimumContentsLength(8)
+        output_row.addWidget(self.out_combo, 1)
+        self.reconstruct_btn = QPushButton("Reconstruct")
         self.reconstruct_btn.clicked.connect(self._run_reconstruction)
         output_row.addWidget(self.reconstruct_btn)
         recon_layout.addLayout(output_row)
@@ -198,15 +215,14 @@ class PtuPanel(QWidget):
         info_layout = QVBoxLayout(self.info_group)
         self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setFixedHeight(120)
+        self.log_text.setMinimumHeight(120)
         apply_style(self.log_text, SS.LOG)
-        # Override font size to match header_info (8pt > 9px from SS.LOG)
-        self.log_text.setStyleSheet(
-            self.log_text.styleSheet()
-            + "\nQPlainTextEdit { font-family: Courier; font-size: 8pt; }"
-        )
         info_layout.addWidget(self.log_text)
-        main_layout.addWidget(self.info_group)
+        # Stretch factor 1 → the log fills the leftover panel height (growing
+        # from its 120px minimum). While it's still hidden on init, the trailing
+        # addStretch() below absorbs the space instead, so nothing balloons.
+        main_layout.addWidget(self.info_group, 1)
+        self.info_group.setVisible(False)
 
         main_layout.addStretch()
 
@@ -215,18 +231,16 @@ class PtuPanel(QWidget):
         apply_style(group, SS.GROUP_PRIMARY)
         main_layout = QVBoxLayout(group)
 
-        grid = QGridLayout()
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-
-        # Left column
-        left = QGroupBox()
-        left.setFlat(True)
-        lf = QFormLayout(left)
+        # Single-column form. napari's spinboxes have a large minimum width, so
+        # a 2-column grid forced the whole panel wide; stacking every scalar
+        # parameter in one column keeps the dock narrow and the labels aligned.
+        form = QFormLayout()
+        form.setVerticalSpacing(4)
 
         def _spin_row(name, spinbox):
             # Row = [spinbox] [provenance dot] [stretch]; registers the field
             # so its source dot updates and flips to "user" on manual edits.
+            spinbox.setMinimumWidth(40)
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.addWidget(spinbox)
@@ -243,88 +257,88 @@ class PtuPanel(QWidget):
         self.lines_spin = QSpinBox()
         self.lines_spin.setRange(1, 10000)
         self.lines_spin.setValue(512)
-        self.lines_spin.setMinimumWidth(40)
-        lf.addRow("Lines:", _spin_row("lines", self.lines_spin))
+        form.addRow("Lines:", _spin_row("lines", self.lines_spin))
 
         self.pixels_spin = QSpinBox()
         self.pixels_spin.setRange(1, 10000)
         self.pixels_spin.setValue(512)
-        self.pixels_spin.setMinimumWidth(40)
-        lf.addRow("Pixels:", _spin_row("pixels", self.pixels_spin))
+        form.addRow("Pixels:", _spin_row("pixels", self.pixels_spin))
 
         self.frames_spin = QSpinBox()
         self.frames_spin.setRange(1, 1000)
         self.frames_spin.setValue(1)
-        self.frames_spin.setMinimumWidth(40)
-        lf.addRow("Frames:", _spin_row("frames", self.frames_spin))
+        form.addRow("Frames:", _spin_row("frames", self.frames_spin))
 
         self.tcspc_bins_spin = QSpinBox()
         self.tcspc_bins_spin.setRange(1, 65536)
         self.tcspc_bins_spin.setValue(4096)
-        self.tcspc_bins_spin.setMinimumWidth(40)
-        lf.addRow("TCSPC Bins:", _spin_row("tcspc_bins", self.tcspc_bins_spin))
+        form.addRow(
+            "TCSPC Bins:", _spin_row("tcspc_bins", self.tcspc_bins_spin)
+        )
 
         self.max_detector_spin = QSpinBox()
         self.max_detector_spin.setRange(1, 128)
         self.max_detector_spin.setValue(2)
-        self.max_detector_spin.setMinimumWidth(40)
-        lf.addRow(
-            "Max Det.:", _spin_row("max_detector", self.max_detector_spin)
+        form.addRow(
+            "Max detectors:", _spin_row("max_detector", self.max_detector_spin)
         )
 
-        grid.addWidget(left, 0, 0)
-
-        # Right column — sequences + accumulations
-        right = QGroupBox()
-        right.setFlat(True)
-        rf = QFormLayout(right)
-        rf.setVerticalSpacing(4)
-
+        # Rep. rate / N Sequences / Accumulations continue in the same column,
+        # directly under Max Det.
         self.frep_spin = QDoubleSpinBox()
         self.frep_spin.setRange(0.001, 500.0)
         self.frep_spin.setValue(40.0)
         self.frep_spin.setDecimals(3)
-        self.frep_spin.setMinimumWidth(40)
         self.frep_spin.setToolTip(
             "Laser/excitation repetition rate — auto-filled from file header.\n"
             "Used for phasor calibration and lifetime calculation."
         )
         self.frep_spin.valueChanged.connect(lambda v: self.state.set_frep(v))
-        rf.addRow("Rep. rate (MHz):", _spin_row("frep", self.frep_spin))
+        form.addRow("Rep. rate (MHz):", _spin_row("frep", self.frep_spin))
 
         self.sequences_spin = QSpinBox()
         self.sequences_spin.setRange(1, 16)
         self.sequences_spin.setValue(1)
-        self.sequences_spin.setMinimumWidth(40)
         self.sequences_spin.valueChanged.connect(
             self._update_accumulation_widgets
         )
-        rf.addRow("N Sequences:", _spin_row("sequences", self.sequences_spin))
+        form.addRow(
+            "N sequences:", _spin_row("sequences", self.sequences_spin)
+        )
 
+        main_layout.addLayout(form)
+
+        # Accumulations — its own row (label + scroll in an HBox) rather than a
+        # form field, so it spans the full panel width instead of the narrow
+        # form-field column.
         self.accu_scroll = QScrollArea()
         self.accu_scroll.setWidgetResizable(True)
-        self.accu_scroll.setMinimumHeight(60)
-        self.accu_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # self.accu_scroll.setMinimumHeight(60)
+        # self.accu_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.accu_container = QWidget()
         self.accu_container_layout = QVBoxLayout(self.accu_container)
         self.accu_container_layout.setContentsMargins(2, 2, 2, 2)
         self.accu_container_layout.setSpacing(2)
         self.accu_scroll.setWidget(self.accu_container)
         self.accu_spinboxes = []
-        accu_label = QLabel("Accumulations")
+        accu_label = QLabel("Accumulation:")
         accu_label.setToolTip("Number of line accumulations per sequence")
-        rf.addRow(accu_label, self.accu_scroll)
 
-        grid.addWidget(right, 0, 1)
-        main_layout.addLayout(grid)
+        accu_row = QHBoxLayout()
+        accu_row.addWidget(accu_label, alignment=Qt.AlignTop)
+        accu_row.addWidget(self.accu_scroll)
+        main_layout.addLayout(accu_row)
 
-        # Bidirectional
+        # --- Bidirectional (nested, checkable subsection) ---
+        # GROUP_NESTED sets no background-color, so the box is transparent and
+        # inherits the Scan Configuration tint — its content area matches the
+        # surrounding box exactly.
         self.bidir_group = QGroupBox("Bidirectional Scan")
-        self.bidir_group.setObjectName("plain")
-        apply_style(self.bidir_group, SS.GROUP_PRIMARY)
+        apply_style(self.bidir_group, SS.GROUP_CHECKABLE)
         self.bidir_group.setCheckable(True)
         self.bidir_group.setChecked(False)
         bidir_layout = QHBoxLayout(self.bidir_group)
+        bidir_layout.setContentsMargins(0,0, 0, 0)
 
         bidir_layout.addWidget(QLabel("Phase Shift:"))
         self.bidir_phase_spin = QDoubleSpinBox()
@@ -332,31 +346,36 @@ class PtuPanel(QWidget):
         self.bidir_phase_spin.setSingleStep(0.0001)
         self.bidir_phase_spin.setDecimals(5)
         self.bidir_phase_spin.setValue(0.0)
-        self.bidir_phase_spin.setMinimumWidth(80)
+        #self.bidir_phase_spin.setMinimumWidth(70)
         bidir_layout.addWidget(self.bidir_phase_spin)
+        #bidir_layout.addStretch()
 
-        bidir_layout.addSpacing(10)
-        self.estimate_btn = QPushButton("Estimate")
+        # Compact Est./Plot buttons, matched to the same small height.
+        self.estimate_btn = QPushButton("Est.")
+        self.estimate_btn.setToolTip("Estimate bidirectional phase shift")
+        self.estimate_btn.setFixedHeight(22)
+        self.estimate_btn.setStyleSheet(SS.BTN_SMALL)
         self.estimate_btn.clicked.connect(self._on_estimate_shift)
         bidir_layout.addWidget(self.estimate_btn)
 
         self.plot_shift_btn = QPushButton("Plot")
         self.plot_shift_btn.setEnabled(False)
         self.plot_shift_btn.setToolTip("Plot shift correlation curve")
+        self.plot_shift_btn.setFixedHeight(22)
+        self.plot_shift_btn.setStyleSheet(SS.BTN_SMALL)
         self.plot_shift_btn.clicked.connect(self._on_plot_shift)
         bidir_layout.addWidget(self.plot_shift_btn)
         bidir_layout.addStretch()
 
-        self.save_config_btn = QPushButton("Save Config")
-        self.save_config_btn.setToolTip("Save scan parameters to a TOML file")
-        self.save_config_btn.setStyleSheet("text-align: center;")
-        self.save_config_btn.clicked.connect(self._on_save_config_toml)
+        main_layout.addWidget(self.bidir_group)
 
-        bidir_row = QHBoxLayout()
-        bidir_row.setContentsMargins(0, 0, 0, 0)
-        bidir_row.addWidget(self.bidir_group)
-        bidir_row.addWidget(self.save_config_btn)
-        main_layout.addLayout(bidir_row)
+        # --- Save scan config (full-width, at the end) ---
+        self.save_config_btn = QPushButton("Save Configuration")
+        self.save_config_btn.setToolTip("Save scan parameters to a TOML file")
+        self.save_config_btn.clicked.connect(self._on_save_config_toml)
+        # Added straight to the vertical layout (no wrapping HBox/stretch) so the
+        # button stretches to the full width of the panel.
+        main_layout.addWidget(self.save_config_btn)
 
         self._update_accumulation_widgets()
         return group
@@ -405,7 +424,7 @@ class PtuPanel(QWidget):
         if not filepath_str:
             return
         self.ptu_filepath = Path(filepath_str)
-        self.file_label.setText(f"PTU: {self.ptu_filepath.name}")
+        self.file_label.setText(f"file: {self.ptu_filepath.name}")
         try:
             self.ptu_data = read_ptu_file(str(self.ptu_filepath), header=False)
             tags = self.ptu_data["header"]
@@ -449,6 +468,7 @@ class PtuPanel(QWidget):
             self.header_group.setVisible(True)
             self.config_group.setVisible(True)
             self.recon_group.setVisible(True)
+            self.info_group.setVisible(True)
             self.log_text.clear()
             self.shift_plot_data = None
             self.plot_shift_btn.setEnabled(False)
@@ -518,6 +538,7 @@ class PtuPanel(QWidget):
             self.header_group.setVisible(True)
             self.config_group.setVisible(True)
             self.recon_group.setVisible(True)
+            self.info_group.setVisible(True)
             self.log_text.clear()
             self.shift_plot_data = None
             self.plot_shift_btn.setEnabled(False)
@@ -539,7 +560,7 @@ class PtuPanel(QWidget):
         layout = QVBoxLayout(dlg)
         te = QTextEdit()
         te.setReadOnly(True)
-        te.setFont(QFont("Courier", 8))
+        apply_style(te, SS.LOG)  # unify colours with the log editor
         te.setPlainText(full_text)
         layout.addWidget(te)
         close_btn = QPushButton("Close")
@@ -589,7 +610,7 @@ class PtuPanel(QWidget):
             row = QWidget()
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.addWidget(QLabel(f"S{i+1}:"))
+            row_layout.addWidget(QLabel(f"S{i+1}"))
             spin = QSpinBox()
             spin.setRange(1, 1000)
             spin.setValue(1)
@@ -645,7 +666,7 @@ class PtuPanel(QWidget):
             self._log_line(f"Error: {e}\n{traceback.format_exc()}")
         finally:
             self._log_commit()
-            self.estimate_btn.setText("Estimate")
+            self.estimate_btn.setText("Est.")
 
     def _on_plot_shift(self):
         if self.shift_plot_data is None:
@@ -653,23 +674,33 @@ class PtuPanel(QWidget):
         dlg = QDialog(self)
         dlg.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         dlg.setWindowTitle("Bidirectional Shift Estimation")
-        dlg.resize(500, 350)
+        dlg.resize(420, 300)
         layout = QVBoxLayout(dlg)
-        canvas = FigureCanvas(Figure(figsize=(5, 3.5)))
+        # Compact, dark-themed figure that fits the dialog (smaller fonts,
+        # thinner lines, tight_layout so the axes/labels aren't clipped).
+        fig = Figure(figsize=(4.0, 2.6), dpi=100, facecolor=MPL.FIG_BG)
+        canvas = FigureCanvas(fig)
         layout.addWidget(canvas)
-        ax = canvas.figure.subplots()
+        ax = fig.subplots()
+        ax.set_facecolor(MPL.AXES_BG)
         shifts, scores, fit = self.shift_plot_data
-        ax.plot(shifts, scores, "o-", label="correlation")
-        ax.plot(shifts, fit, "--", label="Gaussian fit")
+        ax.plot(shifts, scores, "o-", ms=3, lw=1, label="correlation")
+        ax.plot(shifts, fit, "--", lw=1, label="Gaussian fit")
         ax.axvline(
             self.bidir_phase_spin.value(),
             color="r",
             linestyle=":",
+            lw=1,
             label=f"best={self.bidir_phase_spin.value():.5f}",
         )
-        ax.set_xlabel("Phase shift")
-        ax.set_ylabel("Score")
-        ax.legend()
+        ax.set_xlabel("Phase shift", fontsize=8, color=MPL.TICK)
+        ax.set_ylabel("Score", fontsize=8, color=MPL.TICK)
+        ax.tick_params(labelsize=7, colors=MPL.TICK)
+        ax.tick_params(axis='x', labelrotation = 45)
+        for spine in ax.spines.values():
+            spine.set_color(MPL.SPINE)
+        ax.legend(fontsize=7, labelcolor=MPL.TICK, facecolor=MPL.AXES_BG)
+        fig.tight_layout()
         canvas.draw()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(dlg.accept)

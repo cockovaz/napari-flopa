@@ -181,19 +181,19 @@ class FlimViewPanel(QWidget):
         frame_sel = QSpinBox()
         frame_sel.setRange(0, max(0, n_frames - 1))
         frame_sel.setMaximumWidth(50)
-        sum_frames = QCheckBox("Agg")
+        sum_frames = QCheckBox("∑")
         sum_frames.setEnabled(n_frames > 1)
         sum_frames.setToolTip("Sum all frames into one image")
         seq_sel = QSpinBox()
         seq_sel.setRange(0, max(0, n_sequences - 1))
         seq_sel.setMaximumWidth(50)
-        sum_seqs = QCheckBox("Agg")
+        sum_seqs = QCheckBox("∑")
         sum_seqs.setEnabled(n_sequences > 1)
         sum_seqs.setToolTip("Sum all sequences into one image")
         chan_sel = QSpinBox()
         chan_sel.setRange(0, max(0, n_channels - 1))
         chan_sel.setMaximumWidth(50)
-        sum_chans = QCheckBox("Agg")
+        sum_chans = QCheckBox("∑")
         sum_chans.setEnabled(n_channels > 1)
         sum_chans.setToolTip("Sum all detector channels into one image")
 
@@ -240,10 +240,10 @@ class FlimViewPanel(QWidget):
 
         int_ctrl = QVBoxLayout()
         int_ctrl.setSpacing(2)
-        int_ctrl.setContentsMargins(6, 0, 6, 0)
+        int_ctrl.setContentsMargins(6, 4, 6, 0)
 
         int_row1 = QHBoxLayout()
-        int_row1.setSpacing(2)
+        int_row1.setSpacing(3)
         self.show_intensity = QCheckBox("Show")
         self.show_intensity.setChecked(True)
         self.show_intensity.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -320,10 +320,10 @@ class FlimViewPanel(QWidget):
 
         lt_ctrl = QVBoxLayout()
         lt_ctrl.setSpacing(2)
-        lt_ctrl.setContentsMargins(6, 0, 6, 0)
+        lt_ctrl.setContentsMargins(6, 4, 6, 0)
 
         lt_row1 = QHBoxLayout()
-        lt_row1.setSpacing(2)
+        lt_row1.setSpacing(3)
         self.show_lifetime = QCheckBox("Show")
         self.show_lifetime.setChecked(True)
         self.show_lifetime.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -379,14 +379,15 @@ class FlimViewPanel(QWidget):
         exp_group = QGroupBox("Export")
         apply_style(exp_group, SS.GROUP_PRIMARY)
         el = QVBoxLayout(exp_group)
-        el.setSpacing(4)
-        el.setContentsMargins(4, 4, 4, 4)
+        el.setSpacing(8)
+        el.setContentsMargins(4, 4, 4, 2)
 
         has_flim = has_intensity and has_lifetime
 
         # Row 1: one checkbox per export type
         chk_row = QHBoxLayout()
-        chk_row.setSpacing(4)
+        chk_row.setSpacing(2)
+        # chk_row.setContentsMargins(6, 0, 6, 0)
         self.exp_int_chk = QCheckBox("Intensity")
         self.exp_int_chk.setEnabled(has_intensity)
         self.exp_int_chk.setChecked(has_intensity)
@@ -402,7 +403,7 @@ class FlimViewPanel(QWidget):
 
         # Row 2: shared Single / Stack radio buttons
         rb_row = QHBoxLayout()
-        rb_row.setSpacing(6)
+        rb_row.setSpacing(2)
         self._exp_single_rb = QRadioButton("Single")
         self._exp_single_rb.setChecked(True)
         self._exp_stack_rb = QRadioButton("Stack")
@@ -426,11 +427,10 @@ class FlimViewPanel(QWidget):
         shape_lbl.setWordWrap(True)
         el.addWidget(shape_lbl)
 
-        # Row 3: Save button
+        # Row 3: Save + "→ RGB FLIM layer" side by side.
         self.export_save_btn = QPushButton("Save")
         self.export_save_btn.setEnabled(False)
         self.export_save_btn.clicked.connect(self._on_export_save)
-        el.addWidget(self.export_save_btn)
 
         # Add the current FLIM RGB composite as a static napari layer (same
         # image as the RGB export, but kept in the viewer).
@@ -441,7 +441,16 @@ class FlimViewPanel(QWidget):
             "colormap and smoothing) as a static napari image layer."
         )
         self.gen_flim_btn.clicked.connect(self._generate_flim_layer)
-        el.addWidget(self.gen_flim_btn)
+
+        save_row = QHBoxLayout()
+        save_row.setSpacing(2)
+        save_row.addWidget(self.export_save_btn)
+        save_row.addWidget(self.gen_flim_btn)
+        el.addLayout(save_row)
+        # Pack rows to the top (like int_ctrl/lt_ctrl) so the extra height from
+        # the taller Intensity/Lifetime boxes doesn't spread the rows apart —
+        # keeps the inter-row spacing matching the other columns.
+        el.addStretch()
 
         grid.addWidget(exp_group, 0, 3)
 

@@ -202,11 +202,13 @@ class DecayPanel(QWidget):
         shift_lay.addWidget(self._shift_spin)
         sr.addWidget(shift_box)
 
-        sr.addStretch()
+        #sr.addStretch()
         root.addLayout(sr)
-
+        root.addStretch()
         # ── Matplotlib canvas ──────────────────────────────────────────
-        self._fig = Figure(figsize=(8, 4), tight_layout=True)
+        # Small default size (keeps the initial dock narrow); the Expanding
+        # size policy + widgetResizable scroll area stretch it to fill the tab.
+        self._fig = Figure(figsize=(4.5, 4.5), tight_layout=True)
         self._fig.patch.set_facecolor(MPL.FIG_BG)
         self._ax = self._fig.add_subplot(111)
         self._ax.set_facecolor(MPL.AXES_BG)
@@ -217,6 +219,7 @@ class DecayPanel(QWidget):
         self._canvas.setMaximumHeight(550)
         root.addWidget(self._canvas)
         self._draw_empty()
+        self._canvas.setVisible(False)  # hidden until the first plot
 
         # ── Per-detector toggle buttons ────────────────────────────────
         self._det_row_widget = QWidget()
@@ -305,6 +308,8 @@ class DecayPanel(QWidget):
             self._status.setText("TCSPC data ready. Click 'Plot'.")
         self._plotted_view = None
         self._stale.setVisible(False)
+        self._curves = []
+        self._canvas.setVisible(False)  # hide until (re)plotted
 
     @Slot(dict)
     def on_view_changed(self, settings: dict):
@@ -527,6 +532,8 @@ class DecayPanel(QWidget):
         appending a "… +N more" label when over the cap.  Y floor: 1.0 for log,
         1e-4 for normalised log.
         """
+        # Show the canvas only once there are curves to draw (matches phasor).
+        self._canvas.setVisible(bool(self._curves))
         if not self._curves:
             self._draw_empty()
             return

@@ -265,8 +265,12 @@ class PhasorPanel(QWidget):
 
         setup_row.addWidget(mask_box)
 
-        # -- Smoothing --
+        # setup_row now holds only Mode + Mask (2 columns) to keep the tab narrow.
+        root.addLayout(setup_row)
+
+        # -- Smoothing (moved out of setup_row to its own row above Calibration) --
         smooth_box = QGroupBox("Smoothing")
+        apply_style(smooth_box, SS.GROUP_CHECKABLE)
         smooth_box.setCheckable(True)
         smooth_box.setChecked(False)
         smooth_lay = QFormLayout(smooth_box)
@@ -274,14 +278,17 @@ class PhasorPanel(QWidget):
         self._smooth_spin.setRange(3, 19)
         self._smooth_spin.setSingleStep(2)  # odd kernel sizes only
         self._smooth_spin.setValue(3)
-        smooth_lay.addRow("Kernel:", self._smooth_spin)
+        kernel_row = QHBoxLayout()
+        kernel_row.setContentsMargins(0, 0, 0, 0)
+        kernel_row.addWidget(self._smooth_spin)
+        kernel_row.addStretch()  # keep the spinbox compact
+        smooth_lay.addRow("Kernel:", kernel_row)
         self._smooth_group = smooth_box
-        setup_row.addWidget(smooth_box)
-
-        root.addLayout(setup_row)
+        root.addWidget(smooth_box)
 
         # ── Calibration ────────────────────────────────────────────────
         cal_box = QGroupBox("Calibration")
+        apply_style(cal_box, SS.GROUP_CHECKABLE)
         cal_box.setCheckable(True)
         cal_box.setChecked(False)
         cal_lay = QHBoxLayout(cal_box)
@@ -332,9 +339,12 @@ class PhasorPanel(QWidget):
         splitter = QSplitter(Qt.Vertical)
 
         cw = QWidget()
+        self._plot_area = cw  # hidden until the first plot is drawn
         cw_lay = QVBoxLayout(cw)
         cw_lay.setContentsMargins(0, 0, 0, 0)
-        self._fig = Figure(tight_layout=True)
+        # Small default size (keeps the initial dock narrow); the Expanding
+        # size policy + widgetResizable scroll area stretch it to fill the tab.
+        self._fig = Figure(figsize=(3.6, 3.6), tight_layout=True)
         self._fig.patch.set_facecolor(MPL.FIG_BG)
         self._canvas = FigureCanvas(self._fig)
         self._canvas.setSizePolicy(
@@ -342,6 +352,7 @@ class PhasorPanel(QWidget):
         )
         cw_lay.addWidget(self._canvas)
         splitter.addWidget(cw)
+        cw.setVisible(False)  # revealed on the first successful plot
 
         self._table = QTableWidget(0, 7)
         self._table.setHorizontalHeaderLabels(
@@ -474,6 +485,7 @@ class PhasorPanel(QWidget):
         self._plotted_settings = None
         self._stale.setVisible(False)
         self._final_plot_data = None
+        self._plot_area.setVisible(False)  # hide until (re)plotted
         if not has_phasor:
             self._status.setText(
                 "No phasor data. Reconstruct with 'All (+ Phasor & TCSPC)' output."
@@ -566,6 +578,7 @@ class PhasorPanel(QWidget):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self._do_compute(ds)
+            self._plot_area.setVisible(True)  # reveal on first/any plot
         except Exception as e:
             traceback.print_exc()
             self._status.setText(f"Error: {e}")
@@ -998,7 +1011,13 @@ class PhasorPanel(QWidget):
                         extent=[-0.1, 1.1, -0.1, 0.85],
                         zorder=1,
                     )
-                    cb = fig.colorbar(hb, ax=ax, fraction=0.046, pad=0.04)
+                    cb = fig.colorbar(
+                        hb,
+                        ax=ax,
+                        orientation="horizontal",
+                        fraction=0.046,
+                        pad=0.12,
+                    )
                 else:
                     H, xedges, yedges = np.histogram2d(
                         g, s, bins=150, range=[[-0.1, 1.1], [-0.1, 0.85]]
@@ -1013,8 +1032,14 @@ class PhasorPanel(QWidget):
                         alpha=alpha_img.T,
                         zorder=1,
                     )
-                    cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-                cb.ax.yaxis.set_tick_params(colors=MPL.TICK, labelsize=7)
+                    cb = fig.colorbar(
+                        im,
+                        ax=ax,
+                        orientation="horizontal",
+                        fraction=0.046,
+                        pad=0.12,
+                    )
+                cb.ax.xaxis.set_tick_params(colors=MPL.TICK, labelsize=7)
                 cb.ax.set_facecolor(MPL.AXES_BG)
                 cb.outline.set_edgecolor(MPL.SPINE)
                 cb.set_label("Count", color=MPL.TICK, fontsize=8)
