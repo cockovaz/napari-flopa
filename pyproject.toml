@@ -33,7 +33,7 @@ dependencies = [
     "scipy",
     "matplotlib",
     "superqt",
-    "tttrkit @ git+https://github.com/IMCF-Biocev/tttrkit.git@92e5f60",
+    "tttrkit",
 ]
 
 [project.optional-dependencies]
