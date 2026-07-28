@@ -30,7 +30,7 @@ from napari_flopa.core.processing.image_utils import (
     smooth_weighted,
 )
 from napari_flopa.ui.state import FlopaState
-from napari_flopa.ui.style import SS, apply_style
+from napari_flopa.ui.style import S, apply_style
 from napari_flopa.ui.widgets.histogram_slider import HistogramSlider
 
 _CANVAS_H = 55  # histogram canvas height in compact layout
@@ -48,7 +48,7 @@ class FlimViewPanel(QWidget):
         display contrast, red handles define the mask threshold range.
       • Smoothing controls (kernel size) for both intensity and lifetime.
       • Colormap selectors; FLIM RGB composite mode when both layers are ON.
-      • "→ Int. Mask" / "→ Lt. Mask" buttons create uniquely named Labels
+      • "→ Generate Int./Lt. Mask" buttons create uniquely named Labels
         layers from the current red-slider threshold range.
       • Export buttons for Intensity (uint32 photon-count TIFF), Lifetime
         (float32 ns/ch TIFF), and FLIM RGB composite (PNG/TIFF + a .txt sidecar
@@ -66,13 +66,14 @@ class FlimViewPanel(QWidget):
         self.state = state
         self.viewer = viewer
         self.dataset = None
-        self._cached_intensity = None
-        self._cached_lifetime = None
+        self._current_intensity = None
+        self._current_lifetime = None
         self._lut = None  # 256×3 uint8 lifetime colormap LUT
-        self._sum_cache = (
-            {}
-        )  # (sel_tuple, frozenset(dims_to_sum)) → (raw_int, raw_lt)
-        self._smooth_cache = {}  # (type, id, shape, k) → smoothed array
+        # (sel_tuple, frozenset(dims_to_sum)) → (raw_int, raw_lt). Only used
+        # when _use_sum_cache is True (off by default; not exposed in the GUI).
+        self._sum_cache = {}
+        self._use_sum_cache = False  # set True to memoise isel + aggregation
+        # self._smooth_cache = {}  # (type, id, shape, k) → smoothed array (caching disabled)
         self._layers_created = False
         self.selectors = {}
 
@@ -89,7 +90,7 @@ class FlimViewPanel(QWidget):
         main_layout.setContentsMargins(2, 0, 2, 0)
 
         self.container = QGroupBox("FLIM VIEW")
-        apply_style(self.container, SS.GROUP_DOCK)
+        apply_style(self.container, S.GROUP_DOCK)
         self.view_layout = QVBoxLayout(self.container)
         self.view_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(self.container)
@@ -106,8 +107,8 @@ class FlimViewPanel(QWidget):
         mean_arrival_time is present.
         """
         self.dataset = dataset
-        self._sum_cache.clear()
-        self._smooth_cache.clear()
+        self._sum_cache.clear()  # drop stale entries from the previous dataset
+        # self._smooth_cache.clear()  # caching disabled
         self._layers_created = False
         has_intensity = "photon_count" in dataset.data_vars
         has_lifetime = "mean_arrival_time" in dataset.data_vars
@@ -137,8 +138,10 @@ class FlimViewPanel(QWidget):
         Inner helpers (not accessible outside this method):
           _make_lut(cmap_name)      — build 256×3 uint8 LUT (for export + RGB layer)
           _get_sel_key()            — return (sel dict, dims_to_sum list) from selectors
-          _get_raw_arrays(sel, sums)— isel + optional aggregate with LRU cache (64 entries)
-          _get_smoothed(raw_i, raw_l)— apply smoothing kernels with LRU cache (32 entries)
+          _get_raw_arrays(sel, sums)— isel + optional aggregate (memoised only when
+                                      self._use_sum_cache is True; off by default)
+          _get_smoothed(raw_i, raw_l)— apply smoothing kernels (recomputed each call;
+                                      caching currently disabled)
           _display_data()           — full layer update (data + contrast + colormap)
           _fast_display()           — contrast-only update for slider drag
           _slice()                  — re-extract arrays, update histograms, call _display_data
@@ -173,7 +176,7 @@ class FlimViewPanel(QWidget):
 
         # ---- Col 0: slicing selectors ----
         sel_group = QGroupBox("Dims")
-        apply_style(sel_group, SS.GROUP_PRIMARY)
+        apply_style(sel_group, S.GROUP_PRIMARY)
         sel_group.setFlat(True)
         sf = QGridLayout(sel_group)
         sf.setVerticalSpacing(1)
@@ -220,7 +223,7 @@ class FlimViewPanel(QWidget):
 
         # ---- Col 1: Intensity ----
         int_group = QGroupBox("Intensity")
-        apply_style(int_group, SS.GROUP_PRIMARY)
+        apply_style(int_group, S.GROUP_PRIMARY)
         int_group.setEnabled(has_intensity)
         ig = QHBoxLayout(int_group)
         ig.setSpacing(1)
@@ -287,7 +290,7 @@ class FlimViewPanel(QWidget):
         int_ctrl.addLayout(int_contrast)
 
         self.int_mask_btn = QPushButton("→ Generate Int. Mask")
-        # self.int_mask_btn.setStyleSheet(SS.BTN_DANGER)
+        # self.int_mask_btn.setStyleSheet(S.BTN_DANGER)
         self.int_mask_btn.setToolTip(
             "Create a new Labels layer from pixels within the red slider range."
         )
@@ -300,7 +303,7 @@ class FlimViewPanel(QWidget):
 
         # ---- Col 2: Lifetime ----
         lt_group = QGroupBox(f"Lifetime ({lifetime_unit})")
-        apply_style(lt_group, SS.GROUP_PRIMARY)
+        apply_style(lt_group, S.GROUP_PRIMARY)
         lt_group.setEnabled(has_lifetime)
         lg = QHBoxLayout(lt_group)
         lg.setSpacing(1)
@@ -364,7 +367,7 @@ class FlimViewPanel(QWidget):
         lt_ctrl.addLayout(lt_contrast)
 
         self.lt_mask_btn = QPushButton("→ Generate Lt. Mask")
-        # self.lt_mask_btn.setStyleSheet(SS.BTN_DANGER)
+        # self.lt_mask_btn.setStyleSheet(S.BTN_DANGER)
         self.lt_mask_btn.setToolTip(
             "Create a new Labels layer from pixels within the red slider range."
         )
@@ -377,7 +380,7 @@ class FlimViewPanel(QWidget):
 
         # ---- Col 3: Export ----
         exp_group = QGroupBox("Export")
-        apply_style(exp_group, SS.GROUP_PRIMARY)
+        apply_style(exp_group, S.GROUP_PRIMARY)
         el = QVBoxLayout(exp_group)
         el.setSpacing(8)
         el.setContentsMargins(4, 4, 4, 2)
@@ -423,7 +426,7 @@ class FlimViewPanel(QWidget):
             if d in ds.sizes
         ]
         shape_lbl = QLabel("Stack: " + "  ".join(_shape_parts))
-        shape_lbl.setStyleSheet(SS.STATUS)
+        shape_lbl.setStyleSheet(S.STATUS)
         shape_lbl.setWordWrap(True)
         el.addWidget(shape_lbl)
 
@@ -522,7 +525,7 @@ class FlimViewPanel(QWidget):
 
         def _get_raw_arrays(sel, dims_to_sum):
             cache_key = (tuple(sorted(sel.items())), frozenset(dims_to_sum))
-            if cache_key in self._sum_cache:
+            if self._use_sum_cache and cache_key in self._sum_cache:
                 return self._sum_cache[cache_key]
             sliced = ds.isel(**sel)
             final = (
@@ -540,9 +543,10 @@ class FlimViewPanel(QWidget):
                 if "mean_arrival_time" in final
                 else None
             )
-            self._sum_cache[cache_key] = (raw_int, raw_lt)
-            if len(self._sum_cache) > 64:
-                self._sum_cache.pop(next(iter(self._sum_cache)))
+            if self._use_sum_cache:
+                self._sum_cache[cache_key] = (raw_int, raw_lt)
+                if len(self._sum_cache) > 64:
+                    self._sum_cache.pop(next(iter(self._sum_cache)))
             return raw_int, raw_lt
 
         def _get_smoothed(raw_int, raw_lt):
@@ -553,12 +557,14 @@ class FlimViewPanel(QWidget):
                 and self.smooth_int_check.isChecked()
             ):
                 k = self.smooth_int_spin.value()
-                key = ("int", id(raw_int), raw_int.shape, k)
-                if key not in self._smooth_cache:
-                    self._smooth_cache[key] = smooth_count(raw_int, size=k)
-                    if len(self._smooth_cache) > 32:
-                        self._smooth_cache.pop(next(iter(self._smooth_cache)))
-                s_int = self._smooth_cache[key]
+                s_int = smooth_count(raw_int, size=k)
+                # --- smoothing cache disabled (kept for reference) ---
+                # key = ("int", id(raw_int), raw_int.shape, k)
+                # if key not in self._smooth_cache:
+                #     self._smooth_cache[key] = smooth_count(raw_int, size=k)
+                #     if len(self._smooth_cache) > 32:
+                #         self._smooth_cache.pop(next(iter(self._smooth_cache)))
+                # s_int = self._smooth_cache[key]
             s_lt = raw_lt
             if (
                 has_lifetime
@@ -567,13 +573,15 @@ class FlimViewPanel(QWidget):
                 and self.smooth_lt_check.isChecked()
             ):
                 k = self.smooth_lt_spin.value()
-                key = ("lt", id(raw_lt), raw_lt.shape, k)
-                if key not in self._smooth_cache:
-                    result, _ = smooth_weighted(raw_lt, raw_int, size=k)
-                    self._smooth_cache[key] = result
-                    if len(self._smooth_cache) > 32:
-                        self._smooth_cache.pop(next(iter(self._smooth_cache)))
-                s_lt = self._smooth_cache[key]
+                s_lt, _ = smooth_weighted(raw_lt, raw_int, size=k)
+                # --- smoothing cache disabled (kept for reference) ---
+                # key = ("lt", id(raw_lt), raw_lt.shape, k)
+                # if key not in self._smooth_cache:
+                #     result, _ = smooth_weighted(raw_lt, raw_int, size=k)
+                #     self._smooth_cache[key] = result
+                #     if len(self._smooth_cache) > 32:
+                #         self._smooth_cache.pop(next(iter(self._smooth_cache)))
+                # s_lt = self._smooth_cache[key]
             return s_int, s_lt
 
         # ------------------------------------------------------------------ #
@@ -582,8 +590,8 @@ class FlimViewPanel(QWidget):
 
         def _display_data():
             try:
-                ci = self._cached_intensity
-                cl = self._cached_lifetime
+                ci = self._current_intensity
+                cl = self._current_lifetime
                 show_i = self.show_intensity.isChecked() and has_intensity
                 show_l = self.show_lifetime.isChecked() and has_lifetime
 
@@ -636,7 +644,7 @@ class FlimViewPanel(QWidget):
                 if (
                     has_intensity
                     and "Intensity" in self.viewer.layers
-                    and self._cached_intensity is not None
+                    and self._current_intensity is not None
                 ):
                     self.viewer.layers["Intensity"].contrast_limits = (
                         self.intensity_slider.value()
@@ -644,7 +652,7 @@ class FlimViewPanel(QWidget):
                 if (
                     has_lifetime
                     and "Lifetime" in self.viewer.layers
-                    and self._cached_lifetime is not None
+                    and self._current_lifetime is not None
                 ):
                     self.viewer.layers["Lifetime"].contrast_limits = (
                         self.lifetime_slider.value()
@@ -664,10 +672,10 @@ class FlimViewPanel(QWidget):
                 sel, dims_to_sum = _get_sel_key()
                 raw_int, raw_lt = _get_raw_arrays(sel, dims_to_sum)
                 s_int, s_lt = _get_smoothed(raw_int, raw_lt)
-                self._cached_intensity = (
+                self._current_intensity = (
                     np.atleast_2d(s_int) if s_int is not None else None
                 )
-                self._cached_lifetime = (
+                self._current_lifetime = (
                     np.atleast_2d(s_lt) * tcspc_res_ns
                     if s_lt is not None
                     else None
@@ -682,10 +690,10 @@ class FlimViewPanel(QWidget):
                     if _first_slice[0]
                     else self.lifetime_slider.update_data_keep_range
                 )
-                if self._cached_intensity is not None:
-                    update_slider(self._cached_intensity)
-                if self._cached_lifetime is not None:
-                    update_lt_slider(self._cached_lifetime)
+                if self._current_intensity is not None:
+                    update_slider(self._current_intensity)
+                if self._current_lifetime is not None:
+                    update_lt_slider(self._current_lifetime)
                 _first_slice[0] = False
                 _display_data()
                 # Notify phasor/decay panels about current view settings
@@ -753,7 +761,7 @@ class FlimViewPanel(QWidget):
             return f"{base} [{i}]"
 
         def _create_intensity_mask():
-            ci = self._cached_intensity
+            ci = self._current_intensity
             if ci is None:
                 return
             lo, hi = self.intensity_slider.mask_value()
@@ -763,7 +771,7 @@ class FlimViewPanel(QWidget):
             )
 
         def _create_lifetime_mask():
-            cl = self._cached_lifetime
+            cl = self._current_lifetime
             if cl is None:
                 return
             lo, hi = self.lifetime_slider.mask_value()
@@ -858,7 +866,7 @@ class FlimViewPanel(QWidget):
         Uses the same core.flim_rgb as the file export, so this layer matches an
         exported ``_flim.png`` (current view / contrast / colormap / smoothing).
         """
-        ci, cl = self._cached_intensity, self._cached_lifetime
+        ci, cl = self._current_intensity, self._current_lifetime
         if ci is None or cl is None or self._lut is None:
             return
         rgb = flim_rgb(
@@ -888,7 +896,7 @@ class FlimViewPanel(QWidget):
         """
         from skimage.io import imsave
 
-        counts = np.rint(self._cached_intensity).astype(np.uint32)
+        counts = np.rint(self._current_intensity).astype(np.uint32)
         imsave(str(path), counts, check_contrast=False)
 
     def _save_lifetime(self, path):
@@ -897,7 +905,7 @@ class FlimViewPanel(QWidget):
 
         imsave(
             str(path),
-            self._cached_lifetime.astype(np.float32),
+            self._current_lifetime.astype(np.float32),
             check_contrast=False,
         )
 
@@ -908,8 +916,8 @@ class FlimViewPanel(QWidget):
         # Use the exact same compositing as the interactive display so the
         # exported image matches what is on screen (incl. NaN handling).
         rgb_f32 = flim_rgb(
-            self._cached_intensity,
-            self._cached_lifetime,
+            self._current_intensity,
+            self._current_lifetime,
             self._lut,
             self.lifetime_slider.value(),
             self.intensity_slider.value(),

@@ -58,7 +58,7 @@ except ImportError:
 from ptuio.utils import shift_decay
 
 from napari_flopa.ui.state import FlopaState
-from napari_flopa.ui.style import MPL, SS, apply_style
+from napari_flopa.ui.style import MPL, S, apply_style
 
 
 # 60-colour palette from matplotlib's three tab20 maps
@@ -83,7 +83,7 @@ _MAX_LEGEND = 8  # max entries shown in the matplotlib plot legend
 
 class DecayPanel(QWidget):
     """
-    Tab 2 — TCSPC decay curves.
+    Decay tab — TCSPC decay curves.
 
     Reads tcspc_histogram from FlopaState.dataset and plots one curve per free
     dimension combination after optional aggregation.  Receives view settings
@@ -144,7 +144,7 @@ class DecayPanel(QWidget):
         self._stale = QLabel("●")
         self._stale.setFixedWidth(14)
         self._stale.setAlignment(Qt.AlignCenter)
-        self._stale.setStyleSheet(SS.STALE_INACTIVE)
+        self._stale.setStyleSheet(S.STALE_INACTIVE)
         self._stale.setVisible(False)
         tb.addWidget(self._stale)
 
@@ -174,7 +174,7 @@ class DecayPanel(QWidget):
         sr.setSpacing(6)
 
         agg_box = QGroupBox("Aggregate")
-        apply_style(agg_box, SS.GROUP_PRIMARY)
+        apply_style(agg_box, S.GROUP_PRIMARY)
         agg_lay = QHBoxLayout(agg_box)
         agg_lay.setSpacing(6)
         agg_lay.setContentsMargins(6, 2, 6, 2)
@@ -190,15 +190,13 @@ class DecayPanel(QWidget):
         sr.addWidget(agg_box)
 
         shift_box = QGroupBox("Shift (bins)")
-        apply_style(shift_box, SS.GROUP_PRIMARY)
+        apply_style(shift_box, S.GROUP_PRIMARY)
         shift_lay = QHBoxLayout(shift_box)
         shift_lay.setContentsMargins(6, 2, 6, 2)
         self._shift_spin = QSpinBox()
         self._shift_spin.setRange(-500, 500)
         self._shift_spin.setValue(0)
-        self._shift_spin.setToolTip(
-            "Circularly shift all curves by N bins (np.roll)."
-        )
+        self._shift_spin.setToolTip("Circularly shift all curves by N bins.")
         shift_lay.addWidget(self._shift_spin)
         sr.addWidget(shift_box)
 
@@ -234,7 +232,7 @@ class DecayPanel(QWidget):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet(SS.SEPARATOR)
+        sep.setStyleSheet(S.SEPARATOR)
         det_row.addWidget(sep)
 
         self._show_all_btn = QPushButton("All")
@@ -271,7 +269,7 @@ class DecayPanel(QWidget):
             "Load and reconstruct a PTU file to enable decay plotting."
         )
         self._status.setWordWrap(True)
-        self._status.setStyleSheet(SS.STATUS)
+        self._status.setStyleSheet(S.STATUS)
         root.addWidget(self._status)
 
         # ── Wiring ─────────────────────────────────────────────────────
@@ -325,7 +323,7 @@ class DecayPanel(QWidget):
     def _mark_stale(self):
         """Turn the stale indicator red if curves exist and settings have changed."""
         if self._curves:
-            self._stale.setStyleSheet(SS.STALE_STALE)
+            self._stale.setStyleSheet(S.STALE_STALE)
             self._stale.setToolTip(
                 "Settings changed since last plot — click Plot to refresh."
             )
@@ -348,7 +346,7 @@ class DecayPanel(QWidget):
             return
         self._curves = curves
         self._plotted_view = dict(self._current_view)
-        self._stale.setStyleSheet(SS.STALE_FRESH)
+        self._stale.setStyleSheet(S.STALE_FRESH)
         self._stale.setToolTip("Plot is up to date.")
         self._stale.setVisible(True)
         self._export_btn.setEnabled(True)
@@ -408,7 +406,7 @@ class DecayPanel(QWidget):
 
         self._curves = curves
         self._plotted_view = dict(v)
-        self._stale.setStyleSheet(SS.STALE_FRESH)
+        self._stale.setStyleSheet(S.STALE_FRESH)
         self._stale.setToolTip("Plot is up to date.")
         self._stale.setVisible(True)
         self._export_btn.setEnabled(True)
@@ -527,8 +525,9 @@ class DecayPanel(QWidget):
         """
         Re-render the matplotlib axes from self._curves.
 
-        Applies shift (np.roll) and optional normalisation at draw time without
-        mutating stored counts.  Limits the in-plot legend to _MAX_LEGEND entries,
+        Applies shift (via shift_decay) and optional normalisation at draw time
+        without mutating stored counts.  Limits the in-plot legend to _MAX_LEGEND
+        entries,
         appending a "… +N more" label when over the cap.  Y floor: 1.0 for log,
         1e-4 for normalised log.
         """
@@ -676,7 +675,7 @@ class DecayPanel(QWidget):
             btn.setFixedWidth(32)
             btn.setEnabled(not disabled)
             btn.setStyleSheet(
-                SS.BTN_DET_ON if not disabled else SS.BTN_DET_DISABLED
+                S.BTN_DET_ON if not disabled else S.BTN_DET_DISABLED
             )
             btn.toggled.connect(
                 lambda checked, d=ch: self._on_det_toggled(d, checked)
@@ -689,16 +688,16 @@ class DecayPanel(QWidget):
         for btn in self._det_btns.values():
             btn.setEnabled(not detectors_aggregated)
             btn.setStyleSheet(
-                SS.BTN_DET_DISABLED
+                S.BTN_DET_DISABLED
                 if detectors_aggregated
-                else (SS.BTN_DET_ON if btn.isChecked() else SS.BTN_DET_OFF)
+                else (S.BTN_DET_ON if btn.isChecked() else S.BTN_DET_OFF)
             )
 
     def _on_det_toggled(self, chan_idx: int, visible: bool):
         """Show/hide all curves belonging to detector chan_idx and sync button style."""
         btn = self._det_btns.get(chan_idx)
         if btn:
-            btn.setStyleSheet(SS.BTN_DET_ON if visible else SS.BTN_DET_OFF)
+            btn.setStyleSheet(S.BTN_DET_ON if visible else S.BTN_DET_OFF)
         for c in self._curves:
             if c["chan_idx"] == chan_idx:
                 c["visible"] = visible
@@ -768,7 +767,7 @@ class DecayPanel(QWidget):
                 btn = self._det_btns[chan]
                 btn.blockSignals(True)
                 btn.setChecked(any_vis)
-                btn.setStyleSheet(SS.BTN_DET_ON if any_vis else SS.BTN_DET_OFF)
+                btn.setStyleSheet(S.BTN_DET_ON if any_vis else S.BTN_DET_OFF)
                 btn.blockSignals(False)
             self._redraw()
 
@@ -780,7 +779,7 @@ class DecayPanel(QWidget):
         for _ch, btn in self._det_btns.items():
             btn.blockSignals(True)
             btn.setChecked(visible)
-            btn.setStyleSheet(SS.BTN_DET_ON if visible else SS.BTN_DET_OFF)
+            btn.setStyleSheet(S.BTN_DET_ON if visible else S.BTN_DET_OFF)
             btn.blockSignals(False)
         self._rebuild_legend()
         self._redraw()
@@ -829,7 +828,9 @@ class DecayPanel(QWidget):
 
             cols, headers = [], ["time_ns"]
             for c in self._curves:
-                col = np.roll(c["counts"], shift)
+                # Match the plot exactly: _redraw uses shift_decay(counts, -shift).
+                # (The old np.roll(counts, +shift) shifted the CSV the opposite way.)
+                col = shift_decay(c["counts"], -shift)
                 if norm:
                     peak = col.max()
                     col = col / peak if peak > 0 else col

@@ -1,12 +1,6 @@
 import traceback
 from pathlib import Path
 
-# ── optional TOML support ────────────────────────────────────────────────
-try:
-    import tomli_w  # pip install tomli-w
-except ImportError:
-    tomli_w = None
-
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
 )
@@ -38,25 +32,32 @@ from qtpy.QtWidgets import (
 
 from napari_flopa.core import provenance
 from napari_flopa.core.demo import load_demo
+from napari_flopa.core.io.config import (
+    build_scan_config_dict,
+    load_config,
+    save_config,
+)
 from napari_flopa.core.io.loader import (
+    format_ptu_header,
+    read_ptu_file,
+)
+from napari_flopa.core.io.markers import (
     _format_marker_suggestions,
     analyze_marker_distribution,
-    format_ptu_header,
     get_markers,
-    read_ptu_file,
 )
 from napari_flopa.core.logger import ProgressLogger
 from napari_flopa.core.processing.reconstruction import (
     reconstruct_ptu_to_dataset,
 )
 from napari_flopa.ui.state import FlopaState
-from napari_flopa.ui.style import MPL, SS, apply_style
+from napari_flopa.ui.style import MPL, S, apply_style
 from napari_flopa.ui.utils.threading import Worker
 
 
 class PtuPanel(QWidget):
     """
-    Tab 1: Load PTU file, inspect header, configure scan parameters,
+    File tab: Load PTU file, inspect header, configure scan parameters,
     run reconstruction.
     """
 
@@ -94,7 +95,7 @@ class PtuPanel(QWidget):
         self._param_source[name] = source
         dot = self._param_dots.get(name)
         if dot is not None:
-            dot.setStyleSheet(SS.PROV_DOT.get(source, ""))
+            dot.setStyleSheet(S.PROV_DOT.get(source, ""))
             dot.setToolTip(f"Value source: {source}")
 
     def _on_param_edited(self, name: str):
@@ -112,7 +113,7 @@ class PtuPanel(QWidget):
 
         # --- File loading ---
         file_group = QGroupBox("Load Data")
-        apply_style(file_group, SS.GROUP_PRIMARY)
+        apply_style(file_group, S.GROUP_PRIMARY)
         file_layout = QVBoxLayout(file_group)
         self.file_label = QLabel("No file selected.")
         # Long .ptu names would otherwise stretch the whole panel wide; wrap
@@ -140,12 +141,12 @@ class PtuPanel(QWidget):
 
         # --- Header info (summary only, full header via button) ---
         self.header_group = QGroupBox("Header Info")
-        apply_style(self.header_group, SS.GROUP_PRIMARY)
+        apply_style(self.header_group, S.GROUP_PRIMARY)
         header_layout = QVBoxLayout(self.header_group)
         self.header_info = QTextEdit()
         self.header_info.setReadOnly(True)
         self.header_info.setFixedHeight(100)
-        apply_style(self.header_info, SS.LOG)  # match the log editor look
+        apply_style(self.header_info, S.LOG)  # match the log editor look
         header_layout.addWidget(self.header_info)
 
         marker_row = QHBoxLayout()
@@ -171,7 +172,7 @@ class PtuPanel(QWidget):
 
         # --- Reconstruction ---
         self.recon_group = QGroupBox("Reconstruction")
-        apply_style(self.recon_group, SS.GROUP_PRIMARY)
+        apply_style(self.recon_group, S.GROUP_PRIMARY)
         recon_layout = QVBoxLayout(self.recon_group)
 
         output_row = QHBoxLayout()
@@ -217,12 +218,12 @@ class PtuPanel(QWidget):
 
         # --- Info / log ---
         self.info_group = QGroupBox("Log")
-        apply_style(self.info_group, SS.GROUP_PRIMARY)
+        apply_style(self.info_group, S.GROUP_PRIMARY)
         info_layout = QVBoxLayout(self.info_group)
         self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMinimumHeight(120)
-        apply_style(self.log_text, SS.LOG)
+        apply_style(self.log_text, S.LOG)
         info_layout.addWidget(self.log_text)
         # Stretch factor 1 → the log fills the leftover panel height (growing
         # from its 120px minimum). While it's still hidden on init, the trailing
@@ -234,7 +235,7 @@ class PtuPanel(QWidget):
 
     def _build_config_group(self) -> QGroupBox:
         group = QGroupBox("Scan Configuration")
-        apply_style(group, SS.GROUP_PRIMARY)
+        apply_style(group, S.GROUP_PRIMARY)
         main_layout = QVBoxLayout(group)
 
         # Single-column form. napari's spinboxes have a large minimum width, so
@@ -340,7 +341,7 @@ class PtuPanel(QWidget):
         # inherits the Scan Configuration tint — its content area matches the
         # surrounding box exactly.
         self.bidir_group = QGroupBox("Bidirectional Scan")
-        apply_style(self.bidir_group, SS.GROUP_CHECKABLE)
+        apply_style(self.bidir_group, S.GROUP_CHECKABLE)
         self.bidir_group.setCheckable(True)
         self.bidir_group.setChecked(False)
         bidir_layout = QHBoxLayout(self.bidir_group)
@@ -360,7 +361,7 @@ class PtuPanel(QWidget):
         self.estimate_btn = QPushButton("Est.")
         self.estimate_btn.setToolTip("Estimate bidirectional phase shift")
         self.estimate_btn.setFixedHeight(22)
-        self.estimate_btn.setStyleSheet(SS.BTN_SMALL)
+        self.estimate_btn.setStyleSheet(S.BTN_SMALL)
         self.estimate_btn.clicked.connect(self._on_estimate_shift)
         bidir_layout.addWidget(self.estimate_btn)
 
@@ -368,20 +369,26 @@ class PtuPanel(QWidget):
         self.plot_shift_btn.setEnabled(False)
         self.plot_shift_btn.setToolTip("Plot shift correlation curve")
         self.plot_shift_btn.setFixedHeight(22)
-        self.plot_shift_btn.setStyleSheet(SS.BTN_SMALL)
+        self.plot_shift_btn.setStyleSheet(S.BTN_SMALL)
         self.plot_shift_btn.clicked.connect(self._on_plot_shift)
         bidir_layout.addWidget(self.plot_shift_btn)
         bidir_layout.addStretch()
 
         main_layout.addWidget(self.bidir_group)
 
-        # --- Save scan config (full-width, at the end) ---
-        self.save_config_btn = QPushButton("Save Configuration")
-        self.save_config_btn.setToolTip("Save scan parameters to a TOML file")
-        self.save_config_btn.clicked.connect(self._on_save_config_toml)
-        # Added straight to the vertical layout (no wrapping HBox/stretch) so the
-        # button stretches to the full width of the panel.
-        main_layout.addWidget(self.save_config_btn)
+        # --- Load / Save scan config (full-width row, at the end) ---
+        self.load_config_btn = QPushButton("Load Config")
+        self.load_config_btn.setToolTip(
+            "Load scan parameters from a JSON file"
+        )
+        self.load_config_btn.clicked.connect(self._on_load_config_json)
+        self.save_config_btn = QPushButton("Save Config")
+        self.save_config_btn.setToolTip("Save scan parameters to a JSON file")
+        self.save_config_btn.clicked.connect(self._on_save_config_json)
+        cfg_row = QHBoxLayout()
+        cfg_row.addWidget(self.load_config_btn, 1)
+        cfg_row.addWidget(self.save_config_btn, 1)
+        main_layout.addLayout(cfg_row)
 
         self._update_accumulation_widgets()
         return group
@@ -503,30 +510,13 @@ class PtuPanel(QWidget):
             )
             self.header_info.setPlainText(summary)
 
-            # Apply demo params (a hard-coded preset config → 'user'), while
-            # file-derived values (tcspc bins, rep. rate) keep their source.
+            # Apply the demo scan params (marked 'user'), via the same path as
+            # Load Config. The params' ptu_filename is ignored here — the file
+            # was already resolved/loaded above by load_demo().
+            self._apply_config(params, source=provenance.USER)
+
+            # File-derived values override the config for tcspc bins + rep. rate.
             self._autofill = True
-            self.lines_spin.setValue(params["lines"])
-            self.pixels_spin.setValue(params["pixels"])
-            self.frames_spin.setValue(params["frames"])
-            self.max_detector_spin.setValue(params["max_detector"])
-            self.sequences_spin.setValue(params["sequences"])
-            for name in (
-                "lines",
-                "pixels",
-                "frames",
-                "max_detector",
-                "sequences",
-            ):
-                self._set_param_source(name, provenance.USER)
-            self._update_accumulation_widgets()
-            for i, acc in enumerate(params["accumulations"]):
-                if i < len(self.accu_spinboxes):
-                    self.accu_spinboxes[i].setValue(acc)
-            self.bidir_group.setChecked(params.get("bidirectional", False))
-            self.bidir_phase_spin.setValue(
-                params.get("bidirectional_phase_shift", 0.0)
-            )
             self.tcspc_bins_spin.setValue(constants.get("tcspc_bins", 4096))
             self._set_param_source(
                 "tcspc_bins", csrc.get("tcspc_bins", provenance.DEFAULT)
@@ -566,7 +556,7 @@ class PtuPanel(QWidget):
         layout = QVBoxLayout(dlg)
         te = QTextEdit()
         te.setReadOnly(True)
-        apply_style(te, SS.LOG)  # unify colours with the log editor
+        apply_style(te, S.LOG)  # unify colours with the log editor
         te.setPlainText(full_text)
         layout.addWidget(te)
         close_btn = QPushButton("Close")
@@ -721,41 +711,94 @@ class PtuPanel(QWidget):
             return ["photon_count", "mean_arrival_time"]
         return None  # all
 
-    def _on_save_config_toml(self):
-        if tomli_w is None:
-            QMessageBox.warning(
-                self,
-                "Missing dependency",
-                "tomli-w not available — pip install tomli-w",
-            )
-            return
+    def _on_save_config_json(self):
+        """Read the UI values, delegate serialisation to core, write the file."""
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save scan config", "scan_config.toml", "TOML (*.toml)"
+            self, "Save scan config", "scan_config.json", "JSON (*.json)"
         )
         if not path:
             return
-        accumulations = [s.value() for s in self.accu_spinboxes] or [1]
-        cfg = {
-            "scan": dict(
-                frames=self.frames_spin.value(),
-                lines=self.lines_spin.value(),
-                pixels=self.pixels_spin.value(),
-                sequences=self.sequences_spin.value(),
-                accum_per_seq=" ".join(str(a) for a in accumulations),
-                max_detector=self.max_detector_spin.value(),
-                bidirectional=self.bidir_group.isChecked(),
-                bidirectional_phase_shift=self.bidir_phase_spin.value(),
+        cfg = build_scan_config_dict(
+            frames=self.frames_spin.value(),
+            lines=self.lines_spin.value(),
+            pixels=self.pixels_spin.value(),
+            sequences=self.sequences_spin.value(),
+            accumulations=[s.value() for s in self.accu_spinboxes] or [1],
+            max_detector=self.max_detector_spin.value(),
+            tcspc_bins=self.tcspc_bins_spin.value(),
+            bidirectional=self.bidir_group.isChecked(),
+            bidirectional_phase_shift=self.bidir_phase_spin.value(),
+            f_rep_mhz=float(self.frep_spin.value()),
+            ptu_filename=(
+                self.ptu_filepath.name if self.ptu_filepath else None
             ),
-            "calibration": dict(
-                f_rep_mhz=float(self.frep_spin.value()),
-                factor="1+0j",
-            ),
-        }
+        )
         try:
-            with open(path, "wb") as f:
-                tomli_w.dump(cfg, f)
+            save_config(path, cfg)
         except Exception as e:
             QMessageBox.critical(self, "Save error", str(e))
+
+    def _apply_config(self, cfg: dict, source: str = provenance.USER):
+        """Apply a scan-config dict (core schema) to the widgets (UI-only).
+
+        Only the fields actually present are applied — anything missing is left
+        as-is — and applied fields get their provenance dot set to *source*.
+        Any ``ptu_filename`` is ignored here; loading a file is the caller's job.
+        """
+        scan = cfg.get("scan", {})
+        cal = cfg.get("calibration", {})
+        # Guard so the programmatic setValue()s don't mark fields as user-edited
+        # mid-apply; provenance is set explicitly (below) for applied fields.
+        self._autofill = True
+        try:
+            spins = {
+                "lines": self.lines_spin,
+                "pixels": self.pixels_spin,
+                "frames": self.frames_spin,
+                "max_detector": self.max_detector_spin,
+                "sequences": self.sequences_spin,
+                "tcspc_bins": self.tcspc_bins_spin,
+            }
+            applied = []
+            for key, spin in spins.items():
+                if key in scan:
+                    spin.setValue(int(scan[key]))
+                    applied.append(key)
+
+            # Rebuild accumulation spinboxes for the (new) sequence count, then fill
+            self._update_accumulation_widgets()
+            for i, acc in enumerate(scan.get("accumulations", [])):
+                if i < len(self.accu_spinboxes):
+                    self.accu_spinboxes[i].setValue(int(acc))
+
+            self.bidir_group.setChecked(bool(scan.get("bidirectional", False)))
+            if "bidirectional_phase_shift" in scan:
+                self.bidir_phase_spin.setValue(
+                    float(scan["bidirectional_phase_shift"])
+                )
+            if "f_rep_mhz" in cal:
+                self.frep_spin.setValue(float(cal["f_rep_mhz"]))
+                applied.append("frep")
+
+            for name in applied:
+                self._set_param_source(name, source)
+        finally:
+            self._autofill = False
+
+    def _on_load_config_json(self):
+        """Load a config via core, then apply the values to the widgets."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load scan config", "", "JSON (*.json)"
+        )
+        if not path:
+            return
+        try:
+            cfg = load_config(path)
+            self._apply_config(cfg, source=provenance.USER)
+        except Exception as e:
+            QMessageBox.critical(self, "Load error", str(e))
+            return
+        self._log(f"Loaded config: {Path(path).name}")
 
     def _build_scan_config(self) -> ScanConfig:
         accumulations = tuple(s.value() for s in self.accu_spinboxes) or (1,)

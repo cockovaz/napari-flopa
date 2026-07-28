@@ -18,8 +18,7 @@ Output: written to  <ptu_dir>/batch_<timestamp>/
 Processing: sequential in a QThread — UI stays responsive; Stop aborts
 between files.
 
-Scan config + calibration can be saved/loaded as TOML
-(requires tomli / tomllib for read; tomli-w for write).
+Scan config + calibration can be saved/loaded as JSON (stdlib ``json``).
 """
 
 import csv
@@ -56,22 +55,9 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from napari_flopa.core.io.config import load_config, save_config
 from napari_flopa.ui.state import FlopaState
-from napari_flopa.ui.style import SS, apply_style
-
-# ── optional TOML support ────────────────────────────────────────────────
-try:
-    import tomllib  # Python ≥ 3.11
-except ImportError:
-    try:
-        import tomli as tomllib  # pip install tomli
-    except ImportError:
-        tomllib = None
-
-try:
-    import tomli_w  # pip install tomli-w
-except ImportError:
-    tomli_w = None
+from napari_flopa.ui.style import S, apply_style
 
 # ── log colour helpers ────────────────────────────────────────────────────
 _ERR = '<span style="color:#ff6060">{}</span>'
@@ -168,7 +154,7 @@ class _AggRow(QWidget):
 def _vsep() -> QFrame:
     f = QFrame()
     f.setFrameShape(QFrame.VLine)
-    f.setStyleSheet(SS.SEPARATOR)
+    f.setStyleSheet(S.SEPARATOR)
     return f
 
 
@@ -187,7 +173,7 @@ class _ExportSection(QGroupBox):
         super().__init__(title, parent)
         self.setCheckable(True)
         self.setChecked(False)
-        apply_style(self, SS.GROUP_PRIMARY)
+        apply_style(self, S.GROUP_PRIMARY)
         self._kind = kind
         self._rows: list[_AggRow] = []
 
@@ -199,13 +185,13 @@ class _ExportSection(QGroupBox):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(SS.SEPARATOR)
+        sep.setStyleSheet(S.SEPARATOR)
         lay.addWidget(sep)
 
         hint = QLabel(
             "Aggregation passes — one export per row  (F=Frames S=Seq D=Det):"
         )
-        hint.setStyleSheet(SS.HINT)
+        hint.setStyleSheet(S.HINT)
         lay.addWidget(hint)
 
         self._rows_widget = QWidget()
@@ -274,7 +260,7 @@ class _ImagesSection(_ExportSection):
         # FLIM RGB colormap + contrast
         row2 = QHBoxLayout()
         lbl2 = QLabel("Colormap:")
-        lbl2.setStyleSheet(SS.MUTED)
+        lbl2.setStyleSheet(S.MUTED)
         row2.addWidget(lbl2)
         self._cmap_combo = QComboBox()
         self._cmap_combo.addItems(["rainbow", "hsv", "viridis"])
@@ -283,7 +269,7 @@ class _ImagesSection(_ExportSection):
         row2.addWidget(self._cmap_combo)
         row2.addSpacing(8)
         lbl3 = QLabel("LT range (ns):")
-        lbl3.setStyleSheet(SS.MUTED)
+        lbl3.setStyleSheet(S.MUTED)
         row2.addWidget(lbl3)
         self._lt_lo = QLineEdit()
         self._lt_lo.setMaximumWidth(55)
@@ -401,7 +387,7 @@ class _PhasorSection(_ExportSection):
         self._warn = QLabel(
             "⚠  Per-pixel tables can have millions of rows per file."
         )
-        self._warn.setStyleSheet(SS.WARNING)
+        self._warn.setStyleSheet(S.WARNING)
         self._warn.setVisible(False)
         lay.addWidget(self._warn)
         self._px_radio.toggled.connect(self._warn.setVisible)
@@ -1026,7 +1012,7 @@ class BatchPanel(QWidget):
     file; each section supports multiple aggregation passes (one CSV/TIFF set
     per pass per file).
 
-    Scan config + calibration are saved/loaded as TOML.
+    Scan config + calibration are saved/loaded as JSON.
     Processing runs in a QThread; UI stays responsive.
     """
 
@@ -1056,8 +1042,8 @@ class BatchPanel(QWidget):
 
         # ── 1. Directories ─────────────────────────────────────────────
         dir_box = QGroupBox("Directories")
-        apply_style(dir_box, SS.GROUP_PRIMARY)
-        dir_box.setStyleSheet(SS.GROUP_PRIMARY)
+        apply_style(dir_box, S.GROUP_PRIMARY)
+        dir_box.setStyleSheet(S.GROUP_PRIMARY)
         dg = QGridLayout(dir_box)
         dg.setSpacing(4)
         dg.addWidget(QLabel("PTU folder:"), 0, 0)
@@ -1084,8 +1070,8 @@ class BatchPanel(QWidget):
 
         # ── 2. Scan config + calibration ───────────────────────────────
         cfg_box = QGroupBox("Scan Config && Calibration")
-        apply_style(cfg_box, SS.GROUP_PRIMARY)
-        cfg_box.setStyleSheet(SS.GROUP_PRIMARY)
+        apply_style(cfg_box, S.GROUP_PRIMARY)
+        cfg_box.setStyleSheet(S.GROUP_PRIMARY)
         cfg_hlay = QHBoxLayout(cfg_box)
         cfg_hlay.setSpacing(8)
         cfg_hlay.setContentsMargins(6, 4, 6, 6)
@@ -1164,11 +1150,11 @@ class BatchPanel(QWidget):
 
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.HLine)
-        sep1.setStyleSheet(SS.SEPARATOR)
+        sep1.setStyleSheet(S.SEPARATOR)
         cg.addWidget(sep1, 3, 0, 1, 6)
 
         cal_lbl = QLabel("Calibration")
-        cal_lbl.setStyleSheet(SS.MUTED)
+        cal_lbl.setStyleSheet(S.MUTED)
         cg.addWidget(cal_lbl, 4, 0, 1, 6)
 
         self._cal_frep = QLineEdit("40.0")
@@ -1210,18 +1196,18 @@ class BatchPanel(QWidget):
         )
         for b in (self._load_scan_btn, self._load_cal_btn):
             b.setEnabled(False)
-            b.setStyleSheet(SS.BTN_SMALL)
+            b.setStyleSheet(S.BTN_SMALL)
             btn_col.addWidget(b)
 
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.HLine)
-        sep2.setStyleSheet(SS.SEPARATOR)
+        sep2.setStyleSheet(S.SEPARATOR)
         btn_col.addWidget(sep2)
 
-        self._load_toml_btn = QPushButton("Load TOML…")
-        self._save_toml_btn = QPushButton("Save TOML…")
-        for b in (self._load_toml_btn, self._save_toml_btn):
-            b.setStyleSheet(SS.BTN_SMALL)
+        self._load_cfg_btn = QPushButton("Load JSON…")
+        self._save_cfg_btn = QPushButton("Save JSON…")
+        for b in (self._load_cfg_btn, self._save_cfg_btn):
+            b.setStyleSheet(S.BTN_SMALL)
             btn_col.addWidget(b)
 
         btn_col.addStretch()
@@ -1237,8 +1223,8 @@ class BatchPanel(QWidget):
 
         # ── 4. Output options ──────────────────────────────────────────
         out_box = QGroupBox("Output options")
-        apply_style(out_box, SS.GROUP_PRIMARY)
-        out_box.setStyleSheet(SS.GROUP_PRIMARY)
+        apply_style(out_box, S.GROUP_PRIMARY)
+        out_box.setStyleSheet(S.GROUP_PRIMARY)
         ol = QVBoxLayout(out_box)
         ol.setSpacing(3)
         tr = QHBoxLayout()
@@ -1252,7 +1238,7 @@ class BatchPanel(QWidget):
         self._out_dir_label = QLabel(
             "Output directory: batch_<timestamp>/ inside PTU folder"
         )
-        self._out_dir_label.setStyleSheet(SS.HINT)
+        self._out_dir_label.setStyleSheet(S.HINT)
         ol.addWidget(self._out_dir_label)
         ilay.addWidget(out_box)
 
@@ -1261,10 +1247,10 @@ class BatchPanel(QWidget):
         # ── 5. Run controls ────────────────────────────────────────────
         run_row = QHBoxLayout()
         self._run_btn = QPushButton("Run Batch")
-        self._run_btn.setStyleSheet(SS.BTN_RUN)
+        self._run_btn.setStyleSheet(S.BTN_RUN)
         self._stop_btn = QPushButton("Stop")
         self._stop_btn.setEnabled(False)
-        self._stop_btn.setStyleSheet(SS.BTN_STOP)
+        self._stop_btn.setStyleSheet(S.BTN_STOP)
         run_row.addWidget(self._run_btn)
         run_row.addWidget(self._stop_btn)
         run_row.addStretch()
@@ -1277,14 +1263,14 @@ class BatchPanel(QWidget):
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setMaximumHeight(130)
-        self._log.setStyleSheet(SS.LOG)
+        self._log.setStyleSheet(S.LOG)
         root.addWidget(self._log)
 
         # Wiring
         self._run_btn.clicked.connect(self._on_run)
         self._stop_btn.clicked.connect(self._on_stop)
-        self._load_toml_btn.clicked.connect(self._on_load_toml)
-        self._save_toml_btn.clicked.connect(self._on_save_toml)
+        self._load_cfg_btn.clicked.connect(self._on_load_json)
+        self._save_cfg_btn.clicked.connect(self._on_save_json)
         self._load_scan_btn.clicked.connect(self._on_load_scan)
         self._load_cal_btn.clicked.connect(self._on_load_calibration)
         self.state.dataset_changed.connect(self._on_dataset_changed)
@@ -1301,7 +1287,7 @@ class BatchPanel(QWidget):
         if d:
             self._lbl_edit.setText(d)
 
-    # ── TOML ─────────────────────────────────────────────────────────────
+    # ── Config JSON ──────────────────────────────────────────────────────
 
     def _config_dict(self) -> dict:
         """Collect scan config + calibration into a serialisable dict."""
@@ -1341,38 +1327,26 @@ class BatchPanel(QWidget):
         self._cal_frep.setText(str(c.get("f_rep_mhz", 40.0)))
         self._cal_factor.setText(str(c.get("factor", "1+0j")))
 
-    def _on_load_toml(self):
-        if tomllib is None:
-            self._log_line(
-                "tomllib not available — pip install tomli", error=True
-            )
-            return
+    def _on_load_json(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Load config", "", "TOML (*.toml)"
+            self, "Load config", "", "JSON (*.json)"
         )
         if not path:
             return
         try:
-            with open(path, "rb") as f:
-                self._apply_dict(tomllib.load(f))
+            self._apply_dict(load_config(path))
             self._log_line(f"Loaded: {Path(path).name}")
         except Exception as e:
             self._log_line(f"Load error: {e}", error=True)
 
-    def _on_save_toml(self):
-        if tomli_w is None:
-            self._log_line(
-                "tomli-w not available — pip install tomli-w", error=True
-            )
-            return
+    def _on_save_json(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save config", "batch_config.toml", "TOML (*.toml)"
+            self, "Save config", "batch_config.json", "JSON (*.json)"
         )
         if not path:
             return
         try:
-            with open(path, "wb") as f:
-                tomli_w.dump(self._config_dict(), f)
+            save_config(path, self._config_dict())
             self._log_line(f"Saved: {Path(path).name}")
         except Exception as e:
             self._log_line(f"Save error: {e}", error=True)

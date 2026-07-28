@@ -3,7 +3,7 @@
 Resolution order for the demo params file (first match wins):
 
 1. ``$NAPARI_FLOPA_DEMO`` — absolute path to a params ``.json``. For pointing at
-   an arbitrary local file (e.g. on CI or a shared machine).
+   an arbitrary local file.
 2. ``demo_data/demo_params.local.json`` — a git-ignored local override.
 3. ``demo_data/demo_params.json`` — the small demo shipped with the package.
 
@@ -28,7 +28,7 @@ def demo_params_path() -> Path | None:
     for name in ("demo_params.local.json", "demo_params.json"):
         candidate = _DEMO_DIR / name
         if candidate.exists():
-            return candidate
+            return candidate  # first one that exist
     return None
 
 
@@ -44,9 +44,9 @@ def load_demo() -> tuple[dict, Path]:
             f"No demo params found. Expected {_DEMO_DIR / 'demo_params.json'}."
         )
     params = json.loads(params_path.read_text())
-    ptu = Path(params["ptu_filename"])
-    if not ptu.is_absolute():
-        ptu = (params_path.parent / ptu).resolve()
-    if not ptu.exists():
-        raise FileNotFoundError(f"Demo PTU not found: {ptu}")
-    return params, ptu
+    ptu_path = Path(params["ptu_filename"])
+    if not ptu_path.is_absolute():
+        ptu_path = (params_path.parent / ptu_path).resolve()
+    if not ptu_path.exists():
+        raise FileNotFoundError(f"Demo PTU not found: {ptu_path}")
+    return params, ptu_path

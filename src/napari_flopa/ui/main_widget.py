@@ -41,7 +41,7 @@ class FlimWidget(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.setMinimumWidth(80)
+        # self.setMinimumWidth(80)
 
         self._tabs = QTabWidget()
         self._ptu_panel = PtuPanel(self.state, viewer)
@@ -69,7 +69,7 @@ class FlimWidget(QWidget):
         self.state.dataset_changed.connect(self._on_dataset_changed)
 
     def _on_reconstruction_finished(self, ds):
-        self._ensure_view_panel(ds)
+        self._add_view_panel(ds)
 
     def _on_dataset_changed(self):
         ds = self.state.dataset
@@ -78,7 +78,7 @@ class FlimWidget(QWidget):
         self._tabs.setTabEnabled(1, has_phasor)
         self._tabs.setTabEnabled(2, has_tcspc)
 
-    def _ensure_view_panel(self, ds):
+    def _add_view_panel(self, ds):
         """Add FlimViewPanel as a bottom dock widget (once only)."""
         if self._view_dock is None:
             self._view_panel = FlimViewPanel(self.state, self.viewer)

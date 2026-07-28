@@ -1,12 +1,18 @@
 {
-    "_comment": "Scan configuration for the bundled demo PTU file.",
-    "ptu_filename": "demo_f3_ch1_accu1_px500.ptu",
+  "ptu_filename": "demo_f3_ch1_accu1_px500.ptu",
+  "scan": {
+    "frames": 3,
     "lines": 500,
     "pixels": 500,
-    "frames": 3,
-    "max_detector": 2,
     "sequences": 1,
     "accumulations": [1],
+    "max_detector": 2,
+    "tcspc_bins": 4096,
     "bidirectional": false,
     "bidirectional_phase_shift": 0.0
+  },
+  "calibration": {
+    "f_rep_mhz": 40.0,
+    "factor": "1+0j"
+  }
 }

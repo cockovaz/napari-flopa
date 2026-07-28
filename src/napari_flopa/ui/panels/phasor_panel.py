@@ -67,13 +67,13 @@ except ImportError:
     )
 
 from napari_flopa.ui.state import FlopaState
-from napari_flopa.ui.style import MPL, SS, apply_style
+from napari_flopa.ui.style import MPL, S, apply_style
 
 _MAX_PX = 80_000  # scatter subsample cap
 
 
 class PhasorPanel(QWidget):
-    """Tab 1 — Phasor analysis."""
+    """Phasor tab — phasor analysis."""
 
     # Pixel plot sub-modes (only relevant for per-pixel, no mask)
     PM_SCATTER = 0
@@ -132,7 +132,7 @@ class PhasorPanel(QWidget):
         self._stale = QLabel("●")
         self._stale.setFixedWidth(14)
         self._stale.setAlignment(Qt.AlignCenter)
-        self._stale.setStyleSheet(SS.STALE_INACTIVE)
+        self._stale.setStyleSheet(S.STALE_INACTIVE)
         self._stale.setVisible(False)
         tb.addWidget(self._stale)
 
@@ -149,7 +149,7 @@ class PhasorPanel(QWidget):
 
         self._roi_done_btn = QPushButton("✓ Done")
         self._roi_done_btn.setVisible(False)
-        self._roi_done_btn.setStyleSheet(SS.BTN_SUCCESS)
+        self._roi_done_btn.setStyleSheet(S.BTN_SUCCESS)
         tb.addWidget(self._roi_done_btn)
 
         self._roi_btn.toggled.connect(self._on_roi_toggled)
@@ -179,7 +179,7 @@ class PhasorPanel(QWidget):
 
         # ── Mode — row 1: Per Object / Per Pixel; row 2: per-pixel display ─
         mode_box = QGroupBox("Mode")
-        apply_style(mode_box, SS.GROUP_PRIMARY)
+        apply_style(mode_box, S.GROUP_PRIMARY)
         mode_outer = QVBoxLayout(mode_box)
         mode_outer.setSpacing(3)  # minimal gap between the two rows
         mode_outer.setContentsMargins(6, 2, 6, 2)
@@ -253,7 +253,7 @@ class PhasorPanel(QWidget):
 
         # ── Mask ───────────────────────────────────────────────────────
         mask_box = QGroupBox("Mask")
-        apply_style(mask_box, SS.GROUP_PRIMARY)
+        apply_style(mask_box, S.GROUP_PRIMARY)
         mask_lay = QHBoxLayout(mask_box)
         mask_lay.setSpacing(6)
         mask_lay.setContentsMargins(6, 2, 6, 2)
@@ -272,7 +272,7 @@ class PhasorPanel(QWidget):
 
         # -- Smoothing (own row, above Calibration) --
         smooth_box = QGroupBox("Smoothing")
-        apply_style(smooth_box, SS.GROUP_CHECKABLE)
+        apply_style(smooth_box, S.GROUP_CHECKABLE)
         smooth_box.setCheckable(True)
         smooth_box.setChecked(False)
         smooth_lay = QFormLayout(smooth_box)
@@ -290,7 +290,7 @@ class PhasorPanel(QWidget):
 
         # ── Calibration ────────────────────────────────────────────────
         cal_box = QGroupBox("Calibration")
-        apply_style(cal_box, SS.GROUP_CHECKABLE)
+        apply_style(cal_box, S.GROUP_CHECKABLE)
         cal_box.setCheckable(True)
         cal_box.setChecked(False)
         cal_lay = QHBoxLayout(cal_box)
@@ -300,7 +300,7 @@ class PhasorPanel(QWidget):
         cal_lay.addWidget(QLabel("Factor:"))
         self._calib_display = QLineEdit(self._fmt_complex(self._calib_factor))
         self._calib_display.setReadOnly(True)
-        self._calib_display.setStyleSheet(SS.DISPLAY)
+        self._calib_display.setStyleSheet(S.DISPLAY)
         self._calib_display.setToolTip(
             "Current calibration factor (complex number). Applied as: phasor × factor"
         )
@@ -385,7 +385,7 @@ class PhasorPanel(QWidget):
             "Load and reconstruct a PTU file with 'All' output to enable phasor."
         )
         self._status.setWordWrap(True)
-        self._status.setStyleSheet(SS.STATUS)
+        self._status.setStyleSheet(S.STATUS)
         root.addWidget(self._status)
 
         # Initial empty axes
@@ -453,7 +453,7 @@ class PhasorPanel(QWidget):
     def _mark_stale(self):
         if self._plotted_settings is not None:
             if self._get_settings() != self._plotted_settings:
-                self._stale.setStyleSheet(SS.STALE_STALE)
+                self._stale.setStyleSheet(S.STALE_STALE)
                 self._stale.setToolTip(
                     "Settings or view have changed since the last plot — click Plot to refresh."
                 )
@@ -490,13 +490,11 @@ class PhasorPanel(QWidget):
         self._plot_area.setVisible(False)  # hide until (re)plotted
         if not has_phasor:
             self._status.setText(
-                "No phasor data. Reconstruct with 'All (+ Phasor & TCSPC)' output."
+                "No phasor data. Reconstruct with 'All' output."
             )
             self._draw_empty()
         else:
-            self._status.setText(
-                "Phasor data ready. Click 'Plot Phasor from Current View'."
-            )
+            self._status.setText("Phasor data ready. Click 'Plot'.")
 
     @Slot(dict)
     def on_view_changed(self, settings: dict):
@@ -822,11 +820,7 @@ class PhasorPanel(QWidget):
             photon_counts=(
                 np.array(photons_out).ravel() if not per_object else None
             ),
-            labels=(
-                np.array(labels_out).ravel()
-                if not per_object
-                else np.array(labels_out).ravel()
-            ),
+            labels=np.array(labels_out).ravel(),
             mask_layer=mask_layer,
             lt_arr=np.array(lt_out).ravel(),
         )
@@ -853,7 +847,7 @@ class PhasorPanel(QWidget):
         self._table.setVisible(True)
 
         self._plotted_settings = self._get_settings()
-        self._stale.setStyleSheet(SS.STALE_FRESH)
+        self._stale.setStyleSheet(S.STALE_FRESH)
         self._stale.setToolTip("Plot is up to date.")
         self._stale.setVisible(True)
         self._roi_btn.setEnabled(True)
@@ -1058,7 +1052,7 @@ class PhasorPanel(QWidget):
     def _finalise_axes(self, ax):
         ax.set_xlim(-0.05, 1.05)
         ax.set_ylim(-0.05, 0.80)
-        ax.set_aspect("equal", adjustable="datalim")
+        ax.set_aspect("equal", adjustable="box")
         ax.set_xlabel("G", color=MPL.TICK)
         ax.set_ylabel("S", color=MPL.TICK)
         ax.tick_params(colors=MPL.TICK, labelsize=8)
@@ -1442,7 +1436,7 @@ class PhasorPanel(QWidget):
         For per-object mode: inside_mask selects phasor centroids → look up their
         object IDs in self._final_plot_data['labels'] → paint those objects' pixels.
         For per-pixel mode: inside_mask selects individual pixels stored in
-        self._roi_pixel_coords → paint those pixels directly.
+        self._roi_pixel_yx → paint those pixels directly.
         """
         ds = self.state.dataset
         if ds is None:
@@ -1585,7 +1579,7 @@ class CustomFactorDialog(QDialog):
         self._real.setDecimals(6)
         self._real.setSingleStep(0.001)
         self._real.setValue(current.real)
-        form.addRow("Real part (i):", self._real)
+        form.addRow("Real part:", self._real)
 
         self._imag = QDoubleSpinBox()
         self._imag.setRange(-100.0, 100.0)

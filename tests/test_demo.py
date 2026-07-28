@@ -18,14 +18,15 @@ requires_demo = pytest.mark.skipif(
 def _scan_config(params):
     from ptuio.reconstructor import ScanConfig
 
+    scan = params["scan"]
     return ScanConfig(
-        lines=params["lines"],
-        pixels=params["pixels"],
-        frames=params["frames"],
-        line_accumulations=tuple(params["accumulations"]),
-        max_detector=params["max_detector"],
-        bidirectional=params.get("bidirectional", False),
-        bidirectional_phase_shift=params.get("bidirectional_phase_shift", 0.0),
+        lines=scan["lines"],
+        pixels=scan["pixels"],
+        frames=scan["frames"],
+        line_accumulations=tuple(scan["accumulations"]),
+        max_detector=scan["max_detector"],
+        bidirectional=scan.get("bidirectional", False),
+        bidirectional_phase_shift=scan.get("bidirectional_phase_shift", 0.0),
         frame_start_marker_channel=(4,),
         line_start_marker_channel=(1,),
         line_stop_marker_channel=(2,),
@@ -47,8 +48,8 @@ def test_demo_reconstructs():
     )
 
     assert "photon_count" in ds
-    assert ds["photon_count"].sizes["pixel"] == params["pixels"]
-    assert ds["photon_count"].sizes["line"] == params["lines"]
+    assert ds["photon_count"].sizes["pixel"] == params["scan"]["pixels"]
+    assert ds["photon_count"].sizes["line"] == params["scan"]["lines"]
 
 
 @requires_demo

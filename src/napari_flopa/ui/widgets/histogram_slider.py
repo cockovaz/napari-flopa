@@ -5,10 +5,6 @@ The histogram canvas shows two overlaid range indicators:
   - View range : cyan  dashed lines  (top slider, for display contrast)
   - Mask range : red   dashed lines  (bottom slider, for mask creation)
 
-All four handle values are shown as editable QLineEdit fields — click and
-type to set a precise value.
-
-Redraws in <1ms even for large data.
 """
 
 import numpy as np
@@ -24,15 +20,14 @@ from qtpy.QtWidgets import (
 )
 from superqt import QDoubleRangeSlider, QRangeSlider
 
-from napari_flopa.ui.style import SS
+from napari_flopa.ui.style import S
 
 
 class _HistogramCanvas(QWidget):
     """Pure QPainter histogram bar chart with view (cyan) and mask (red) range markers."""
 
-    def __init__(self, integer_mode=False, canvas_height=80, parent=None):
+    def __init__(self, canvas_height=80, parent=None):
         super().__init__(parent)
-        self.integer_mode = integer_mode
         self.setFixedHeight(canvas_height)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -40,9 +35,7 @@ class _HistogramCanvas(QWidget):
         self._edges = np.array([])
         self._data_min = 0.0
         self._data_max = 1.0
-        self._display_max = (
-            1.0  # slightly beyond data_max so right handle is visible
-        )
+        self._display_max = 1.0
 
         self._lo = 0.0
         self._hi = 1.0
@@ -253,9 +246,7 @@ class HistogramSlider(QWidget):
         layout.setSpacing(0)
 
         # ── Histogram canvas ──────────────────────────────────────────────
-        self._canvas = _HistogramCanvas(
-            integer_mode=integer_mode, canvas_height=canvas_height
-        )
+        self._canvas = _HistogramCanvas(canvas_height=canvas_height)
         canvas_row = QHBoxLayout()
         canvas_row.setContentsMargins(
             0, 0, 0, 0
@@ -275,7 +266,7 @@ class HistogramSlider(QWidget):
         self._slider.setRange(0, 1)
         self._slider.setValue((0, 1))
         self._slider.setFixedHeight(18)
-        self._slider.setStyleSheet(SS.SLIDER_VIEW)
+        self._slider.setStyleSheet(S.SLIDER_VIEW)
 
         view_row = QHBoxLayout()
         view_row.setSpacing(2)
@@ -296,7 +287,7 @@ class HistogramSlider(QWidget):
         self._mask_slider.setRange(0, 1)
         self._mask_slider.setValue((0, 1))
         self._mask_slider.setFixedHeight(18)
-        self._mask_slider.setStyleSheet(SS.SLIDER_MASK)
+        self._mask_slider.setStyleSheet(S.SLIDER_MASK)
 
         mask_row = QHBoxLayout()
         mask_row.setSpacing(2)
@@ -461,7 +452,7 @@ class HistogramSlider(QWidget):
         e = QLineEdit("0")
         e.setFixedWidth(45)
         e.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        e.setStyleSheet(SS.LINE_EDIT)
+        e.setStyleSheet(S.LINE_EDIT)
         return e
 
     def _fmt(self, v) -> str:

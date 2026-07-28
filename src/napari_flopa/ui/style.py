@@ -3,25 +3,25 @@ Centralised visual style tokens for napari-flopa widgets.
 
 Usage
 -----
-    from napari_flopa.ui.style import C, SS, MPL, apply_style
+    from napari_flopa.ui.style import C, S, MPL, apply_style
 
-    apply_style(group_box, SS.GROUP_PRIMARY)
-    apply_style(label, SS.STATUS)
-    apply_style(btn, SS.BTN_DANGER)
+    apply_style(group_box, S.GROUP_PRIMARY)
+    apply_style(label, S.STATUS)
+    apply_style(btn, S.BTN_DANGER)
     ax.set_facecolor(MPL.AXES_BG)
 
-All Qt stylesheet strings are module-level constants on ``SS``.
+All Qt stylesheet strings are module-level constants on ``S``.
 All raw hex colours are on ``C``.
 Matplotlib plot colours are on ``MPL``.
 
 Group box title variants
 ------------------------
-  SS.GROUP_PRIMARY — primary sections; gold title.
+  S.GROUP_PRIMARY — primary sections; gold title.
                 Supports the ``#plain`` object-name selector for a muted
                 gray title: ``box.setObjectName("plain")``.
-  SS.GROUP_NESTED  — secondary / nested sections; amber title.
-  SS.GROUP_DOCK    — top-level dock container (e.g. FLIM View); teal title.
-  SS.GROUP_COMPACT — bordered compact box used in dense panel layouts.
+  S.GROUP_NESTED  — secondary / nested sections; amber title.
+  S.GROUP_DOCK    — top-level dock container (e.g. FLIM View); teal title.
+  S.GROUP_COMPACT — bordered compact box used in dense panel layouts.
 """
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ class C:  # "Color" — raw hex colour tokens
 
     Tuned to sit inside napari's dark blue-grey theme (background #262930,
     foreground #414851, text #f0f1f2). Token *names* are the public contract
-    (SS/MPL build on them); only the values changed.
+    (S/MPL build on them); only the values changed.
     """
 
     # Surfaces (dark → light), matching napari's blue-greys
@@ -73,9 +73,9 @@ class C:  # "Color" — raw hex colour tokens
     DANGER_DARK = "#6b4a4e"
     DANGER_BG_DIS = "#2a1e21"
 
-    # Accent — green (success / done)
-    SUCCESS = "#5fbf74"
-    SUCCESS_BG = "#26382c"
+    # Accent — green (succeS / done)
+    SUCCES = "#5fbf74"
+    SUCCES_BG = "#26382c"
 
     # Accent — amber (warning / secondary title)
     WARNING = "#e0a53a"  # warning label
@@ -83,7 +83,7 @@ class C:  # "Color" — raw hex colour tokens
     TITLE_PLAIN = "#c8ccd2"  # GROUP_PRIMARY #plain variant (light gray)
     TITLE_NESTED = "#c9a24a"  # GROUP_NESTED title (amber)
 
-    # Stale indicator (aligned to danger / success)
+    # Stale indicator (aligned to danger / succeS)
     STALE_INACTIVE = "#565e68"
     STALE_STALE = "#e05656"
     STALE_FRESH = "#5fbf74"
@@ -102,7 +102,7 @@ class C:  # "Color" — raw hex colour tokens
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-class SS:  # "Style" — Qt stylesheet strings
+class S:  # "Style" — Qt stylesheet strings
     """Qt stylesheet strings for common widget roles."""
 
     # ── Labels ────────────────────────────────────────────────────────────────
@@ -138,10 +138,10 @@ class SS:  # "Style" — Qt stylesheet strings
         f"QPushButton:disabled {{ color: {C.DANGER_DIM}; }}"
     )
 
-    BTN_SUCCESS = f"QPushButton {{ color: {C.SUCCESS}; }}"
+    BTN_SUCCESS = f"QPushButton {{ color: {C.SUCCES}; }}"
 
     BTN_RUN = (
-        f"QPushButton {{ background: {C.SUCCESS_BG}; color: {C.SUCCESS}; "
+        f"QPushButton {{ background: {C.SUCCES_BG}; color: {C.SUCCES}; "
         f"font-weight: bold; padding: 3px 12px; }}"
     )
 
