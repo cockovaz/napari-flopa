@@ -19,7 +19,7 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
 - **FLIM View** — interactive display with histogram contrast sliders for intensity and lifetime; FLIM RGB composite; export to TIFF/PNG
 - **Phasor** — phasor plot with calibration, smoothing, per-object or per-pixel scatter, monoexponential lifetime semi-circle overlay
 - **Decay** — TCSPC decay plot with aggregation, normalisation and log scale
-- **Batch** — process a folder of `.ptu` files with a shared scan config and export images, phasor tables and decay tables; config saved/loaded as TOML
+- **Batch** — **NOW DISABLED** process a folder of `.ptu` files with a shared scan config and export images, phasor tables and decay tables; config saved/loaded as json
 
 ## Installation
 
