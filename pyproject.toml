@@ -8,7 +8,7 @@ authors = [
   {name = "Zuzana Cockova", email = "cockovaz@natur.cuni.cz"},
 ]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Framework :: napari",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
@@ -33,7 +33,7 @@ dependencies = [
     "scipy",
     "matplotlib",
     "superqt",
-    "tttrkit @ git+https://github.com/panekdal/tttrkit.git@fc803d4",
+    "tttrkit @ git+https://github.com/IMCF-Biocev/tttrkit.git@92e5f60",
 ]
 
 [project.optional-dependencies]
