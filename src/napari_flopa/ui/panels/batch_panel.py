@@ -1641,7 +1641,7 @@ class BatchPanel(QWidget):
             accumulations=tuple(self._accum_list(n_seqs, strict=strict)),
             max_detector=_num(self._c_maxdet, int, 4),
             bidirectional=self._c_bidir.isChecked(),
-            bidirectional_phase_shift=_num(self._c_bidir_shift, float, 0.0),
+            # bidirectional_phase_shift=_num(self._c_bidir_shift, float, 0.0),
             harmonic_scan=self._c_harmonic.isChecked(),
             laser_duty=_num(self._c_laser_duty, float, DEFAULT_LASER_DUTY),
             line_start_marker_delay=_num(self._c_line_start_delay, float, 0.0),
@@ -1693,7 +1693,7 @@ class BatchPanel(QWidget):
         if "harmonic_scan" in s:
             self._c_harmonic.setChecked(bool(s["harmonic_scan"]))
         for key, edit in (
-            ("bidirectional_phase_shift", self._c_bidir_shift),
+            # ("bidirectional_phase_shift", self._c_bidir_shift),
             ("laser_duty", self._c_laser_duty),
             ("line_start_marker_delay", self._c_line_start_delay),
             ("line_stop_marker_delay", self._c_line_stop_delay),

@@ -1,6 +1,6 @@
 import numpy as np
 from tttrkit.ptuio.decoder import T3OverflowCorrector
-from tttrkit.ptuio.marker import get_marker_distribution, marker_events
+from tttrkit.ptuio.utils import get_marker_distribution, marker_events
 from tttrkit.ptuio.reader import TTTRReader
 
 from napari_flopa.core.io.ptu_params import read_tag

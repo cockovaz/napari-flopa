@@ -8,8 +8,7 @@
     "accumulations": [1],
     "max_detector": 2,
     "tcspc_bins": 4096,
-    "bidirectional": false,
-    "bidirectional_phase_shift": 0.0
+    "bidirectional": false    
   },
   "calibration": {
     "factor": "1+0j"
