@@ -29,6 +29,8 @@ from qtpy.QtWidgets import (
 )
 from tttrkit.ptuio.reconstructor import ScanConfig
 from tttrkit.ptuio.utils import (
+    get_marker_numbers,
+    _format_marker_suggestions,
     estimate_bidirectional_prealign,
     estimate_bidirectional_shift,
 )
@@ -45,11 +47,12 @@ from napari_flopa.core.io.loader import (
     format_ptu_header,
     read_ptu_file,
 )
-from napari_flopa.core.io.markers import (
-    _format_marker_suggestions,
-    analyze_marker_distribution,
-    get_markers,
-)
+# from napari_flopa.core.io.markers import (
+#     _format_marker_suggestions,
+#     analyze_marker_distribution,
+#     get_markers,
+# )
+
 from napari_flopa.core.logger import ProgressLogger
 from napari_flopa.core.processing.reconstruction import (
     DEFAULT_CHUNK_SIZE,
@@ -174,7 +177,7 @@ class PtuPanel(QWidget):
         header_layout.addWidget(self.header_info)
 
         marker_row = QHBoxLayout()
-        self.markers_btn = QPushButton("Analyze Markers")
+        self.markers_btn = QPushButton("Marker Stats")
         self.markers_btn.setToolTip(
             "Read marker events to suggest scan dimensions"
         )
@@ -649,18 +652,20 @@ class PtuPanel(QWidget):
         self._log_line("Analyzing markers...")
         QApplication.processEvents()
         try:
-            dist = get_markers(self.ptu_data["reader"], chunk_limit=20)
-            if "error" in dist:
-                self._log_line(dist["error"])
-                self._log_commit()
-                return
-            analysis = analyze_marker_distribution(dist)
-            text = _format_marker_suggestions(analysis)
+            marker_stats = get_marker_numbers(self.ptu_data["reader"], self.ptu_data["constants"]["wrap"],verbose=False)
+            # dist = get_markers(self.ptu_data["reader"], chunk_limit=20)
+            # if "error" in dist:
+            #     self._log_line(dist["error"])
+            #     self._log_commit()
+            #     return
+            # analysis = analyze_marker_distribution(dist)
+            # text = _format_marker_suggestions(analysis)
+            text = _format_marker_suggestions(marker_stats)
             self._log_line(text)
             self._log_commit()
 
             # Auto-apply if only one suggestion
-            suggestions = analysis.get("suggestions", [])
+            suggestions = marker_stats.get("suggested_combinations", [])
             if len(suggestions) == 1:
                 lines, accum = suggestions[0]
                 self.lines_spin.setValue(lines)
