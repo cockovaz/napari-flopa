@@ -23,7 +23,6 @@ JSON schema (every key optional when reading)::
         "frames", "lines", "pixels", "sequences",
         "accumulations": [1, 3, ...],   # one int per sequence
         "max_detector", "tcspc_bins",
-        "bidirectional", "bidirectional_phase_shift",
         "harmonic_scan", "laser_duty",
         "line_start_marker_delay", "line_stop_marker_delay",
         "frame_start_marker", "line_start_marker", "line_stop_marker"
@@ -54,7 +53,7 @@ class ScanSettings:
 
     # ── scan modes ──────────────────────────────────────────────────────
     bidirectional: bool = False
-    bidirectional_phase_shift: float = 0.0
+    # bidirectional_phase_shift: float = 0.0
     harmonic_scan: bool = False
     laser_duty: float = DEFAULT_LASER_DUTY
     line_start_marker_delay: float = 0.0
@@ -82,10 +81,10 @@ class ScanSettings:
         """Sequence count — always ``len(accumulations)``, never stored twice."""
         return len(self.accumulations)
 
-    @property
-    def effective_phase_shift(self) -> float:
-        """Phase shift as applied: only meaningful for a bidirectional scan."""
-        return self.bidirectional_phase_shift if self.bidirectional else 0.0
+    # @property
+    # def effective_phase_shift(self) -> float:
+    #     """Phase shift as applied: only meaningful for a bidirectional scan."""
+    #     return self.bidirectional_phase_shift if self.bidirectional else 0.0
 
     @property
     def effective_marker_delays(self) -> tuple[float, float]:
@@ -109,7 +108,7 @@ class ScanSettings:
             line_accumulations=tuple(self.accumulations) or (1,),
             max_detector=self.max_detector,
             bidirectional=self.bidirectional,
-            bidirectional_phase_shift=self.effective_phase_shift,
+            # bidirectional_phase_shift=self.effective_phase_shift,
             harmonic_scan=self.harmonic_scan,
             laser_duty=self.laser_duty,
             line_start_marker_delay=start_delay,
@@ -131,7 +130,7 @@ class ScanSettings:
                 "accumulations": [int(a) for a in self.accumulations],
                 "max_detector": int(self.max_detector),
                 "bidirectional": bool(self.bidirectional),
-                "bidirectional_phase_shift": float(self.effective_phase_shift),
+                # "bidirectional_phase_shift": float(self.effective_phase_shift),
                 "harmonic_scan": bool(self.harmonic_scan),
                 "laser_duty": float(self.laser_duty),
                 "line_start_marker_delay": float(start_delay),
@@ -173,7 +172,7 @@ class ScanSettings:
             "pixels": int,
             "max_detector": int,
             "bidirectional": bool,
-            "bidirectional_phase_shift": float,
+            # "bidirectional_phase_shift": float,
             "harmonic_scan": bool,
             "laser_duty": float,
             "line_start_marker_delay": float,
