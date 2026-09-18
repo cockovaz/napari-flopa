@@ -16,21 +16,9 @@ requires_demo = pytest.mark.skipif(
 
 
 def _scan_config(params):
-    from tttrkit.ptuio.reconstructor import ScanConfig
+    from napari_flopa.core.io.config import ScanSettings
 
-    scan = params["scan"]
-    return ScanConfig(
-        lines=scan["lines"],
-        pixels=scan["pixels"],
-        frames=scan["frames"],
-        line_accumulations=tuple(scan["accumulations"]),
-        max_detector=scan["max_detector"],
-        bidirectional=scan.get("bidirectional", False),
-        bidirectional_phase_shift=scan.get("bidirectional_phase_shift", 0.0),
-        frame_start_marker_channel=4,
-        line_start_marker_channel=1,
-        line_stop_marker_channel=2,
-    )
+    return ScanSettings.from_json_dict(params).to_scan_config()
 
 
 @requires_demo

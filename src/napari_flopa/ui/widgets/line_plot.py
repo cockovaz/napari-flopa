@@ -45,8 +45,39 @@ class LinePlotWidget(QWidget):
         self._selection: tuple[float, float] | None = None
         self._x_min: float | None = None
         self._x_max: float | None = None
+        self._x_title = "Time (s)"
+        self._y_title = "Photon count"
+        self._empty_text = "No trace — set the range and click Apply"
         self.setMouseTracking(True)
         self.setMinimumHeight(320)
+
+    def set_labels(self, x_title: str, y_title: str, empty_text: str):
+        """Axis titles and the placeholder shown while there is no data."""
+        self._x_title = x_title
+        self._y_title = y_title
+        self._empty_text = empty_text
+        self.update()
+
+    def set_series(self, series, *, x_min: float, x_max: float, markers=None):
+        """Plot arbitrary ``(x, y, colour, label)`` lines.
+
+        The general form behind :meth:`set_values`, for callers that already
+        have plain arrays. *markers* maps a name to ``(positions, colour)``
+        and draws each position as a vertical line.
+        """
+        self._series = [
+            (np.asarray(x), np.asarray(y), QColor(colour), label)
+            for x, y, colour, label in series
+        ]
+        self._marker_series = {
+            name: (np.asarray(positions, dtype=float), QColor(colour))
+            for name, (positions, colour) in (markers or {}).items()
+        }
+        self._selector_time = None
+        self._selection = None
+        self._x_min = float(x_min)
+        self._x_max = float(x_max)
+        self.update()
 
     def set_values(
         self,
@@ -235,7 +266,7 @@ class LinePlotWidget(QWidget):
             painter.drawText(
                 self.rect(),
                 Qt.AlignmentFlag.AlignCenter,
-                "No trace — set the range and click Apply",
+                self._empty_text,
             )
             painter.end()
             return
@@ -353,10 +384,12 @@ class LinePlotWidget(QWidget):
         # Axis titles live in the margins.
         painter.setClipping(False)
         painter.setPen(QPen(QColor(MPL.TICK), 1))
-        painter.drawText(rect.center().x() - 30, self.height() - 7, "Time (s)")
+        painter.drawText(
+            rect.center().x() - 30, self.height() - 7, self._x_title
+        )
         painter.save()
         painter.translate(14, rect.center().y())
         painter.rotate(-90)
-        painter.drawText(0, -5, "Photon count")
+        painter.drawText(0, -5, self._y_title)
         painter.restore()
         painter.end()

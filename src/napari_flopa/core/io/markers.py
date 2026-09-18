@@ -1,7 +1,7 @@
 import numpy as np
 from tttrkit.ptuio.decoder import T3OverflowCorrector
-from tttrkit.ptuio.marker import get_marker_distribution, marker_events
 from tttrkit.ptuio.reader import TTTRReader
+from tttrkit.ptuio.utils import get_marker_distribution, marker_events
 
 from napari_flopa.core.io.ptu_params import read_tag
 
@@ -21,6 +21,7 @@ def get_markers(reader: TTTRReader, chunk_limit: int = 0) -> dict:
     all_markers = []
     wrap = read_tag(reader.header.tags, "wrap")
     corrector = T3OverflowCorrector(wraparound=wrap)
+    reader.reset()
 
     for i, chunk in enumerate(reader.iter_chunks(chunk_size=1_000_000)):
         if chunk_limit > 0 and i >= chunk_limit:

@@ -57,7 +57,9 @@ from qtpy.QtWidgets import (
 
 from napari_flopa.core.io.config import (
     DEFAULT_LASER_DUTY,
+    US,
     ScanSettings,
+    config_is_legacy,
     load_config,
     save_config,
 )
@@ -1313,20 +1315,7 @@ class BatchPanel(QWidget):
         self._c_bidir = QCheckBox("Bidirectional")
         self._c_bidir.setStyleSheet("font-weight: normal;")
         self._c_bidir.setToolTip("Enable bidirectional scan correction")
-        self._c_bidir_shift = QLineEdit("0.0")
-        # self._c_bidir_shift.setMaximumWidth(65)
-        self._c_bidir_shift.setValidator(QDoubleValidator(-0.5, 0.5, 6))
-        self._c_bidir_shift.setToolTip(
-            "Phase shift for bidirectional correction (pixels, −0.2 … 0.2)"
-        )
-        bidir_lbl = QLabel("Phase shift:")
-        bidir_lbl.setStyleSheet("font-weight: normal;")
-        # The label follows its field, so an unticked mode greys out as a
-        # whole — the same cue a checkable section gives its contents.
-        _follow_checkbox(self._c_bidir, self._c_bidir_shift, bidir_lbl)
         cg.addWidget(self._c_bidir, 3, 0, 1, 2)
-        cg.addWidget(bidir_lbl, 3, 2)
-        cg.addWidget(self._c_bidir_shift, 3, 3, 1, 3)
 
         # Harmonic (resonant) scan row — same pattern as bidirectional above.
         self._c_harmonic = QCheckBox("Harmonic")
@@ -1343,14 +1332,13 @@ class BatchPanel(QWidget):
             (self._c_line_start_delay, "start"),
             (self._c_line_stop_delay, "stop"),
         ):
-            edit.setValidator(QDoubleValidator(-0.5, 0.5, 6))
+            edit.setValidator(QDoubleValidator(-100_000.0, 100_000.0, 3))
             edit.setToolTip(
-                f"Shift the {edge} edge of each reconstructed line "
-                "(fraction of a line duration)"
+                f"Shift the {edge} edge of each reconstructed line, in µs"
             )
         duty_lbl = QLabel("Laser duty:")
         duty_lbl.setStyleSheet("font-weight: normal;")
-        delay_lbl = QLabel("Line Δ start/stop:")
+        delay_lbl = QLabel("Line Δ start/stop (µs):")
         delay_lbl.setStyleSheet("font-weight: normal;")
         _follow_checkbox(
             self._c_harmonic,
@@ -1641,11 +1629,14 @@ class BatchPanel(QWidget):
             accumulations=tuple(self._accum_list(n_seqs, strict=strict)),
             max_detector=_num(self._c_maxdet, int, 4),
             bidirectional=self._c_bidir.isChecked(),
-            bidirectional_phase_shift=_num(self._c_bidir_shift, float, 0.0),
             harmonic_scan=self._c_harmonic.isChecked(),
             laser_duty=_num(self._c_laser_duty, float, DEFAULT_LASER_DUTY),
-            line_start_marker_delay=_num(self._c_line_start_delay, float, 0.0),
-            line_stop_marker_delay=_num(self._c_line_stop_delay, float, 0.0),
+            line_start_marker_delay=(
+                _num(self._c_line_start_delay, float, 0.0) * US
+            ),
+            line_stop_marker_delay=(
+                _num(self._c_line_stop_delay, float, 0.0) * US
+            ),
             tcspc_bins=_num(self._c_tcspc, int, 4096),
             calib_factor=self._cal_factor.text().strip() or "1+0j",
         )
@@ -1692,14 +1683,24 @@ class BatchPanel(QWidget):
             self._c_bidir.setChecked(bool(s["bidirectional"]))
         if "harmonic_scan" in s:
             self._c_harmonic.setChecked(bool(s["harmonic_scan"]))
-        for key, edit in (
-            ("bidirectional_phase_shift", self._c_bidir_shift),
-            ("laser_duty", self._c_laser_duty),
-            ("line_start_marker_delay", self._c_line_start_delay),
-            ("line_stop_marker_delay", self._c_line_stop_delay),
-        ):
-            if key in s:
-                edit.setText(str(s[key]))
+        if "laser_duty" in s:
+            self._c_laser_duty.setText(str(s["laser_duty"]))
+
+        if config_is_legacy(cfg):
+            self._c_line_start_delay.setText("0.0")
+            self._c_line_stop_delay.setText("0.0")
+            self._log_line(
+                "Config predates the marker-delay unit change — delays "
+                "reset to 0. Re-run the Alignment wizard in the File tab.",
+                error=True,
+            )
+        else:
+            for key, edit in (
+                ("line_start_marker_delay", self._c_line_start_delay),
+                ("line_stop_marker_delay", self._c_line_stop_delay),
+            ):
+                if key in s:
+                    edit.setText(f"{float(s[key]) / US:.3f}")
 
         c = cfg.get("calibration") or {}
         if c.get("factor"):

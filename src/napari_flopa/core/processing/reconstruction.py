@@ -45,6 +45,7 @@ def reconstruct_ptu_to_dataset(
         logger = ProgressLogger(mode="print")
 
     reader = ptu_data["reader"]
+    reader.reset()
     constants = ptu_data["constants"]
 
     tcspc_channels = tcspc_channels_override or constants["tcspc_bins"]
