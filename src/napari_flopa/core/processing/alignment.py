@@ -7,8 +7,8 @@ from tttrkit.ptuio.utils import (
     estimate_bidirectional_shift,
 )
 
-#: Raw TTTR records read per probe. Not photons — markers and overflow
-#: records are counted too.
+from napari_flopa.core.io.config import nsync_to_seconds, seconds_to_nsync
+
 DEFAULT_CHUNK_RECORDS = 500_000
 
 
@@ -67,18 +67,27 @@ def optimize_shift(
 
     ``best_shift`` in the result is **relative** to the delays already on
     *config* — add it to both of them rather than assigning it.
+
+    tttrkit works in sync counts here; the returned shifts are converted back
+    to seconds so callers only ever deal with SI.
     """
     sync_rate, wrap = _sync_rate_and_wrap(ptu_data)
-    return estimate_bidirectional_shift(
+    result = estimate_bidirectional_shift(
         reader=ptu_data["reader"],
         config=config,
         laser_sync_rate=sync_rate,
         wrap=wrap,
-        max_shift=float(max_shift_s),
+        max_shift=seconds_to_nsync(max_shift_s, sync_rate),
         steps=int(steps),
         chunk_length=int(chunk_records),
         skip_chunks=int(skip_chunks),
         verbose=False,
+    )
+    return result.assign(
+        best_shift=nsync_to_seconds(result["best_shift"].item(), sync_rate)
+    ).assign_coords(
+        test_shift=result["test_shift"].values / sync_rate,
+        fit_shift=result["fit_shift"].values / sync_rate,
     )
 
 
@@ -93,8 +102,14 @@ def segment_profiles(
     *,
     chunk_records: int = DEFAULT_CHUNK_RECORDS,
     skip_chunks: int = 0,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Forward and backward line profiles at the delays set on *config*."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Forward and backward line profiles at the delays set on *config*.
+
+    Returns ``(forward, backward, time_axis)``. The time axis holds the centre
+    of each pixel's acceptance window in seconds from the line start marker —
+    the same reference the pre-alignment plot uses — and describes the forward
+    sweep; the backward one runs the other way through the same window.
+    """
     sync_rate, wrap = _sync_rate_and_wrap(ptu_data)
     chunk, parity = _read_probe_chunk(
         ptu_data["reader"],
@@ -106,18 +121,33 @@ def segment_profiles(
     )
     result = SegmentReconstructor(config, sync_rate).reconstruct(chunk)
 
-    # The reconstructor flips every odd line, which is only right when the
-    # chunk starts on a forward line; dropping `parity` lines makes it so.
-    lines = result.sizes["line"]
-    if lines - parity < 2:
+    photon_count = result["photon_count"].values
+    if len(photon_count) < 2:
         raise RuntimeError(
             "Not enough complete lines in this region to compare directions.\n"
             "Try a larger chunk size."
         )
 
-    photon_count = (
-        result["photon_count"].isel(line=slice(parity, lines)).values
+    # Sum the same number of lines from each direction, or the profiles are
+    # not comparable in amplitude.
+    pairs = len(photon_count) // 2
+    even_lines = photon_count[0 : 2 * pairs : 2].sum(axis=0).astype(float)
+    odd_lines = photon_count[1 : 2 * pairs : 2].sum(axis=0).astype(float)
+
+    # reconstruct() fills line_duration in when it was left to be measured.
+    pixels = int(config.pixels)
+    window = (
+        config.line_duration
+        + config.line_stop_marker_delay
+        - config.line_start_marker_delay
     )
-    forward = photon_count[0::2].sum(axis=0).astype(float)
-    backward = photon_count[1::2].sum(axis=0).astype(float)
-    return forward, backward
+    centres = config.line_start_marker_delay + (np.arange(pixels) + 0.5) * (
+        window / pixels
+    )
+    time_axis = centres / sync_rate
+
+    if parity == 0:
+        return even_lines, odd_lines, time_axis
+    # The chunk starts on a backward line, so the reconstructor flipped the
+    # wrong rows: the directions swap and both profiles come out mirrored.
+    return odd_lines[::-1], even_lines[::-1], time_axis

@@ -17,14 +17,14 @@ the marker keys and drops ``max_detector`` and both marker delays.
 JSON schema (every key optional when reading)::
 
     {
-      "version": 2,                     # absent = pre-seconds marker delays
       "ptu_filename": "scan.ptu",       # recorded for reference only
       "scan": {
         "frames", "lines", "pixels", "sequences",
         "accumulations": [1, 3, ...],   # one int per sequence
         "max_detector", "tcspc_bins",
-        "harmonic_scan", "laser_duty",
+        "bidirectional", "harmonic_scan", "laser_duty",
         "line_start_marker_delay", "line_stop_marker_delay",
+        "line_duration",                # omitted when tttrkit should infer it
         "frame_start_marker", "line_start_marker", "line_stop_marker"
       },
       "calibration": {"factor": "1+0j"},
@@ -35,23 +35,12 @@ JSON schema (every key optional when reading)::
 import json
 from dataclasses import dataclass, field, fields
 
-#: Marker delays are in seconds — tttrkit multiplies them by the laser sync
-#: rate to get sync counts. The UI enters them in µs and scales by this.
+#: Marker delays and the line duration are stored in seconds — tttrkit takes
+#: them as sync counts. The UI enters delays in µs and durations in ms.
 US = 1e-6
+MS = 1e-3
 
 DEFAULT_LASER_DUTY = 0.6
-
-#: Configs written before the marker delays moved from fractions of a line
-#: duration to seconds carry no version and their delays cannot be converted.
-CONFIG_VERSION = 2
-
-#: Keys whose values are meaningless in a config predating CONFIG_VERSION.
-#: ``bidirectional_phase_shift`` no longer exists but still appears in them.
-_DELAY_KEYS = (
-    "line_start_marker_delay",
-    "line_stop_marker_delay",
-    "bidirectional_phase_shift",
-)
 
 
 @dataclass
@@ -67,11 +56,12 @@ class ScanSettings:
 
     # ── scan modes ──────────────────────────────────────────────────────
     bidirectional: bool = False
-    # bidirectional_phase_shift: float = 0.0
     harmonic_scan: bool = False
     laser_duty: float = DEFAULT_LASER_DUTY
     line_start_marker_delay: float = 0.0
     line_stop_marker_delay: float = 0.0
+    #: None lets tttrkit measure it from the markers of the first chunk.
+    line_duration: float | None = None
 
     # ── marker bits (one of 1, 2, 4, 8) ─────────────────────────────────
     frame_start_marker: int = 4
@@ -91,18 +81,17 @@ class ScanSettings:
         """Sequence count — always ``len(accumulations)``, never stored twice."""
         return len(self.accumulations)
 
-    # @property
-    # def effective_phase_shift(self) -> float:
-    #     """Phase shift as applied: only meaningful for a bidirectional scan."""
-    #     return self.bidirectional_phase_shift if self.bidirectional else 0.0
-
     @property
     def effective_marker_delays(self) -> tuple[float, float]:
         """Line start/stop delays as applied — independent of scan mode."""
         return self.line_start_marker_delay, self.line_stop_marker_delay
 
-    def to_scan_config(self):
-        """Build the tttrkit ``ScanConfig`` — the only place its names appear."""
+    def to_scan_config(self, sync_rate: float):
+        """Build the tttrkit ``ScanConfig`` — the only place its names appear.
+
+        *sync_rate* is the laser repetition rate in Hz: tttrkit takes the
+        marker delays as sync counts, so the stored seconds are scaled here.
+        """
         # Imported lazily so save/load stay usable without tttrkit installed.
         from tttrkit.ptuio.reconstructor import ScanConfig
 
@@ -114,11 +103,15 @@ class ScanSettings:
             line_accumulations=tuple(self.accumulations) or (1,),
             max_detector=self.max_detector,
             bidirectional=self.bidirectional,
-            # bidirectional_phase_shift=self.effective_phase_shift,
             harmonic_scan=self.harmonic_scan,
             laser_duty=self.laser_duty,
-            line_start_marker_delay=start_delay,
-            line_stop_marker_delay=stop_delay,
+            line_start_marker_delay=seconds_to_nsync(start_delay, sync_rate),
+            line_stop_marker_delay=seconds_to_nsync(stop_delay, sync_rate),
+            line_duration=(
+                None
+                if self.line_duration is None
+                else seconds_to_nsync(self.line_duration, sync_rate)
+            ),
             frame_start_marker_channel=self.frame_start_marker,
             line_start_marker_channel=self.line_start_marker,
             line_stop_marker_channel=self.line_stop_marker,
@@ -128,7 +121,6 @@ class ScanSettings:
         """Serialisable form — the .json file and ``ds.attrs['scan_config']``."""
         start_delay, stop_delay = self.effective_marker_delays
         cfg: dict = {
-            "version": CONFIG_VERSION,
             "scan": {
                 "frames": int(self.frames),
                 "lines": int(self.lines),
@@ -137,7 +129,6 @@ class ScanSettings:
                 "accumulations": [int(a) for a in self.accumulations],
                 "max_detector": int(self.max_detector),
                 "bidirectional": bool(self.bidirectional),
-                # "bidirectional_phase_shift": float(self.effective_phase_shift),
                 "harmonic_scan": bool(self.harmonic_scan),
                 "laser_duty": float(self.laser_duty),
                 "line_start_marker_delay": float(start_delay),
@@ -150,6 +141,8 @@ class ScanSettings:
         }
         if self.tcspc_bins is not None:
             cfg["scan"]["tcspc_bins"] = int(self.tcspc_bins)
+        if self.line_duration is not None:
+            cfg["scan"]["line_duration"] = float(self.line_duration)
         if self.ptu_filename:
             cfg["ptu_filename"] = str(self.ptu_filename)
         if self.sources:
@@ -162,12 +155,10 @@ class ScanSettings:
 
         Tolerant on purpose: configs written by older versions are missing
         whole keys, and the Batch tab used to write ``accum_per_seq`` as a
-        comma-separated string instead of a list. Marker delays from an
-        unversioned config are dropped — see :func:`config_is_legacy`.
+        comma-separated string instead of a list.
         """
         scan = cfg.get("scan", {})
         out = cls()
-        legacy = cfg.get("version") is None
 
         accum = scan.get("accumulations", scan.get("accum_per_seq"))
         if isinstance(accum, str):  # legacy "1,3" form
@@ -181,19 +172,17 @@ class ScanSettings:
             "pixels": int,
             "max_detector": int,
             "bidirectional": bool,
-            # "bidirectional_phase_shift": float,
             "harmonic_scan": bool,
             "laser_duty": float,
             "line_start_marker_delay": float,
             "line_stop_marker_delay": float,
+            "line_duration": float,
             "frame_start_marker": int,
             "line_start_marker": int,
             "line_stop_marker": int,
             "tcspc_bins": int,
         }
         for name, cast in simple.items():
-            if legacy and name in _DELAY_KEYS:
-                continue
             if scan.get(name) is not None:
                 setattr(out, name, cast(scan[name]))
 
@@ -216,22 +205,19 @@ class ScanSettings:
         return type(self)(**{**self.__dict__, **changes})
 
 
-def config_is_legacy(cfg: dict) -> bool:
-    """True when *cfg* carries marker delays in the old line-duration units.
-
-    Those values cannot be converted without knowing the line duration, so
-    callers drop them and tell the user to re-estimate. Configs whose delays
-    are all zero need no warning — nothing is lost by dropping them.
-    """
-    if cfg.get("version") is not None:
-        return False
-    scan = cfg.get("scan", {})
-    return any(float(scan.get(key) or 0.0) for key in _DELAY_KEYS)
+def seconds_to_nsync(delay_s: float, sync_rate: float) -> int:
+    """Marker delay in seconds → the sync counts tttrkit's ScanConfig takes."""
+    return int(round(float(delay_s) * float(sync_rate)))
 
 
-def scan_config_from_dict(cfg: dict):
+def nsync_to_seconds(delay_nsync: float, sync_rate: float) -> float:
+    """Inverse of :func:`seconds_to_nsync`."""
+    return float(delay_nsync) / float(sync_rate)
+
+
+def scan_config_from_dict(cfg: dict, sync_rate: float):
     """Convenience: config dict → tttrkit ``ScanConfig``."""
-    return ScanSettings.from_json_dict(cfg).to_scan_config()
+    return ScanSettings.from_json_dict(cfg).to_scan_config(sync_rate)
 
 
 def save_config(path, cfg: dict) -> None:

@@ -691,9 +691,14 @@ class _BatchWorker(QObject):
         outputs = _needed_outputs(p)
 
         ptu_data = read_ptu_file(str(ptu_path))
+        # Marker delays convert to sync counts, so each file is configured
+        # with its own repetition rate rather than one rate for the batch.
+        scan_config = p["scan_settings"].to_scan_config(
+            ptu_data["constants"]["repetition_rate"]
+        )
         ds = reconstruct_ptu_to_dataset(
             ptu_data,
-            p["scan_config"],
+            scan_config,
             outputs=outputs,
             tcspc_channels_override=p.get("tcspc_bins"),
             chunk_size=p.get("chunk_size") or DEFAULT_CHUNK_SIZE,
@@ -1628,7 +1633,6 @@ class BatchPanel(QWidget):
             accumulations=tuple(self._accum_list(n_seqs, strict=strict)),
             max_detector=_num(self._c_maxdet, int, 4),
             bidirectional=self._c_bidir.isChecked(),
-            # bidirectional_phase_shift=_num(self._c_bidir_shift, float, 0.0),
             harmonic_scan=self._c_harmonic.isChecked(),
             laser_duty=_num(self._c_laser_duty, float, DEFAULT_LASER_DUTY),
             line_start_marker_delay=(
@@ -1683,14 +1687,15 @@ class BatchPanel(QWidget):
             self._c_bidir.setChecked(bool(s["bidirectional"]))
         if "harmonic_scan" in s:
             self._c_harmonic.setChecked(bool(s["harmonic_scan"]))
+        if "laser_duty" in s:
+            self._c_laser_duty.setText(str(s["laser_duty"]))
+
         for key, edit in (
-            # ("bidirectional_phase_shift", self._c_bidir_shift),
-            ("laser_duty", self._c_laser_duty),
             ("line_start_marker_delay", self._c_line_start_delay),
             ("line_stop_marker_delay", self._c_line_stop_delay),
         ):
             if key in s:
-                edit.setText(str(s[key]))
+                edit.setText(f"{float(s[key]) / US:.3f}")
 
         c = cfg.get("calibration") or {}
         if c.get("factor"):
@@ -1722,10 +1727,6 @@ class BatchPanel(QWidget):
 
     # ── run ──────────────────────────────────────────────────────────────
 
-    def _build_scan_config(self):
-        """Build a ScanConfig from the UI fields, validating accumulations."""
-        return self.current_settings(strict=True).to_scan_config()
-
     def _cal_complex(self) -> complex:
         """Parse the calibration factor field."""
         txt = self._cal_factor.text().strip().replace(" ", "")
@@ -1753,7 +1754,6 @@ class BatchPanel(QWidget):
 
         try:
             settings = self.current_settings(strict=True)
-            scan_cfg = settings.to_scan_config()
             cal = self._cal_complex()
         except Exception as e:
             self._log_line(f"Config error: {e}", error=True)
@@ -1768,7 +1768,7 @@ class BatchPanel(QWidget):
             ptu_files=[str(p) for p in self._selected_files] or None,
             lbl_dir=self._lbl_edit.text().strip() or None,
             recursive=self._recursive_chk.isChecked(),
-            scan_config=scan_cfg,
+            scan_settings=settings,
             scan_config_dict=settings.to_json_dict()["scan"],
             tcspc_bins=int(self._c_tcspc.text() or 0) or None,
             chunk_size=self._c_chunk.value(),

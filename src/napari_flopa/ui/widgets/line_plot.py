@@ -27,6 +27,25 @@ _MARKER_STYLE = {
 _PLOT_MARGINS = (74, 26, 25, 40)  # left, top, right, bottom
 
 
+def _nice_ticks(v_min: float, v_max: float, target: int = 6):
+    """Round tick values on a 1/2/2.5/5 × 10^k ladder, within the range."""
+    span = float(v_max) - float(v_min)
+    if not np.isfinite(span) or span <= 0:
+        return np.array([float(v_min)])
+
+    raw_step = span / max(target, 1)
+    magnitude = 10.0 ** np.floor(np.log10(raw_step))
+    step = 10.0 * magnitude
+    for multiple in (1.0, 2.0, 2.5, 5.0):
+        if multiple * magnitude >= raw_step:
+            step = multiple * magnitude
+            break
+
+    ticks = np.arange(np.ceil(v_min / step) * step, v_max + step * 0.5, step)
+    tolerance = step * 1e-6
+    return ticks[(ticks >= v_min - tolerance) & (ticks <= v_max + tolerance)]
+
+
 class LinePlotWidget(QWidget):
     """Time trace plot: one line per detector plus marker overlays."""
 
@@ -48,6 +67,10 @@ class LinePlotWidget(QWidget):
         self._x_title = "Time (s)"
         self._y_title = "Photon count"
         self._empty_text = "No trace — set the range and click Apply"
+        self._top_title: str | None = None
+        self._top_convert = None
+        self._top_invert = None
+        self._marker_hidden: set[str] = set()
         self.setMouseTracking(True)
         self.setMinimumHeight(320)
 
@@ -56,6 +79,48 @@ class LinePlotWidget(QWidget):
         self._x_title = x_title
         self._y_title = y_title
         self._empty_text = empty_text
+        self.update()
+
+    def set_top_axis(self, title: str | None, convert=None, invert=None):
+        """Label the same data in a second unit along the top edge.
+
+        *convert* maps an x value to the top axis' unit; None removes it.
+        Supplying *invert* as well puts the ticks on round numbers of that
+        unit rather than wherever the bottom axis' ticks happen to fall.
+        """
+        self._top_title = title
+        self._top_convert = convert
+        self._top_invert = invert
+        self.update()
+
+    def _top_ticks(self):
+        """``(top value, x value)`` pairs for the second axis."""
+        if self._top_invert is None:
+            return [
+                (self._top_convert(float(t)), float(t))
+                for t in _nice_ticks(self._x_min, self._x_max)
+            ]
+        lo = self._top_convert(self._x_min)
+        hi = self._top_convert(self._x_max)
+        return [
+            (float(t), self._top_invert(float(t)))
+            for t in _nice_ticks(min(lo, hi), max(lo, hi))
+        ]
+
+    def set_marker_visibility(self, visibility: dict):
+        """Show or hide marker overlays by name, without resetting the data."""
+        self._marker_hidden = {
+            name for name, shown in visibility.items() if not shown
+        }
+        self.update()
+
+    def clear(self):
+        """Drop everything drawn, back to the placeholder."""
+        self._series = []
+        self._marker_series = {}
+        self._selector_time = None
+        self._selection = None
+        self._dragging = False
         self.update()
 
     def set_series(self, series, *, x_min: float, x_max: float, markers=None):
@@ -169,6 +234,8 @@ class LinePlotWidget(QWidget):
 
     def _plot_rect(self):
         left, top, right, bottom = _PLOT_MARGINS
+        if self._top_convert is not None:
+            top += 20  # room for the second axis' ticks and title
         return self.rect().adjusted(left, top, -right, -bottom)
 
     def _time_from_x(self, x_pos) -> float | None:
@@ -277,6 +344,8 @@ class LinePlotWidget(QWidget):
         v_min, v_max = float(np.nanmin(values)), float(np.nanmax(values))
         if v_min == v_max:
             v_min, v_max = v_min - 1.0, v_max + 1.0
+        # Headroom, so a peak at the maximum is not clipped by the frame.
+        v_max += 0.05 * (v_max - v_min)
         v_span = v_max - v_min or 1.0
 
         def _y(value: float) -> int:
@@ -308,19 +377,28 @@ class LinePlotWidget(QWidget):
         if v_max >= 1000:
             exponent = int(np.floor(np.log10(abs(v_max))) // 3 * 3)
         scale = 10.0**exponent
-        x_span = (self._x_max - self._x_min) or 1.0
-        x_decimals = int(np.clip(np.ceil(-np.log10(x_span / 4)) + 1, 0, 6))
 
         painter.setPen(QPen(QColor(MPL.TICK), 1))
         painter.drawLine(rect.bottomLeft(), rect.bottomRight())
         painter.drawLine(rect.bottomLeft(), rect.topLeft())
-        for tick in np.linspace(self._x_min, self._x_max, 5):
+        for tick in _nice_ticks(self._x_min, self._x_max):
             x = self._x_from_time(float(tick), rect)
             painter.drawLine(x, rect.bottom(), x, rect.bottom() + 5)
-            painter.drawText(
-                x - 18, rect.bottom() + 18, f"{tick:.{x_decimals}f}"
-            )
-        for tick in np.linspace(v_min, v_max, 5):
+            # +0.0 so a tick at negative zero prints as "0", not "-0".
+            painter.drawText(x - 18, rect.bottom() + 18, f"{tick + 0.0:.4g}")
+
+        if self._top_convert is not None:
+            painter.drawLine(rect.topLeft(), rect.topRight())
+            for tick, x_value in self._top_ticks():
+                x = self._x_from_time(x_value, rect)
+                painter.drawLine(x, rect.top() - 5, x, rect.top())
+                painter.drawText(x - 14, rect.top() - 8, f"{tick + 0.0:.4g}")
+            if self._top_title:
+                painter.drawText(
+                    rect.right() - 60, rect.top() - 22, self._top_title
+                )
+
+        for tick in _nice_ticks(v_min, v_max):
             y = _y(float(tick))
             painter.drawLine(rect.left() - 5, y, rect.left(), y)
             painter.drawText(
@@ -350,7 +428,9 @@ class LinePlotWidget(QWidget):
                 painter.drawLine(*start, *end)
 
         # Marker overlays
-        for times, colour in self._marker_series.values():
+        for name, (times, colour) in self._marker_series.items():
+            if name in self._marker_hidden:
+                continue
             if len(times) == 0:
                 continue
             painter.setPen(QPen(colour, 1, Qt.PenStyle.DashLine))
