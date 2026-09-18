@@ -23,6 +23,10 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 from tttrkit.ptuio.reconstructor import ScanConfig
+from tttrkit.ptuio.utils import (
+    _format_marker_suggestions,
+    get_marker_numbers,
+)
 
 from napari_flopa.core import provenance
 from napari_flopa.core.demo import load_demo
@@ -30,7 +34,6 @@ from napari_flopa.core.io.config import (
     DEFAULT_LASER_DUTY,
     US,
     ScanSettings,
-    config_is_legacy,
     load_config,
     save_config,
 )
@@ -38,18 +41,18 @@ from napari_flopa.core.io.loader import (
     format_ptu_header,
     read_ptu_file,
 )
-from napari_flopa.core.io.markers import (
-    _format_marker_suggestions,
-    analyze_marker_distribution,
-    get_markers,
-)
+
+# from napari_flopa.core.io.markers import (
+#     _format_marker_suggestions,
+#     analyze_marker_distribution,
+#     get_markers,
+# )
 from napari_flopa.core.logger import ProgressLogger
 from napari_flopa.core.processing.reconstruction import (
     DEFAULT_CHUNK_SIZE,
     MIN_CHUNK_SIZE,
     reconstruct_ptu_to_dataset,
 )
-from napari_flopa.ui.panels.alignment_wizard import AlignmentWizard
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import S, apply_style
 from napari_flopa.ui.utils.threading import Worker
@@ -79,6 +82,8 @@ class PtuPanel(QWidget):
 
         self.ptu_data = None
         self.ptu_filepath = None
+        self.prealign_plot_data = None
+        self._last_shift_operation = None
         self._log_buffer: list[str] = []
         # Guards the Shift <-> start/stop delay round trip against recursion.
         self._syncing_shift = False
@@ -167,7 +172,7 @@ class PtuPanel(QWidget):
         header_layout.addWidget(self.header_info)
 
         marker_row = QHBoxLayout()
-        self.markers_btn = QPushButton("Analyze Markers")
+        self.markers_btn = QPushButton("Marker Stats")
         self.markers_btn.setToolTip(
             "Read marker events to suggest scan dimensions"
         )
@@ -365,7 +370,7 @@ class PtuPanel(QWidget):
         # --- Line start/stop marker delays (always enabled, independent of
         # bidirectional/harmonic scan status) ---
         delay_row = QHBoxLayout()
-        for label, attr, tip in (
+        for label, attr, _tip in (
             (
                 "Line markers (µs) -- start:",
                 "line_start_delay_spin",
@@ -383,7 +388,8 @@ class PtuPanel(QWidget):
             spin.setSingleStep(1.0)
             spin.setDecimals(3)
             spin.setValue(0.0)
-            spin.setToolTip(tip)
+            # spin.setFixedWidth(50)
+            # spin.setToolTip(tip)
             delay_row.addWidget(spin)
             setattr(self, attr, spin)
 
@@ -401,27 +407,39 @@ class PtuPanel(QWidget):
         bidir_layout = QVBoxLayout(self.bidir_group)
         bidir_layout.setContentsMargins(0, 0, 0, 0)
 
-        shift_row = QHBoxLayout()
-        shift_row.addWidget(QLabel("Shift (µs):"))
-        self.bidir_phase_spin = QDoubleSpinBox()
-        self.bidir_phase_spin.setRange(-100_000.0, 100_000.0)
-        self.bidir_phase_spin.setSingleStep(1.0)
-        self.bidir_phase_spin.setDecimals(3)
-        self.bidir_phase_spin.setValue(0.0)
-        self.bidir_phase_spin.setToolTip(
-            "Start plus stop delay — editing it moves the stop delay"
-        )
-        shift_row.addWidget(self.bidir_phase_spin, 1)
-        bidir_layout.addLayout(shift_row)
+        # bidir_layout.addWidget(QLabel("Phase Shift:"))
+        # self.bidir_phase_spin = QDoubleSpinBox()
+        # self.bidir_phase_spin.setRange(-0.2, 0.2)
+        # self.bidir_phase_spin.setSingleStep(0.0001)
+        # self.bidir_phase_spin.setDecimals(5)
+        # self.bidir_phase_spin.setValue(0.0)
+        # bidir_layout.addWidget(self.bidir_phase_spin, 1)
 
-        self.wizard_btn = QPushButton("Alignment wizard")
-        self.wizard_btn.setToolTip(
-            "Estimate the line marker delays of a bidirectional scan"
-        )
-        self.wizard_btn.setFixedHeight(22)
-        self.wizard_btn.setStyleSheet(S.BTN_SMALL)
-        self.wizard_btn.clicked.connect(self._on_open_wizard)
-        bidir_layout.addWidget(self.wizard_btn)
+        # Compact Est./Plot buttons, matched to the same small height.
+        # self.prealign_btn = QPushButton("Pre-align")
+        # self.prealign_btn.setToolTip(
+        #     "Quickly estimate a coarse starting guess for the phase shift"
+        # )
+        # self.prealign_btn.setFixedHeight(22)
+        # self.prealign_btn.setStyleSheet(S.BTN_SMALL)
+        # self.prealign_btn.clicked.connect(self._on_prealign_shift)
+        # bidir_layout.addWidget(self.prealign_btn)
+
+        # self.estimate_btn = QPushButton("Estimate")
+        # self.estimate_btn.setToolTip("Estimate bidirectional phase shift")
+        # self.estimate_btn.setFixedHeight(22)
+        # self.estimate_btn.setStyleSheet(S.BTN_SMALL)
+        # self.estimate_btn.clicked.connect(self._on_estimate_shift)
+        # bidir_layout.addWidget(self.estimate_btn)
+
+        # self.plot_shift_btn = QPushButton("Plot")
+        # self.plot_shift_btn.setEnabled(False)
+        # self.plot_shift_btn.setToolTip("Plot shift correlation curve")
+        # self.plot_shift_btn.setFixedHeight(22)
+        # self.plot_shift_btn.setStyleSheet(S.BTN_SMALL)
+        # self.plot_shift_btn.clicked.connect(self._on_plot_shift)
+        # bidir_layout.addWidget(self.plot_shift_btn)
+        bidir_layout.addStretch()
 
         main_layout.addWidget(self.bidir_group)
 
@@ -551,6 +569,10 @@ class PtuPanel(QWidget):
             self.recon_group.setVisible(True)
             self.info_group.setVisible(True)
             self.log_text.clear()
+            # self.shift_plot_data = None
+            # self.prealign_plot_data = None
+            # self._last_shift_operation = None
+            # self.plot_shift_btn.setEnabled(False)
             self.state.notify_file_loaded()
 
         except Exception as e:
@@ -592,6 +614,10 @@ class PtuPanel(QWidget):
             self.recon_group.setVisible(True)
             self.info_group.setVisible(True)
             self.log_text.clear()
+            # self.shift_plot_data = None
+            # self.prealign_plot_data = None
+            # self._last_shift_operation = None
+            # self.plot_shift_btn.setEnabled(False)
             self.state.notify_file_loaded()
         except Exception as e:
             QMessageBox.critical(
@@ -627,18 +653,24 @@ class PtuPanel(QWidget):
         self._log_line("Analyzing markers...")
         QApplication.processEvents()
         try:
-            dist = get_markers(self.ptu_data["reader"], chunk_limit=20)
-            if "error" in dist:
-                self._log_line(dist["error"])
-                self._log_commit()
-                return
-            analysis = analyze_marker_distribution(dist)
-            text = _format_marker_suggestions(analysis)
+            marker_stats = get_marker_numbers(
+                self.ptu_data["reader"],
+                self.ptu_data["constants"]["wrap"],
+                verbose=False,
+            )
+            # dist = get_markers(self.ptu_data["reader"], chunk_limit=20)
+            # if "error" in dist:
+            #     self._log_line(dist["error"])
+            #     self._log_commit()
+            #     return
+            # analysis = analyze_marker_distribution(dist)
+            # text = _format_marker_suggestions(analysis)
+            text = _format_marker_suggestions(marker_stats)
             self._log_line(text)
             self._log_commit()
 
             # Auto-apply if only one suggestion
-            suggestions = analysis.get("suggestions", [])
+            suggestions = marker_stats.get("suggested_combinations", [])
             if len(suggestions) == 1:
                 lines, accum = suggestions[0]
                 self.lines_spin.setValue(lines)
@@ -672,45 +704,157 @@ class PtuPanel(QWidget):
 
         self.accu_container_layout.addStretch()
 
-    def _sync_shift_from_delays(self):
-        if self._syncing_shift:
-            return
-        self._syncing_shift = True
-        self.bidir_phase_spin.setValue(
-            self.line_start_delay_spin.value()
-            + self.line_stop_delay_spin.value()
-        )
-        self._syncing_shift = False
+    # Shif estimation will be moved to a separate wizard
 
-    def _sync_stop_from_shift(self):
-        if self._syncing_shift:
-            return
-        self._syncing_shift = True
-        self.line_stop_delay_spin.setValue(
-            self.bidir_phase_spin.value() - self.line_start_delay_spin.value()
-        )
-        self._syncing_shift = False
+    # def _on_prealign_shift(self):
+    #     if not self.ptu_data:
+    #         QMessageBox.warning(
+    #             self, "No File", "Please load a PTU file first."
+    #         )
+    #         return
+    #     self.prealign_plot_data = None
+    #     self._last_shift_operation = None
+    #     self.plot_shift_btn.setEnabled(False)
+    #     self.prealign_btn.setText("Pre-aligning...")
+    #     self._log_start()
+    #     self._log_line("Estimating coarse bidirectional pre-alignment...")
+    #     QApplication.processEvents()
 
-    def _on_open_wizard(self):
-        if not self.ptu_data:
-            QMessageBox.warning(
-                self, "No File", "Please load a PTU file first."
-            )
-            return
-        dlg = AlignmentWizard(self.ptu_data, self.current_settings(), self)
-        dlg.applied.connect(self._on_alignment_applied)
-        dlg.exec_()
+    #     try:
+    #         accumulations = tuple(s.value() for s in self.accu_spinboxes) or (
+    #             1,
+    #         )
+    #         config = ScanConfig(
+    #             lines=self.lines_spin.value(),
+    #             pixels=self.pixels_spin.value(),
+    #             bidirectional=True,
+    #             bidirectional_phase_shift=self.bidir_phase_spin.value(),
+    #             line_accumulations=accumulations,
+    #             max_detector=self.max_detector_spin.value(),
+    #             frame_start_marker_channel=4,
+    #             line_start_marker_channel=1,
+    #             line_stop_marker_channel=2,
+    #             line_start_marker_delay=self.line_start_delay_spin.value(),
+    #             line_stop_marker_delay=self.line_stop_delay_spin.value(),
+    #         )
+    #         prealign_dataset = estimate_bidirectional_prealign(
+    #             reader=self.ptu_data["reader"],
+    #             config=config,
+    #             wrap=self.ptu_data["constants"]["wrap"],
+    #             verbose=False,
+    #         )
+    #         phase_shift = float(prealign_dataset["phase_shift"].values)
+    #         self.bidir_phase_spin.setValue(phase_shift)
+    #         self.prealign_plot_data = prealign_dataset
+    #         self._last_shift_operation = "prealign"
+    #         self.plot_shift_btn.setEnabled(True)
+    #         self._log_line(f"Pre-align phase shift: {phase_shift:.5f}")
+    #     except Exception as e:
+    #         self._log_line(f"Error: {e}\n{traceback.format_exc()}")
+    #     finally:
+    #         self._log_commit()
+    #         self.prealign_btn.setText("Pre-align")
 
-    @Slot(float, float)
-    def _on_alignment_applied(self, start_delay: float, stop_delay: float):
-        self.line_start_delay_spin.setValue(start_delay / US)
-        self.line_stop_delay_spin.setValue(stop_delay / US)
-        self._log_start()
-        self._log_line(
-            f"Marker delays set to start {start_delay / US:.3f} µs / "
-            f"stop {stop_delay / US:.3f} µs."
-        )
-        self._log_commit()
+    # def _on_estimate_shift(self):
+    #     if not self.ptu_data:
+    #         QMessageBox.warning(
+    #             self, "No File", "Please load a PTU file first."
+    #         )
+    #         return
+    #     self.shift_plot_data = None
+    #     self._last_shift_operation = None
+    #     self.plot_shift_btn.setEnabled(False)
+    #     self.estimate_btn.setText("Estimating...")
+    #     self._log_start()
+    #     self._log_line("Estimating bidirectional shift...")
+    #     QApplication.processEvents()
+
+    #     try:
+    #         accumulations = tuple(s.value() for s in self.accu_spinboxes) or (
+    #             1,
+    #         )
+    #         config = ScanConfig(
+    #             lines=self.lines_spin.value(),
+    #             pixels=self.pixels_spin.value(),
+    #             bidirectional=True,
+    #             bidirectional_phase_shift=self.bidir_phase_spin.value(),
+    #             line_accumulations=accumulations,
+    #             max_detector=self.max_detector_spin.value(),
+    #             frame_start_marker_channel=4,
+    #             line_start_marker_channel=1,
+    #             line_stop_marker_channel=2,
+    #         )
+    #         best_shift, plot_data = estimate_bidirectional_shift(
+    #             reader=self.ptu_data["reader"],
+    #             config=config,
+    #             wrap=self.ptu_data["constants"]["wrap"],
+    #             verbose=False,
+    #         )
+    #         if best_shift is not None:
+    #             self.bidir_phase_spin.setValue(best_shift)
+    #             self._log_line(f"Best shift: {best_shift:.5f}")
+    #             self.shift_plot_data = plot_data
+    #             self._last_shift_operation = "estimate"
+    #             self.plot_shift_btn.setEnabled(True)
+    #         else:
+    #             self._log_line("Estimation failed — check parameters.")
+    #     except Exception as e:
+    #         self._log_line(f"Error: {e}\n{traceback.format_exc()}")
+    #     finally:
+    #         self._log_commit()
+    #         self.estimate_btn.setText("Est.")
+
+    # def _on_plot_shift(self):
+    #     if self._last_shift_operation is None or (
+    #         self._last_shift_operation == "prealign"
+    #         and self.prealign_plot_data is None
+    #     ) or (
+    #         self._last_shift_operation == "estimate"
+    #         and self.shift_plot_data is None
+    #     ):
+    #         return
+    #     dlg = QDialog(self)
+    #     dlg.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
+    #     dlg.setWindowTitle("Bidirectional Shift")
+    #     dlg.resize(420, 300)
+    #     layout = QVBoxLayout(dlg)
+    #     fig = Figure(figsize=(4.0, 2.6), dpi=100, facecolor=MPL.FIG_BG)
+    #     canvas = FigureCanvas(fig)
+    #     layout.addWidget(canvas)
+    #     ax = fig.subplots()
+    #     ax.set_facecolor(MPL.AXES_BG)
+    #     if self._last_shift_operation == "prealign":
+    #         ds = self.prealign_plot_data
+    #         ax.plot(ds.pixel.values, ds.forward.values, lw=1, label="forward",color="lime")
+    #         ax.plot(ds.pixel.values, ds.backward.values, lw=1, ls = "--", label="backward",alpha=.25,color="magenta")
+    #         ax.plot(ds.pixel.values, ds.backward_aligned.values, lw=1, label="backward aligned", color="magenta")
+    #         ax.plot
+    #         ax.set_xlabel("Pixel", fontsize=8, color=MPL.TICK)
+    #         ax.set_ylabel("Photon count", fontsize=8, color=MPL.TICK)
+    #     else:
+    #         shifts, scores, fit = self.shift_plot_data
+    #         ax.plot(shifts, scores, "o-", ms=3, lw=1, label="correlation")
+    #         ax.plot(shifts, fit, "--", lw=1, label="Gaussian fit")
+    #         ax.axvline(
+    #             self.bidir_phase_spin.value(),
+    #             color="r",
+    #             linestyle=":",
+    #             lw=1,
+    #             label=f"best={self.bidir_phase_spin.value():.5f}",
+    #         )
+    #         ax.set_xlabel("Phase shift", fontsize=8, color=MPL.TICK)
+    #         ax.set_ylabel("Score", fontsize=8, color=MPL.TICK)
+    #     ax.tick_params(labelsize=7, colors=MPL.TICK)
+    #     ax.tick_params(axis="x", labelrotation=45)
+    #     for spine in ax.spines.values():
+    #         spine.set_color(MPL.SPINE)
+    #     ax.legend(fontsize=7, labelcolor=MPL.TICK, facecolor=MPL.AXES_BG)
+    #     fig.tight_layout()
+    #     canvas.draw()
+    #     close_btn = QPushButton("Close")
+    #     close_btn.clicked.connect(dlg.accept)
+    #     layout.addWidget(close_btn)
+    #     dlg.exec_()
 
     def _get_outputs(self) -> list:
         idx = self.out_combo.currentIndex()
@@ -745,6 +889,7 @@ class PtuPanel(QWidget):
             or (1,),
             max_detector=self.max_detector_spin.value(),
             bidirectional=self.bidir_group.isChecked(),
+            # bidirectional_phase_shift=self.bidir_phase_spin.value(),
             harmonic_scan=self.harmonic_group.isChecked(),
             laser_duty=self.laser_duty_spin.value(),
             line_start_marker_delay=self.line_start_delay_spin.value() * US,
@@ -807,26 +952,19 @@ class PtuPanel(QWidget):
                 if i < len(self.accu_spinboxes):
                     self.accu_spinboxes[i].setValue(int(acc))
 
-            self.bidir_group.setChecked(bool(scan.get("bidirectional", False)))
+            # self.bidir_group.setChecked(bool(scan.get("bidirectional", False)))
             self.harmonic_group.setChecked(
                 bool(scan.get("harmonic_scan", False))
             )
-            if "laser_duty" in scan:
-                self.laser_duty_spin.setValue(float(scan["laser_duty"]))
-
-            legacy = config_is_legacy(cfg)
-            if legacy:
-                self.line_start_delay_spin.setValue(0.0)
-                self.line_stop_delay_spin.setValue(0.0)
-            else:
-                for key, spin in (
-                    ("line_start_marker_delay", self.line_start_delay_spin),
-                    ("line_stop_marker_delay", self.line_stop_delay_spin),
-                ):
-                    if key in scan:
-                        spin.setValue(float(scan[key]) / US)
-            self._sync_shift_from_delays()
-
+            float_spins = {
+                # "bidirectional_phase_shift": self.bidir_phase_spin,
+                "laser_duty": self.laser_duty_spin,
+                "line_start_marker_delay": self.line_start_delay_spin,
+                "line_stop_marker_delay": self.line_stop_delay_spin,
+            }
+            for key, spin in float_spins.items():
+                if key in scan:
+                    spin.setValue(float(scan[key]))
             if cal.get("factor"):
                 self._cfg_calib_factor = complex(cal["factor"])
 
@@ -834,14 +972,6 @@ class PtuPanel(QWidget):
                 self._set_param_source(name, source)
         finally:
             self._autofill = False
-
-        if legacy:
-            self._log_start()
-            self._log_line(
-                "! Config predates the marker-delay unit change — delays "
-                "reset to 0. Re-run the Alignment wizard to set them."
-            )
-            self._log_commit()
 
     def _on_load_config_json(self):
         """Load a config via core, then apply the values to the widgets."""

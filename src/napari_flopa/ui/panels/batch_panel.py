@@ -59,7 +59,6 @@ from napari_flopa.core.io.config import (
     DEFAULT_LASER_DUTY,
     US,
     ScanSettings,
-    config_is_legacy,
     load_config,
     save_config,
 )
@@ -1629,6 +1628,7 @@ class BatchPanel(QWidget):
             accumulations=tuple(self._accum_list(n_seqs, strict=strict)),
             max_detector=_num(self._c_maxdet, int, 4),
             bidirectional=self._c_bidir.isChecked(),
+            # bidirectional_phase_shift=_num(self._c_bidir_shift, float, 0.0),
             harmonic_scan=self._c_harmonic.isChecked(),
             laser_duty=_num(self._c_laser_duty, float, DEFAULT_LASER_DUTY),
             line_start_marker_delay=(
@@ -1683,24 +1683,14 @@ class BatchPanel(QWidget):
             self._c_bidir.setChecked(bool(s["bidirectional"]))
         if "harmonic_scan" in s:
             self._c_harmonic.setChecked(bool(s["harmonic_scan"]))
-        if "laser_duty" in s:
-            self._c_laser_duty.setText(str(s["laser_duty"]))
-
-        if config_is_legacy(cfg):
-            self._c_line_start_delay.setText("0.0")
-            self._c_line_stop_delay.setText("0.0")
-            self._log_line(
-                "Config predates the marker-delay unit change — delays "
-                "reset to 0. Re-run the Alignment wizard in the File tab.",
-                error=True,
-            )
-        else:
-            for key, edit in (
-                ("line_start_marker_delay", self._c_line_start_delay),
-                ("line_stop_marker_delay", self._c_line_stop_delay),
-            ):
-                if key in s:
-                    edit.setText(f"{float(s[key]) / US:.3f}")
+        for key, edit in (
+            # ("bidirectional_phase_shift", self._c_bidir_shift),
+            ("laser_duty", self._c_laser_duty),
+            ("line_start_marker_delay", self._c_line_start_delay),
+            ("line_stop_marker_delay", self._c_line_stop_delay),
+        ):
+            if key in s:
+                edit.setText(str(s[key]))
 
         c = cfg.get("calibration") or {}
         if c.get("factor"):
