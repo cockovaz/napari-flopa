@@ -50,7 +50,8 @@ class FlimViewPanel(QWidget):
       • Smoothing controls (kernel size) for both intensity and lifetime.
       • Colormap selectors; FLIM RGB composite mode when both layers are ON.
       • "→ Generate Int./Lt. Mask" buttons create uniquely named Labels
-        layers from the current red-slider threshold range.
+        layers from the current red-slider threshold range; "Combined mask"
+        intersects both.
       • Export buttons for Intensity (uint32 photon-count TIFF), Lifetime
         (float32 ns/ch TIFF), and FLIM RGB composite (PNG/TIFF + a .txt sidecar
         recording the colormap and contrast ranges).
@@ -129,7 +130,8 @@ class FlimViewPanel(QWidget):
         previously created widgets, then lays out:
           col 0 — frame / sequence / channel selectors with Agg checkboxes
           col 1 — Intensity HistogramSlider + controls + mask button
-          col 2 — Lifetime HistogramSlider + controls + mask button
+          col 2 — Lifetime HistogramSlider + controls + mask buttons
+                  (lifetime alone, and lifetime AND intensity)
           col 3 — Export buttons (Intensity, Lifetime, FLIM RGB)
 
         All signal wiring (selectors → debounced _slice, sliders → _fast_display,
@@ -151,6 +153,7 @@ class FlimViewPanel(QWidget):
           _next_layer_name(base)    — return a unique layer name (base, base [1], …)
           _create_intensity_mask()  — add Labels layer from intensity red-slider range
           _create_lifetime_mask()   — add Labels layer from lifetime red-slider range
+          _create_combined_mask()   — add Labels layer from both red-slider ranges
         """
         while self.view_layout.count():
             item = self.view_layout.takeAt(0)
@@ -369,7 +372,19 @@ class FlimViewPanel(QWidget):
             "Create a new Labels layer from pixels within the red slider range."
         )
         self.lt_mask_btn.setEnabled(False)
-        lt_ctrl.addWidget(self.lt_mask_btn)
+
+        self.combined_mask_btn = QPushButton("Combined mask")
+        self.combined_mask_btn.setToolTip(
+            "Create a new Labels layer from pixels inside both red slider "
+            "ranges: the intensity threshold AND the lifetime threshold."
+        )
+        self.combined_mask_btn.setEnabled(False)
+
+        lt_mask_row = QHBoxLayout()
+        lt_mask_row.setContentsMargins(0, 0, 0, 0)
+        lt_mask_row.addWidget(self.lt_mask_btn)
+        lt_mask_row.addWidget(self.combined_mask_btn)
+        lt_ctrl.addLayout(lt_mask_row)
         lt_ctrl.addStretch()
         lg.addLayout(lt_ctrl)
 
@@ -779,6 +794,18 @@ class FlimViewPanel(QWidget):
                 mask, name=_next_layer_name("Lifetime Mask")
             )
 
+        def _create_combined_mask():
+            ci, cl = self._current_intensity, self._current_lifetime
+            if ci is None or cl is None:
+                return
+            i_lo, i_hi = self.intensity_slider.mask_value()
+            l_lo, l_hi = self.lifetime_slider.mask_value()
+            inside = (ci >= i_lo) & (ci <= i_hi) & (cl >= l_lo) & (cl <= l_hi)
+            self.viewer.add_labels(
+                np.where(inside, 1, 0).astype(np.int32),
+                name=_next_layer_name("Combined Mask"),
+            )
+
         # ---- wire signals ----
         # Spinboxes → debounce → _slice (sticky contrast on navigation)
         # Agg checkboxes → _reset_and_slice (contrast resets when aggregation changes)
@@ -805,6 +832,9 @@ class FlimViewPanel(QWidget):
         if has_lifetime:
             self.lt_mask_btn.setEnabled(True)
             self.lt_mask_btn.clicked.connect(_create_lifetime_mask)
+        if has_intensity and has_lifetime:
+            self.combined_mask_btn.setEnabled(True)
+            self.combined_mask_btn.clicked.connect(_create_combined_mask)
 
         if has_lifetime:
             self.smooth_lt_check.toggled.connect(_reset_and_slice)

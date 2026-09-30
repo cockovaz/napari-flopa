@@ -15,22 +15,10 @@ requires_demo = pytest.mark.skipif(
 )
 
 
-def _scan_config(params):
-    from tttrkit.ptuio.reconstructor import ScanConfig
+def _scan_config(params, sync_rate):
+    from napari_flopa.core.io.config import ScanSettings
 
-    scan = params["scan"]
-    return ScanConfig(
-        lines=scan["lines"],
-        pixels=scan["pixels"],
-        frames=scan["frames"],
-        line_accumulations=tuple(scan["accumulations"]),
-        max_detector=scan["max_detector"],
-        bidirectional=scan.get("bidirectional", False),
-        bidirectional_phase_shift=scan.get("bidirectional_phase_shift", 0.0),
-        frame_start_marker_channel=4,
-        line_start_marker_channel=1,
-        line_stop_marker_channel=2,
-    )
+    return ScanSettings.from_json_dict(params).to_scan_config(sync_rate)
 
 
 @requires_demo
@@ -43,8 +31,9 @@ def test_demo_reconstructs():
 
     params, ptu = demo.load_demo()
     data = read_ptu_file(str(ptu), header=False)
+    sync_rate = data["constants"]["repetition_rate"]
     ds = reconstruct_ptu_to_dataset(
-        data, _scan_config(params), outputs=["photon_count"]
+        data, _scan_config(params, sync_rate), outputs=["photon_count"]
     )
 
     assert "photon_count" in ds
