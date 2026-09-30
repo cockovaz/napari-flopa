@@ -370,15 +370,17 @@ class PtuPanel(QWidget):
 
         # --- Line start/stop marker delays (always enabled, independent of
         # bidirectional/harmonic scan status) ---
+        main_layout.addWidget(QLabel("Line markers delay (µs)"))
+
         delay_row = QHBoxLayout()
         for label, attr, _tip in (
             (
-                "Line markers (µs) -- start:",
+                "Start:",
                 "line_start_delay_spin",
                 "Shift the start edge of each reconstructed line, in µs",
             ),
             (
-                "stop:",
+                "Stop:",
                 "line_stop_delay_spin",
                 "Shift the stop edge of each reconstructed line, in µs",
             ),
@@ -440,8 +442,6 @@ class PtuPanel(QWidget):
         self.wizard_btn.setToolTip(
             "Estimate the line marker delays of a bidirectional scan"
         )
-        self.wizard_btn.setFixedHeight(22)
-        self.wizard_btn.setStyleSheet(S.BTN_SMALL)
         self.wizard_btn.clicked.connect(self._on_open_wizard)
         bidir_layout.addWidget(self.wizard_btn)
 

@@ -249,7 +249,6 @@ class AlignmentWizard(QDialog):
 
     def _on_fix_shift_toggled(self, checked: bool):
         self._stop_spin.setReadOnly(checked)
-        self._shift_spin.setReadOnly(not checked)
         if checked:
             self._sync_stop_from_shift()
 

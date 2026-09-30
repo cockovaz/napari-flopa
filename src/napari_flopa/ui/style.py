@@ -265,6 +265,9 @@ class S:  # "Style" — Qt stylesheet strings
         color: {C.TITLE_PLAIN};
         background-color: {C.BG_SECTION};
     }}
+    QGroupBox::title:disabled {{
+        color: {C.TEXT_DIM};
+    }}
     """
 
     GROUP_DOCK = f"""

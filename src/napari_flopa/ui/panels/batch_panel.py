@@ -337,8 +337,8 @@ class _ImagesSection(_ExportSection):
                 f"empty = auto ({unit} of each exported image)"
             )
         for text, lo, hi in (
-            ("Lt. range:", self._lt_lo, self._lt_hi),
             ("Int. range:", self._int_lo, self._int_hi),
+            ("Lt. range:", self._lt_lo, self._lt_hi),
         ):
             lbl = QLabel(text)
             lbl.setStyleSheet(S.MUTED)
@@ -1050,9 +1050,9 @@ class _BatchWorker(QObject):
             da = da.sum(dim)
         free_dims = [d for d in present if d not in summed]
 
-        ip = ds.attrs.get("instrument_params", {})
-        res_ns = float(ip.get("tcspc_resolution_ns", 1.0))
-        time_ns = np.arange(da.sizes["tcspc_channel"]) * res_ns
+        # tttrkit carries the time axis as a coordinate in seconds, which
+        # already accounts for any TCSPC bin factor.
+        time_ns = np.asarray(da["tcspc_time"].values, dtype=float) * 1e9
         norm = cfg.get("norm", False)
 
         def _label(sel: dict) -> str:
@@ -1195,7 +1195,7 @@ class BatchPanel(QWidget):
         # Scrollable top area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         inner = QWidget()
         ilay = QVBoxLayout(inner)
         ilay.setContentsMargins(2, 2, 2, 2)
@@ -1315,21 +1315,8 @@ class BatchPanel(QWidget):
             "each file's header."
         )
 
-        # Bidirectional row
-        self._c_bidir = QCheckBox("Bidirectional")
-        self._c_bidir.setStyleSheet("font-weight: normal;")
-        self._c_bidir.setToolTip("Enable bidirectional scan correction")
-        cg.addWidget(self._c_bidir, 3, 0, 1, 2)
-
-        # Harmonic (resonant) scan row — same pattern as bidirectional above.
-        self._c_harmonic = QCheckBox("Harmonic")
-        self._c_harmonic.setStyleSheet("font-weight: normal;")
-        self._c_harmonic.setToolTip("Enable harmonic (resonant) scan handling")
-        self._c_laser_duty = QLineEdit(str(DEFAULT_LASER_DUTY))
-        self._c_laser_duty.setValidator(QDoubleValidator(0.0, 1.0, 4))
-        self._c_laser_duty.setToolTip(
-            "Fraction of the line period the laser is on"
-        )
+        # Marker delays apply to every scan, so they stay enabled and sit
+        # above the mode checkboxes. Same wording as the File tab.
         self._c_line_start_delay = QLineEdit("0.0")
         self._c_line_stop_delay = QLineEdit("0.0")
         for edit, edge in (
@@ -1340,24 +1327,37 @@ class BatchPanel(QWidget):
             edit.setToolTip(
                 f"Shift the {edge} edge of each reconstructed line, in µs"
             )
+        delay_lbl = QLabel("Line markers delay (µs):")
+        delay_lbl.setStyleSheet("font-weight: normal;")
+        start_lbl = QLabel(" start:")
+        start_lbl.setStyleSheet("font-weight: normal;")
+        stop_lbl = QLabel(" stop:")
+        stop_lbl.setStyleSheet("font-weight: normal;")
+        cg.addWidget(delay_lbl, 3, 0, 1, 2)
+        cg.addWidget(start_lbl, 3, 2)
+        cg.addWidget(self._c_line_start_delay, 3, 3)
+        cg.addWidget(stop_lbl, 3, 4)
+        cg.addWidget(self._c_line_stop_delay, 3, 5)
+
+        # Scan modes share one row: bidirectional, then harmonic + its duty.
+        self._c_bidir = QCheckBox("Bidirectional")
+        self._c_bidir.setStyleSheet("font-weight: normal;")
+        self._c_bidir.setToolTip("Enable bidirectional scan correction")
+        self._c_harmonic = QCheckBox("Harmonic")
+        self._c_harmonic.setStyleSheet("font-weight: normal;")
+        self._c_harmonic.setToolTip("Enable harmonic (resonant) scan handling")
+        self._c_laser_duty = QLineEdit(str(DEFAULT_LASER_DUTY))
+        self._c_laser_duty.setValidator(QDoubleValidator(0.0, 1.0, 4))
+        self._c_laser_duty.setToolTip(
+            "Fraction of the line period the laser is on"
+        )
         duty_lbl = QLabel("Laser duty:")
         duty_lbl.setStyleSheet("font-weight: normal;")
-        delay_lbl = QLabel("Line Δ start/stop (µs):")
-        delay_lbl.setStyleSheet("font-weight: normal;")
-        _follow_checkbox(
-            self._c_harmonic,
-            duty_lbl,
-            self._c_laser_duty,
-            delay_lbl,
-            self._c_line_start_delay,
-            self._c_line_stop_delay,
-        )
-        cg.addWidget(self._c_harmonic, 4, 0)
-        cg.addWidget(duty_lbl, 4, 1)
-        cg.addWidget(self._c_laser_duty, 4, 2)
-        cg.addWidget(delay_lbl, 4, 3)
-        cg.addWidget(self._c_line_start_delay, 4, 4)
-        cg.addWidget(self._c_line_stop_delay, 4, 5)
+        _follow_checkbox(self._c_harmonic, duty_lbl, self._c_laser_duty)
+        cg.addWidget(self._c_bidir, 4, 0, 1, 2)
+        cg.addWidget(self._c_harmonic, 4, 2)
+        cg.addWidget(duty_lbl, 4, 3)
+        cg.addWidget(self._c_laser_duty, 4, 4, 1, 2)
 
         self._cal_factor = QLineEdit("1+0j")
         self._cal_factor.setValidator(
