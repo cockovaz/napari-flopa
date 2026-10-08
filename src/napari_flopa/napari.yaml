@@ -6,6 +6,13 @@ contributions:
     - id: napari-flopa.make_flim_widget
       python_name: napari_flopa.ui.main_widget:FlimWidget
       title: Open FLIM Analysis
+    - id: napari-flopa.read_ptu
+      python_name: napari_flopa.ui.reader:napari_get_reader
+      title: Read PTU file or scan config
+  readers:
+    - command: napari-flopa.read_ptu
+      filename_patterns: ["*.ptu", "*.json"]
+      accepts_directories: false
   widgets:
     - command: napari-flopa.make_flim_widget
       display_name: FLIM Analysis

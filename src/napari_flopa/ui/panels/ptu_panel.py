@@ -536,34 +536,49 @@ class PtuPanel(QWidget):
         )  # type: ignore
         if not filepath_str:
             return
-        self.ptu_filepath = Path(filepath_str)
-        self.file_label.setText(f"file: {self.ptu_filepath.name}")
+        self.load_ptu_path(Path(filepath_str))
+
+    def load_ptu_path(self, path, config: dict | None = None) -> None:
+        """Read *path* and populate every scan widget from it.
+
+        Shared by the Read PTU button, the Load Demo button and a .ptu
+        dropped on the canvas. Without *config* the geometry comes from the
+        file's own header tags; with one it comes from that config instead,
+        and the header only supplies the TCSPC bin count.
+        """
+        path = Path(path)
         try:
-            self.ptu_data = read_ptu_file(str(self.ptu_filepath), header=False)
-            tags = self.ptu_data["header"]
-            constants = self.ptu_data["constants"]
-            csrc = self.ptu_data.get("constants_source", {})
+            ptu_data = read_ptu_file(str(path), header=False)
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Error", f"Failed to read PTU header:\n{e}"
+            )
+            return
+
+        try:
+            # Commit the path only once the file has actually been read.
+            self.ptu_data = ptu_data
+            self.ptu_filepath = path
+            self.file_label.setText(f"file: {path.name}")
+
+            tags = ptu_data["header"]
+            constants = ptu_data["constants"]
+            csrc = ptu_data.get("constants_source", {})
 
             # Summary (no full header) — full header via button
-            summary = format_ptu_header(
-                tags, constants, full_header=False, constants_source=csrc
+            self.header_info.setPlainText(
+                format_ptu_header(
+                    tags, constants, full_header=False, constants_source=csrc
+                )
             )
-            self.header_info.setPlainText(summary)
 
-            # Auto-fill from header (guarded so setValue doesn't mark 'user')
+            if config is None:
+                self._fill_geometry_from_header(tags)
+            else:
+                self._apply_config(config, source=provenance.USER)
+
+            # The file wins over any config for the TCSPC bin count.
             self._autofill = True
-            px_x = tags.get("ImgHdr_PixX")
-            px_y = tags.get("ImgHdr_PixY")
-            n_frames = tags.get("ImgHdr_NumberOfFrames")
-            if isinstance(px_x, (int, float)):
-                self.pixels_spin.setValue(int(px_x))
-                self._set_param_source("pixels", provenance.METADATA)
-            if isinstance(px_y, (int, float)):
-                self.lines_spin.setValue(int(px_y))
-                self._set_param_source("lines", provenance.METADATA)
-            if isinstance(n_frames, (int, float)) and n_frames > 0:
-                self.frames_spin.setValue(int(n_frames))
-                self._set_param_source("frames", provenance.METADATA)
             self.tcspc_bins_spin.setValue(constants.get("tcspc_bins", 4096))
             self._set_param_source(
                 "tcspc_bins", csrc.get("tcspc_bins", provenance.DEFAULT)
@@ -575,16 +590,26 @@ class PtuPanel(QWidget):
             self.recon_group.setVisible(True)
             self.info_group.setVisible(True)
             self.log_text.clear()
-            # self.shift_plot_data = None
-            # self.prealign_plot_data = None
-            # self._last_shift_operation = None
-            # self.plot_shift_btn.setEnabled(False)
             self.state.notify_file_loaded()
-
         except Exception as e:
+            self._autofill = False
             QMessageBox.critical(
-                self, "Error", f"Failed to read PTU header:\n{e}"
+                self, "Error", f"Failed to apply PTU settings:\n{e}"
             )
+
+    def _fill_geometry_from_header(self, tags: dict) -> None:
+        """Scan geometry from the header tags that carry it."""
+        self._autofill = True
+        for tag, spin, name in (
+            ("ImgHdr_PixX", self.pixels_spin, "pixels"),
+            ("ImgHdr_PixY", self.lines_spin, "lines"),
+            ("ImgHdr_NumberOfFrames", self.frames_spin, "frames"),
+        ):
+            value = tags.get(tag)
+            if isinstance(value, (int, float)) and value > 0:
+                spin.setValue(int(value))
+                self._set_param_source(name, provenance.METADATA)
+        self._autofill = False
 
     def _on_load_demo(self):
         try:
@@ -592,43 +617,7 @@ class PtuPanel(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Demo Error", str(e))
             return
-
-        try:
-            self.ptu_filepath = ptu_path
-            self.file_label.setText(f"PTU: {ptu_path.name}")
-            self.ptu_data = read_ptu_file(str(ptu_path), header=False)
-            tags = self.ptu_data["header"]
-            constants = self.ptu_data["constants"]
-            csrc = self.ptu_data.get("constants_source", {})
-            summary = format_ptu_header(
-                tags, constants, full_header=False, constants_source=csrc
-            )
-            self.header_info.setPlainText(summary)
-
-            self._apply_config(params, source=provenance.USER)
-
-            # File-derived values override the config for tcspc bins + rep. rate.
-            self._autofill = True
-            self.tcspc_bins_spin.setValue(constants.get("tcspc_bins", 4096))
-            self._set_param_source(
-                "tcspc_bins", csrc.get("tcspc_bins", provenance.DEFAULT)
-            )
-            self._autofill = False
-
-            self.header_group.setVisible(True)
-            self.config_group.setVisible(True)
-            self.recon_group.setVisible(True)
-            self.info_group.setVisible(True)
-            self.log_text.clear()
-            # self.shift_plot_data = None
-            # self.prealign_plot_data = None
-            # self._last_shift_operation = None
-            # self.plot_shift_btn.setEnabled(False)
-            self.state.notify_file_loaded()
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Demo Load Error", f"Failed to load demo PTU:\n{e}"
-            )
+        self.load_ptu_path(ptu_path, config=params)
 
     def _show_full_header(self):
         if not self.ptu_data:
@@ -972,8 +961,9 @@ class PtuPanel(QWidget):
     def _apply_config(self, cfg: dict, source: str = provenance.USER):
         """Apply a scan-config dict (core schema) to the widgets (UI-only).
 
-        Only the fields actually present are applied — anything missing is left
-        as-is — and applied fields get their provenance dot set to *source*.
+        Only the keys actually present are applied — anything missing is
+        left as it was, while a key present and false is applied as false.
+        Applied geometry fields get their provenance dot set to *source*.
         Any ``ptu_filename`` is ignored here; loading a file is the caller's job.
         """
         scan = cfg.get("scan", {})
@@ -994,15 +984,21 @@ class PtuPanel(QWidget):
                     spin.setValue(int(scan[key]))
                     applied.append(key)
 
-            self._update_accumulation_widgets()
-            for i, acc in enumerate(scan.get("accumulations", [])):
-                if i < len(self.accu_spinboxes):
-                    self.accu_spinboxes[i].setValue(int(acc))
+            accums = scan.get("accumulations")
+            if accums is not None:
+                # Rows always match the sequence count, so moving the spin box
+                # rebuilds them; a no-op when the count already agrees.
+                if len(self.accu_spinboxes) != len(accums):
+                    self.sequences_spin.setValue(len(accums))
+                for spin, acc in zip(
+                    self.accu_spinboxes, accums, strict=False
+                ):
+                    spin.setValue(int(acc))
 
-            # self.bidir_group.setChecked(bool(scan.get("bidirectional", False)))
-            self.harmonic_group.setChecked(
-                bool(scan.get("harmonic_scan", False))
-            )
+            if "bidirectional" in scan:
+                self.bidir_group.setChecked(bool(scan["bidirectional"]))
+            if "harmonic_scan" in scan:
+                self.harmonic_group.setChecked(bool(scan["harmonic_scan"]))
             if "laser_duty" in scan:
                 self.laser_duty_spin.setValue(float(scan["laser_duty"]))
 
@@ -1013,10 +1009,11 @@ class PtuPanel(QWidget):
                 if key in scan:
                     spin.setValue(float(scan[key]) / US)
             self._sync_shift_from_delays()
-            # Absent means auto, which the spin box shows as 0.
-            self.line_duration_spin.setValue(
-                float(scan.get("line_duration") or 0.0) / MS
-            )
+            if "line_duration" in scan:
+                # An explicit null or 0 means auto, which shows as 0.
+                self.line_duration_spin.setValue(
+                    float(scan["line_duration"] or 0.0) / MS
+                )
 
             if cal.get("factor"):
                 self._cfg_calib_factor = complex(cal["factor"])
@@ -1033,13 +1030,20 @@ class PtuPanel(QWidget):
         )
         if not path:
             return
+        self.load_config_path(Path(path))
+
+    def load_config_path(self, path) -> None:
+        """Apply the scan config at *path* to the widgets.
+
+        Shared by the Load Config button and a .json dropped on the canvas.
+        """
+        path = Path(path)
         try:
-            cfg = load_config(path)
-            self._apply_config(cfg, source=provenance.USER)
+            self._apply_config(load_config(path), source=provenance.USER)
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
             return
-        self._log(f"Loaded config: {Path(path).name}")
+        self._log(f"Loaded config: {path.name}")
 
     def _run_reconstruction(self):
         if not self.ptu_data:

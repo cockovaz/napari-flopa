@@ -86,7 +86,7 @@ uv.lock
 data/
 
 # Local demo override — point at a larger, unshipped .ptu for dev/testing
-# without touching the tracked demo. See src/napari_flopa/demo.py.
+# without touching the tracked demo. See src/napari_flopa/core/demo.py.
 demo_params.local.json
 
 # AI Code settings

@@ -82,6 +82,20 @@ class FlimWidget(QWidget):
         )
         self.state.dataset_changed.connect(self._on_dataset_changed)
 
+    def load_ptu(self, path) -> None:
+        """Read *path* into the File tab, as the Read PTU button does.
+
+        The entry point used by the .ptu reader when a file is dropped on the
+        canvas, so the drop lands on the same panel the button fills in.
+        """
+        self._tabs.setCurrentIndex(0)
+        self._ptu_panel.load_ptu_path(path)
+
+    def load_config(self, path) -> None:
+        """Apply the scan config at *path*, as the Load Config button does."""
+        self._tabs.setCurrentIndex(0)
+        self._ptu_panel.load_config_path(path)
+
     def _on_reconstruction_finished(self, ds):
         self._add_view_panel(ds)
 
