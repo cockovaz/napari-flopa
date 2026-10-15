@@ -398,6 +398,24 @@ class HistogramSlider(QWidget):
         self._update_edit(self._mask_lo_edit, new_mlo)
         self._update_edit(self._mask_hi_edit, new_mhi)
 
+    def reset_mask_range(self):
+        """Open the mask slider to the full data range.
+
+        The threshold is deliberately not carried across a data change: a
+        value tuned on one frame means nothing on the next.
+        """
+        mn = float(self._mask_slider.minimum())
+        mx = float(self._mask_slider.maximum())
+        lo = float(1 if self.integer_mode else mn)
+        if lo >= mx:
+            lo = mn
+        self._is_updating = True
+        self._mask_slider.setValue((lo, mx))
+        self._is_updating = False
+        self._canvas.set_mask_range(lo, mx)
+        self._update_edit(self._mask_lo_edit, lo)
+        self._update_edit(self._mask_hi_edit, mx)
+
     def set_auto_contrast(self):
         """Set contrast slider to [p2, p98] of the current data."""
         if self._valid_data.size == 0:

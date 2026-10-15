@@ -107,6 +107,9 @@ class PtuPanel(QWidget):
         self.state.file_runtime_provider = lambda: {
             "ptu_path": self.ptu_filepath,
             "chunk_size": self.chunk_size_spin.value(),
+            "acquisition_time": (self.ptu_data or {})
+            .get("constants", {})
+            .get("acquisition_time"),
         }
 
     # ------------------------------------------------------------------ #

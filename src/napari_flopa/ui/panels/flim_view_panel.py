@@ -1,4 +1,5 @@
 import traceback
+from contextlib import suppress
 from pathlib import Path
 
 import numpy as np
@@ -283,11 +284,21 @@ class FlimViewPanel(QWidget):
         int_contrast.setSpacing(2)
         self.int_contrast_lbl = QLabel("Contrast:")
         int_contrast.addWidget(self.int_contrast_lbl)
-        self.int_auto_btn = QPushButton("Auto")
-        self.int_auto_btn.setToolTip("Set contrast to [p2, p98]")
+        self.int_auto_btn = QPushButton("Auto-once")
+        self.int_auto_btn.setToolTip("Set contrast to [p2, p98] now")
+        self.int_auto_btn.setStyleSheet(S.BTN_SMALL)
         int_contrast.addWidget(self.int_auto_btn)
+        self.int_live_btn = QPushButton("Auto-live")
+        self.int_live_btn.setCheckable(True)
+        self.int_live_btn.setToolTip(
+            "Re-apply [p2, p98] on every change of frame, sequence, "
+            "detector, aggregation or smoothing. Min-Max turns it off."
+        )
+        self.int_live_btn.setStyleSheet(S.BTN_DET_OFF)
+        int_contrast.addWidget(self.int_live_btn)
         self.int_minmax_btn = QPushButton("Min-Max")
         self.int_minmax_btn.setToolTip("Set contrast to full data range")
+        self.int_minmax_btn.setStyleSheet(S.BTN_SMALL)
         int_contrast.addWidget(self.int_minmax_btn)
         int_ctrl.addLayout(int_contrast)
 
@@ -358,11 +369,21 @@ class FlimViewPanel(QWidget):
         lt_contrast.setSpacing(2)
         self.lt_text = QLabel("Contrast:")
         lt_contrast.addWidget(self.lt_text)
-        self.lt_auto_btn = QPushButton("Auto")
-        self.lt_auto_btn.setToolTip("Set contrast to [p2, p98]")
+        self.lt_auto_btn = QPushButton("Auto-once")
+        self.lt_auto_btn.setToolTip("Set contrast to [p2, p98] now")
+        self.lt_auto_btn.setStyleSheet(S.BTN_SMALL)
         lt_contrast.addWidget(self.lt_auto_btn)
+        self.lt_live_btn = QPushButton("Auto-live")
+        self.lt_live_btn.setCheckable(True)
+        self.lt_live_btn.setToolTip(
+            "Re-apply [p2, p98] on every change of frame, sequence, "
+            "detector, aggregation or smoothing. Min-Max turns it off."
+        )
+        self.lt_live_btn.setStyleSheet(S.BTN_DET_OFF)
+        lt_contrast.addWidget(self.lt_live_btn)
         self.lt_minmax_btn = QPushButton("Min-Max")
         self.lt_minmax_btn.setToolTip("Set contrast to full data range")
+        self.lt_minmax_btn.setStyleSheet(S.BTN_SMALL)
         lt_contrast.addWidget(self.lt_minmax_btn)
         lt_ctrl.addLayout(lt_contrast)
 
@@ -471,14 +492,45 @@ class FlimViewPanel(QWidget):
 
         grid.addWidget(exp_group, 0, 3)
 
+        def _live_toggled(button, slider):
+            """Restyle the toggle and apply it at once when switched on."""
+
+            def handler(checked):
+                button.setStyleSheet(
+                    S.BTN_DET_ON if checked else S.BTN_DET_OFF
+                )
+                if checked:
+                    slider.set_auto_contrast()
+
+            return handler
+
+        def _min_max(button, slider):
+            """Min-Max is a manual choice, so it drops out of Auto-live."""
+
+            def handler():
+                button.setChecked(False)
+                slider.set_min_max()
+
+            return handler
+
         self.int_auto_btn.clicked.connect(
             self.intensity_slider.set_auto_contrast
         )
-        self.int_minmax_btn.clicked.connect(self.intensity_slider.set_min_max)
+        self.int_live_btn.toggled.connect(
+            _live_toggled(self.int_live_btn, self.intensity_slider)
+        )
+        self.int_minmax_btn.clicked.connect(
+            _min_max(self.int_live_btn, self.intensity_slider)
+        )
         self.lt_auto_btn.clicked.connect(
             self.lifetime_slider.set_auto_contrast
         )
-        self.lt_minmax_btn.clicked.connect(self.lifetime_slider.set_min_max)
+        self.lt_live_btn.toggled.connect(
+            _live_toggled(self.lt_live_btn, self.lifetime_slider)
+        )
+        self.lt_minmax_btn.clicked.connect(
+            _min_max(self.lt_live_btn, self.lifetime_slider)
+        )
 
         def _sync_int_histogram_colormap():
             """In FLIM mode intensity histogram always shows gray; otherwise follow combo."""
@@ -676,11 +728,6 @@ class FlimViewPanel(QWidget):
 
         _first_slice = [True]
 
-        def _reset_and_slice():
-            """Force a full contrast reset on the next slice (for smooth/aggregate changes)."""
-            _first_slice[0] = True
-            _slice()
-
         def _slice():
             try:
                 sel, dims_to_sum = _get_sel_key()
@@ -694,20 +741,31 @@ class FlimViewPanel(QWidget):
                     if s_lt is not None
                     else None
                 )
-                update_slider = (
-                    self.intensity_slider.update_data
-                    if _first_slice[0]
-                    else self.intensity_slider.update_data_keep_range
-                )
-                update_lt_slider = (
-                    self.lifetime_slider.update_data
-                    if _first_slice[0]
-                    else self.lifetime_slider.update_data_keep_range
-                )
-                if self._current_intensity is not None:
-                    update_slider(self._current_intensity)
-                if self._current_lifetime is not None:
-                    update_lt_slider(self._current_lifetime)
+                # Contrast survives every change alike — frame, sequence,
+                # detector, aggregation, smoothing — so aggregating and
+                # un-aggregating lands back where you were. It is only
+                # recomputed on a dataset's first slice or under Auto-live.
+                # The mask threshold is never carried over: a level tuned on
+                # one view means nothing on the next.
+                first = _first_slice[0]
+                for data, slider, live in (
+                    (
+                        self._current_intensity,
+                        self.intensity_slider,
+                        self.int_live_btn,
+                    ),
+                    (
+                        self._current_lifetime,
+                        self.lifetime_slider,
+                        self.lt_live_btn,
+                    ),
+                ):
+                    if data is None:
+                        continue
+                    slider.update_data_keep_range(data)
+                    if first or live.isChecked():
+                        slider.set_auto_contrast()
+                    slider.reset_mask_range()
                 _first_slice[0] = False
                 _display_data()
                 # Notify phasor/decay panels about current view settings
@@ -807,21 +865,34 @@ class FlimViewPanel(QWidget):
             )
 
         # ---- wire signals ----
-        # Spinboxes → debounce → _slice (sticky contrast on navigation)
-        # Agg checkboxes → _reset_and_slice (contrast resets when aggregation changes)
-        # The view label is pure string formatting, so it updates immediately
-        # rather than waiting on the slice debounce.
+        # Everything that changes the data goes through one debounced _slice,
+        # so aggregating behaves exactly like stepping a frame. Swallow the
+        # signal's argument: QTimer.start(int) would otherwise take it as the
+        # interval. The view label is pure string formatting, so it updates
+        # immediately rather than waiting on the debounce.
+        def _queue_slice(*_):
+            self._debounce.start()
+
         for w in self.selectors.values():
             if isinstance(w, QSpinBox):
-                w.valueChanged.connect(self._debounce.start)
+                w.valueChanged.connect(_queue_slice)
                 w.valueChanged.connect(self._update_view_label)
             if isinstance(w, QCheckBox):
-                w.toggled.connect(_reset_and_slice)
+                w.toggled.connect(_queue_slice)
                 w.toggled.connect(self._update_view_label)
+        # _create_controls re-runs per dataset; without this each load would
+        # leave another _slice closure bound to the same timer.
+        with suppress(TypeError, RuntimeError):
+            self._debounce.timeout.disconnect()
+
+        # try:
+        #     self._debounce.timeout.disconnect()
+        # except (TypeError, RuntimeError):
+        #     pass
         self._debounce.timeout.connect(_slice)
 
-        self.smooth_int_check.toggled.connect(_reset_and_slice)
-        self.smooth_int_spin.valueChanged.connect(_reset_and_slice)
+        self.smooth_int_check.toggled.connect(_queue_slice)
+        self.smooth_int_spin.valueChanged.connect(_queue_slice)
         self.show_intensity.toggled.connect(_visibility_changed)
         self.int_colormap.currentTextChanged.connect(_update_colormaps)
         self.intensity_slider.valueChanged.connect(_fast_display)
@@ -837,8 +908,8 @@ class FlimViewPanel(QWidget):
             self.combined_mask_btn.clicked.connect(_create_combined_mask)
 
         if has_lifetime:
-            self.smooth_lt_check.toggled.connect(_reset_and_slice)
-            self.smooth_lt_spin.valueChanged.connect(_reset_and_slice)
+            self.smooth_lt_check.toggled.connect(_queue_slice)
+            self.smooth_lt_spin.valueChanged.connect(_queue_slice)
             self.show_lifetime.toggled.connect(_visibility_changed)
             self.lt_colormap.currentTextChanged.connect(_update_colormaps)
             self.lifetime_slider.valueChanged.connect(_fast_display)

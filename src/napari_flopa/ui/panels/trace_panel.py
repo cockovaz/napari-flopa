@@ -37,6 +37,18 @@ _BIN_STEPS = (
 )
 
 
+#: The window is always divided into this many bins at most/least, which is
+#: what bounds the usable bin width.
+_MAX_BINS = 1000
+_MIN_BINS = 10
+
+#: Marker types that come one per scan line, so a wide window holds thousands.
+_DENSE_MARKERS = ("line_start", "line_stop")
+
+#: Above this many markers in view the lines smear into a block.
+_MAX_MARKERS = 50
+
+
 def bin_step_for_window(window_s: float) -> float:
     """Sensible bin-width step, in ms, for a window of *window_s* seconds."""
     for threshold, step in _BIN_STEPS:
@@ -177,6 +189,11 @@ class TracePanel(QWidget):
         for name, label in _MARKERS:
             chk = QCheckBox(f"{label} markers")
             chk.setChecked(name == "frame_start")
+            if name in _DENSE_MARKERS:
+                chk.setToolTip(
+                    f"Unavailable while more than {_MAX_MARKERS} fall inside "
+                    "the plotted range."
+                )
             chk.toggled.connect(self._redraw)
             self._marker_checks[name] = chk
             marker_row.addWidget(chk)
@@ -216,20 +233,24 @@ class TracePanel(QWidget):
         root.addWidget(self._status)
 
     def _tune_bin_spin(self, *_):
-        """Match the bin-width step and ceiling to the current time window.
+        """Clamp the bin width to the current window, in bins.
 
-        A bin can never be longer than the window, and the step that feels
-        right for a 60 s trace is useless for a 200 ms one.
+        Outside roughly 10-1000 bins the trace is either a flat line or more
+        points than the plot can resolve, and the step that feels right for a
+        60 s trace is useless for a 200 ms one.
         """
         window_s = max(self._stop_spin.value() - self._start_spin.value(), 0.0)
         window_ms = window_s * 1_000.0
         self._bin_spin.setSingleStep(bin_step_for_window(window_s))
         if window_ms > 0:
-            self._bin_spin.setMaximum(window_ms)
+            # setRange pulls the current value in with it.
+            low = max(window_ms / _MAX_BINS, 0.001)
+            self._bin_spin.setRange(low, max(window_ms / _MIN_BINS, low))
         self._bin_spin.setToolTip(
-            f"Width of one time bin, in milliseconds "
-            f"(window {window_s:g} s → step "
-            f"{bin_step_for_window(window_s):g} ms)"
+            f"Width of one time bin, in milliseconds. "
+            f"Limited to {_MIN_BINS}-{_MAX_BINS} bins over the "
+            f"{window_s:g} s window, so "
+            f"{self._bin_spin.minimum():g}-{self._bin_spin.maximum():g} ms."
         )
 
     @staticmethod
@@ -251,9 +272,23 @@ class TracePanel(QWidget):
         self._file_lbl.setText(path.name if path else "No file loaded")
         self._apply_btn.setEnabled(path is not None and not self._running)
         if path is not None:
+            self._limit_to_recording()
             self._resting_status = "Set the time window and click Apply."
             self._status.info(self._resting_status)
             self._mark_stale()
+
+    def _limit_to_recording(self):
+        """Cap the time window at how long the file actually recorded."""
+        total = self.state.file_runtime().get("acquisition_time")
+        if not total or total <= 0:
+            return
+        total = float(total)
+        for spin in (self._start_spin, self._stop_spin):
+            spin.setMaximum(total)
+            spin.setToolTip(f"Seconds into the {total:g} s recording")
+        if self._stop_spin.value() <= self._start_spin.value():
+            self._stop_spin.setValue(total)
+        self._tune_bin_spin()
 
     def _mark_stale(self, *_):
         """Red dot: the plot no longer matches the parameters."""
@@ -308,6 +343,7 @@ class TracePanel(QWidget):
         self._range_info.clear()
         self._range_info.setVisible(False)
         self._rebuild_channel_checks(dataset)
+        self._update_marker_limits()
         self._redraw()
         self._mark_fresh()
         n_bins = dataset.sizes.get("time", 0)
@@ -344,6 +380,36 @@ class TracePanel(QWidget):
             chk.toggled.connect(self._redraw)
             self._channel_checks[int(channel_id)] = chk
             self._channel_row.addWidget(chk)
+
+    def _update_marker_limits(self):
+        """Turn off per-line markers that are too dense to read.
+
+        Called from _on_result before the repaint, so the unchecking is done
+        with signals blocked and the following _redraw picks up the state.
+        Narrowing the range re-enables the box but leaves it unchecked.
+        """
+        if self._result is None:
+            return
+        start, stop = self._plotted_window
+        counts = range_statistics(self._result, start, stop)["markers"]
+        for name in _DENSE_MARKERS:
+            chk = self._marker_checks.get(name)
+            if chk is None:
+                continue
+            count = counts.get(name, 0)
+            crowded = count > _MAX_MARKERS
+            if crowded and chk.isChecked():
+                chk.blockSignals(True)
+                chk.setChecked(False)
+                chk.blockSignals(False)
+            chk.setEnabled(not crowded)
+            label = chk.text()
+            chk.setToolTip(
+                f"{count} {label.lower()} in the plotted range — too dense "
+                f"to draw (limit {_MAX_MARKERS}). Narrow the range to use it."
+                if crowded
+                else f"{count} {label.lower()} in the plotted range."
+            )
 
     def _redraw(self, *_):
         """Repaint from the cached result — never re-reads the file."""
