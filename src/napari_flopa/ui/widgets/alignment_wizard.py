@@ -451,8 +451,12 @@ class AlignmentWizard(QDialog):
             lambda t: (t - first) / step,
             lambda px: first + px * step,
         )
+
+        stop_us = float(time_us[-1]) + step * 0.5 if len(time_us) > 1 else 0.0
         self._show_profiles(
-            time_us, [(forward, "forward"), (backward, "backward")]
+            time_us,
+            [(forward, "forward"), (backward, "backward")],
+            np.array([stop_us]),
         )
         self._tabs.setCurrentWidget(self._alignment_plot)
         self._status.info(

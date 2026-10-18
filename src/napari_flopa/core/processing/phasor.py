@@ -85,3 +85,67 @@ def calibration_factor(
         )
     g_th, s_th = monoexp_phasor(tau_ns * 1e-9, f_rep_hz)
     return complex(g_th, s_th) / measured
+
+
+def component_fractions_2(
+    g, s, tau1_ns: float, tau2_ns: float, f_rep_hz: float
+):
+    """Fractional contributions of two monoexponential components.
+
+    Each data point (g, s) is projected onto the line between the two
+    single-exponential phasor positions.  Returns ``(f1, f2, residual)``
+    arrays with ``f1 + f2 == 1``.  *residual* is the perpendicular distance
+    from each point to the line through the two components.  Points that
+    fall outside the segment (any fraction < 0 or > 1) are set to NaN in
+    all three outputs.
+    """
+    g1, s1 = monoexp_phasor(tau1_ns * 1e-9, f_rep_hz)
+    g2, s2 = monoexp_phasor(tau2_ns * 1e-9, f_rep_hz)
+    dg, ds = g1 - g2, s1 - s2
+    denom = dg**2 + ds**2
+    g_arr = np.asarray(g, dtype=float)
+    s_arr = np.asarray(s, dtype=float)
+    if denom < 1e-20:
+        nan = np.full_like(g_arr, np.nan)
+        return nan, nan.copy(), nan.copy()
+    length = np.sqrt(denom)
+    f1 = ((g_arr - g2) * dg + (s_arr - s2) * ds) / denom
+    f2 = 1.0 - f1
+    residual = np.abs((g_arr - g2) * ds - (s_arr - s2) * dg) / length
+    outside = (f1 < 0) | (f1 > 1)
+    f1[outside] = np.nan
+    f2[outside] = np.nan
+    residual[outside] = np.nan
+    return f1, f2, residual
+
+
+def component_fractions_3(
+    g, s, tau1_ns: float, tau2_ns: float, tau3_ns: float, f_rep_hz: float
+):
+    """Barycentric fractions for three monoexponential components.
+
+    Solves ``P = f1·P1 + f2·P2 + f3·P3`` with ``f1+f2+f3 = 1`` via the 2×2
+    system in (g, s).  Returns ``(f1, f2, f3)`` arrays.  Points outside the
+    triangle (any fraction < 0) are set to NaN.
+    """
+    g1, s1 = monoexp_phasor(tau1_ns * 1e-9, f_rep_hz)
+    g2, s2 = monoexp_phasor(tau2_ns * 1e-9, f_rep_hz)
+    g3, s3 = monoexp_phasor(tau3_ns * 1e-9, f_rep_hz)
+    a11, a12 = g1 - g3, g2 - g3
+    a21, a22 = s1 - s3, s2 - s3
+    det = a11 * a22 - a12 * a21
+    g_arr = np.asarray(g, dtype=float)
+    s_arr = np.asarray(s, dtype=float)
+    if abs(det) < 1e-20:
+        nan = np.full_like(g_arr, np.nan)
+        return nan, nan.copy(), nan.copy()
+    rg = g_arr - g3
+    rs = s_arr - s3
+    f1 = (a22 * rg - a12 * rs) / det
+    f2 = (-a21 * rg + a11 * rs) / det
+    f3 = 1.0 - f1 - f2
+    outside = (f1 < 0) | (f2 < 0) | (f3 < 0)
+    f1[outside] = np.nan
+    f2[outside] = np.nan
+    f3[outside] = np.nan
+    return f1, f2, f3

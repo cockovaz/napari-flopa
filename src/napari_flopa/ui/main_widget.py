@@ -5,6 +5,7 @@ from qtpy.QtWidgets import QScrollArea, QTabWidget, QVBoxLayout, QWidget
 from napari_flopa.ui.panels.batch_panel import BatchPanel
 from napari_flopa.ui.panels.decay_panel import DecayPanel
 from napari_flopa.ui.panels.flim_view_panel import FlimViewPanel
+from napari_flopa.ui.panels.phasor_analyzer_panel import PhasorAnalyzerPanel
 from napari_flopa.ui.panels.phasor_panel import PhasorPanel
 from napari_flopa.ui.panels.ptu_panel import PtuPanel
 from napari_flopa.ui.panels.trace_panel import TracePanel
@@ -28,6 +29,7 @@ class FlimWidget(QWidget):
       2 — Phasor   (enabled once reconstructed with phasor output)
       3 — Decay    (enabled once reconstructed with the TCSPC histogram)
       4 — Batch
+      5 — Analyzer (always enabled — works from CSV, no reconstruction needed)
 
     Tab positions are held in `_trace_tab_index` etc. rather than hard-coded, so
     inserting a tab cannot silently enable the wrong one.
@@ -54,6 +56,7 @@ class FlimWidget(QWidget):
         self._phasor_panel = PhasorPanel(self.state, viewer)
         self._decay_panel = DecayPanel(self.state, viewer)
         self._batch_panel = BatchPanel(self.state, viewer)
+        self._analyzer_panel = PhasorAnalyzerPanel(self.state, viewer)
 
         self._tabs.addTab(_scrollable(self._ptu_panel), "File")
         self._trace_tab_index = self._tabs.addTab(
@@ -66,6 +69,7 @@ class FlimWidget(QWidget):
             _scrollable(self._decay_panel), "Decay"
         )
         self._tabs.addTab(_scrollable(self._batch_panel), "Batch")
+        self._tabs.addTab(_scrollable(self._analyzer_panel), "Analyzer")
 
         # Phasor/Decay need a reconstruction; Trace only needs a loaded file.
         self._tabs.setTabEnabled(self._trace_tab_index, False)

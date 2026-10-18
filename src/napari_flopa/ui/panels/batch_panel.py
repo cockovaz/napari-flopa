@@ -33,6 +33,7 @@ from qtpy.QtGui import (
     QDoubleValidator,
     QIntValidator,
     QRegularExpressionValidator,
+    QValidator,
 )
 from qtpy.QtWidgets import (
     QButtonGroup,
@@ -82,19 +83,46 @@ _OK = '<span style="color:#60cc60">{}</span>'
 _INFO = '<span style="color:#aaaaaa">{}</span>'
 
 
-class _AggRow(QWidget):
-    """
-    One aggregation pass: F / S / D checkboxes plus kind-specific extras.
+class _DimValidator(QValidator):
+    """Accepts ``*``, ``a``, or an integer in ``[0, max_index]``."""
 
-    kind='images'  → no extras
-    kind='phasor'  → no extras
-    kind='decay'   → + Norm checkbox
+    def __init__(self, max_index: int = 0, parent=None):
+        super().__init__(parent)
+        self._max = max(0, max_index)
+
+    def set_max(self, n: int):
+        self._max = max(0, n)
+
+    def validate(self, text: str, pos: int):
+        text = text.strip()
+        if text in ("", "*", "a"):
+            return QValidator.Acceptable, text, pos
+        if not text.isdigit():
+            return QValidator.Invalid, text, pos
+        val = int(text)
+        if val > self._max:
+            return QValidator.Intermediate, text, pos
+        return QValidator.Acceptable, text, pos
 
 
+class _SpecRow(QWidget):
+    """One export pass with per-dimension spec edits.
+
+    Each dimension (F, S, D) has a small text field accepting an integer
+    index (0…N-1), ``*`` (iterate all), or ``a`` (aggregate).
+
+    kind='decay' adds a Norm checkbox.
     Emits remove_requested(self) when × is clicked.
     """
 
     remove_requested = Signal(object)
+
+    _DIM_TOOLTIP = (
+        "Integer index, * (all), or a (aggregate)\n"
+        "  index → select that one\n"
+        "  *     → one export per value\n"
+        "  a     → sum across this dimension"
+    )
 
     def __init__(
         self, kind: str = "phasor", removable: bool = True, parent=None
@@ -102,20 +130,30 @@ class _AggRow(QWidget):
         super().__init__(parent)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(2, 1, 2, 1)
-        lay.setSpacing(6)
+        lay.setSpacing(4)
 
-        self.frames_chk = QCheckBox("F")
-        self.frames_chk.setToolTip("Sum all frames")
-        self.seqs_chk = QCheckBox("S")
-        self.seqs_chk.setToolTip("Sum all sequences")
-        self.dets_chk = QCheckBox("D")
-        self.dets_chk.setToolTip("Sum all detectors")
-        for w in (self.frames_chk, self.seqs_chk, self.dets_chk):
-            lay.addWidget(w)
+        self._edits: dict[str, QLineEdit] = {}
+        self._validators: dict[str, _DimValidator] = {}
+        for key, label in (
+            ("frame", "F"),
+            ("sequence", "S"),
+            ("channel", "D"),
+        ):
+            v = _DimValidator(0)
+            e = QLineEdit("*")
+            e.setFixedWidth(28)
+            e.setValidator(v)
+            e.setToolTip(self._DIM_TOOLTIP)
+            e.textChanged.connect(lambda _: self._revalidate())
+            self._edits[key] = e
+            self._validators[key] = v
+            lay.addWidget(e)
+            lbl = QLabel(label)
+            lbl.setStyleSheet("font-weight: normal;")
+            lay.addWidget(lbl)
+            lay.addSpacing(2)
 
-        self.smooth_chk = self.smooth_spin = None
-        self.shift_spin = self.norm_chk = None
-
+        self.norm_chk = None
         if kind == "decay":
             lay.addWidget(_vsep())
             self.norm_chk = QCheckBox("Norm")
@@ -135,15 +173,35 @@ class _AggRow(QWidget):
             rm.clicked.connect(lambda: self.remove_requested.emit(self))
             lay.addWidget(rm)
 
+    _STYLE_OK = "font-weight: normal;"
+    _STYLE_ERR = "font-weight: normal; color: #ff4444;"
+
+    def set_dims(self, frames: int, sequences: int, detectors: int):
+        self._validators["frame"].set_max(max(0, frames - 1))
+        self._validators["sequence"].set_max(max(0, sequences - 1))
+        self._validators["channel"].set_max(max(0, detectors - 1))
+        self._revalidate()
+
+    def _revalidate(self):
+        for key, edit in self._edits.items():
+            v = self._validators[key]
+            text = edit.text().strip()
+            if text.isdigit() and int(text) > v._max:
+                edit.setStyleSheet(self._STYLE_ERR)
+                edit.setToolTip(
+                    f"Index {text} exceeds max ({v._max}) — "
+                    "will be clamped at runtime"
+                )
+            else:
+                edit.setStyleSheet(self._STYLE_OK)
+                edit.setToolTip(self._DIM_TOOLTIP)
+
     def to_dict(self) -> dict:
-        d = dict(
-            agg_frames=self.frames_chk.isChecked(),
-            agg_seqs=self.seqs_chk.isChecked(),
-            agg_dets=self.dets_chk.isChecked(),
-        )
-        if self.smooth_chk is not None:
-            d["smooth"] = self.smooth_chk.isChecked()
-            d["smooth_kernel"] = self.smooth_spin.value()
+        d = {
+            "spec_frame": self._edits["frame"].text().strip() or "*",
+            "spec_seq": self._edits["sequence"].text().strip() or "*",
+            "spec_det": self._edits["channel"].text().strip() or "*",
+        }
         if self.norm_chk is not None:
             d["norm"] = self.norm_chk.isChecked()
         return d
@@ -193,17 +251,10 @@ def _first_set(typed, derived) -> float:
     return float(derived if typed is None else typed)
 
 
-def _transparent(widget: QWidget, name: str) -> QWidget:
-    """Let the surrounding group box's tint show through a container widget."""
-    widget.setObjectName(name)
-    widget.setStyleSheet(f"QWidget#{name} {{ background: transparent; }}")
-    return widget
-
-
 class _ExportSection(QGroupBox):
     """
     Checkable QGroupBox for one export type.
-    Contains type-specific controls followed by a list of _AggRow passes.
+    Contains type-specific controls followed by a list of _SpecRow passes.
     """
 
     def __init__(self, title: str, kind: str, parent=None):
@@ -212,7 +263,8 @@ class _ExportSection(QGroupBox):
         self.setChecked(False)
         apply_style(self, S.GROUP_PRIMARY)
         self._kind = kind
-        self._rows: list[_AggRow] = []
+        self._rows: list[_SpecRow] = []
+        self._dims = (1, 1, 1)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 4, 8, 6)
@@ -226,7 +278,7 @@ class _ExportSection(QGroupBox):
         lay.addWidget(sep)
 
         hint = QLabel(
-            "Aggregation passes — one export per row  (F=Frames S=Seq D=Det):"
+            "Export passes — per index (0,1,…), all (*), or aggregate (a):"
         )
         hint.setStyleSheet(S.HINT)
         lay.addWidget(hint)
@@ -248,13 +300,19 @@ class _ExportSection(QGroupBox):
     def _add_type_widgets(self, lay: QVBoxLayout):
         """Override in subclasses to insert type-specific widgets above agg rows."""
 
+    def set_dims(self, frames: int, sequences: int, detectors: int):
+        self._dims = (frames, sequences, detectors)
+        for row in self._rows:
+            row.set_dims(frames, sequences, detectors)
+
     def _add_row(self, *, removable: bool = True):
-        row = _AggRow(kind=self._kind, removable=removable)
+        row = _SpecRow(kind=self._kind, removable=removable)
+        row.set_dims(*self._dims)
         row.remove_requested.connect(self._remove_row)
         self._rows.append(row)
         self._rows_lay.addWidget(row)
 
-    def _remove_row(self, row: _AggRow):
+    def _remove_row(self, row: _SpecRow):
         if len(self._rows) <= 1:
             return
         self._rows.remove(row)
@@ -278,8 +336,6 @@ class _ImagesSection(_ExportSection):
 
     def __init__(self, parent=None):
         super().__init__("Images", kind="images", parent=parent)
-        # Apply the initial widget states.
-        self._on_mode_toggled(self._sf_radio.isChecked())
         self._on_flim_toggled(self._flim_chk.isChecked())
 
     def _add_type_widgets(self, lay):
@@ -304,13 +360,11 @@ class _ImagesSection(_ExportSection):
         row2.addWidget(lbl2)
         self._cmap_combo = QComboBox()
         self._cmap_combo.addItems(LIFETIME_COLORMAPS)
-        # self._cmap_combo.setMaximumWidth(90)
         self._cmap_combo.setStyleSheet("font-weight: normal;")
         row2.addWidget(self._cmap_combo)
         row2.addStretch()
         lay.addLayout(row2)
 
-        # Row 3 — the two LUT ranges, side by side under the colormap.
         row3 = QHBoxLayout()
         row3.setSpacing(3)
         self._lt_lo = QLineEdit()
@@ -344,7 +398,6 @@ class _ImagesSection(_ExportSection):
             lbl.setStyleSheet(S.MUTED)
             row3.addWidget(lbl)
             for e in (lo, hi):
-                # e.setMaximumWidth(55)
                 e.setPlaceholderText("auto")
             row3.addWidget(lo)
             row3.addWidget(QLabel("–"))
@@ -352,7 +405,6 @@ class _ImagesSection(_ExportSection):
             row3.addSpacing(3)
         row3.addStretch()
         lay.addLayout(row3)
-        # Colormap and both ranges only shape the FLIM RGB composite.
         self._flim_chk.toggled.connect(self._on_flim_toggled)
 
         # Smoothing
@@ -363,14 +415,8 @@ class _ImagesSection(_ExportSection):
         self._sm_lt_chk = QCheckBox("Smooth Lt.")
         self._sm_lt_spin = self._kernel_spin()
         for chk, spin in (
-            (
-                self._sm_int_chk,
-                self._sm_int_spin,
-            ),
-            (
-                self._sm_lt_chk,
-                self._sm_lt_spin,
-            ),
+            (self._sm_int_chk, self._sm_int_spin),
+            (self._sm_lt_chk, self._sm_lt_spin),
         ):
             chk.setStyleSheet("font-weight: normal;")
             spin.setEnabled(False)
@@ -380,37 +426,6 @@ class _ImagesSection(_ExportSection):
             row_sm.addSpacing(24)
         row_sm.addStretch()
         lay.addLayout(row_sm)
-
-        # Export mode: aggregation passes OR single-frame pick
-        row3 = QHBoxLayout()
-        self._mode_grp = QButtonGroup(self)
-        self._all_radio = QRadioButton("Configure sets")
-        self._sf_radio = QRadioButton("Single slice")
-        self._sf_radio.setChecked(True)
-        for r in (self._sf_radio, self._all_radio):
-            self._mode_grp.addButton(r)
-            r.setStyleSheet("font-weight: normal;")
-            row3.addWidget(r)
-        row3.addStretch()
-        lay.addLayout(row3)
-
-        # Single-slice selector; its visibility follows the radio above
-        self._sf_widget = _transparent(QWidget(), "sfRow")
-        sf_lay = QHBoxLayout(self._sf_widget)
-        sf_lay.setContentsMargins(0, 0, 0, 0)
-        sf_lay.setSpacing(4)
-        for txt in ("Frame:", "Seq:", "Det:"):
-            sf_lay.addWidget(QLabel(txt))
-            sp = QSpinBox()
-            sp.setRange(0, 9999)
-            sp.setFixedWidth(52)
-            sp.setStyleSheet("font-weight: normal;")
-            sf_lay.addWidget(sp)
-            setattr(self, f"_sf_{txt[:-1].lower()}", sp)
-        sf_lay.addStretch()
-        lay.addWidget(self._sf_widget)
-
-        self._sf_radio.toggled.connect(self._on_mode_toggled)
 
     @staticmethod
     def _kernel_spin() -> QSpinBox:
@@ -423,17 +438,7 @@ class _ImagesSection(_ExportSection):
         sp.setStyleSheet("font-weight: normal;")
         return sp
 
-    def set_dims(self, frames: int, sequences: int, detectors: int):
-        """Cap the single-slice pickers at what the scan config declares."""
-        for spin, n in (
-            (self._sf_frame, frames),
-            (self._sf_seq, sequences),
-            (self._sf_det, detectors),
-        ):
-            spin.setMaximum(max(0, int(n) - 1))
-
     def _on_flim_toggled(self, on: bool):
-        """Colormap and ranges are diasbled unless RGB composite is wanted."""
         for w in (
             self._cmap_combo,
             self._lt_lo,
@@ -443,25 +448,12 @@ class _ImagesSection(_ExportSection):
         ):
             w.setEnabled(on)
 
-    def _on_mode_toggled(self, single: bool):
-        self._sf_widget.setVisible(single)
-        self._rows_widget.setEnabled(not single)
-
-    def get_configs(self) -> list[dict]:
-        if not self.isChecked():
-            return []
-        base = self._type_config()
-        if base.get("single_frame"):
-            return [base]
-        return [{**base, **row.to_dict()} for row in self._rows]
-
     def _type_config(self):
         def _opt(edit) -> float | None:
-            """Typed value, or None meaning 'derive it from the image'."""
             txt = edit.text().strip()
             return float(txt) if txt else None
 
-        cfg = dict(
+        return dict(
             export_flim=self._flim_chk.isChecked(),
             export_int=self._int_chk.isChecked(),
             export_lt=self._lt_chk.isChecked(),
@@ -470,20 +462,11 @@ class _ImagesSection(_ExportSection):
             int_lo=_opt(self._int_lo),
             int_hi=_opt(self._int_hi),
             cmap=self._cmap_combo.currentText(),
-            # Section-level, so single-slice and every set share them.
             smooth_int=self._sm_int_chk.isChecked(),
             smooth_int_k=self._sm_int_spin.value(),
             smooth_lt=self._sm_lt_chk.isChecked(),
             smooth_lt_k=self._sm_lt_spin.value(),
-            single_frame=self._sf_radio.isChecked(),
         )
-        if self._sf_radio.isChecked():
-            cfg.update(
-                sf_frame=self._sf_frame.value(),
-                sf_seq=self._sf_seq.value(),
-                sf_det=self._sf_det.value(),
-            )
-        return cfg
 
 
 class _PhasorSection(_ExportSection):
@@ -801,21 +784,8 @@ class _BatchWorker(QObject):
         res_ns = float(ip.get("tcspc_resolution_ns", 1.0))
         lt_unit = ip.get("resolution_unit", "ch")
 
-        if cfg.get("single_frame"):
-            _sh = {"frame": "F", "sequence": "S", "channel": "D"}
-            sel = {}
-            for dim, key in (
-                ("frame", "sf_frame"),
-                ("sequence", "sf_seq"),
-                ("channel", "sf_det"),
-            ):
-                if dim in ds.sizes:
-                    sel[dim] = min(cfg.get(key, 0), ds.sizes[dim] - 1)
-            suffix = "_".join(f"{_sh[k]}{v}" for k, v in sel.items())
-            free_combos = [(sel, suffix)]
-            sum_dims = []
-        else:
-            sum_dims, free_combos = _agg_combos(ds, cfg)
+        spec = _read_spec(cfg)
+        sum_dims, free_combos = _spec_combos(ds, spec)
 
         lt_lut = None
         if cfg.get("export_flim") and "mean_arrival_time" in ds:
@@ -909,7 +879,8 @@ class _BatchWorker(QObject):
 
         per_pixel = cfg.get("per_pixel", False)
         rows: list[dict] = []
-        sum_dims, free_combos = _agg_combos(ds, cfg)
+        spec = _read_spec(cfg)
+        sum_dims, free_combos = _spec_combos(ds, spec)
 
         smooth = cfg.get("smooth", False)
         smooth_k = cfg.get("smooth_kernel", 3)
@@ -1026,10 +997,10 @@ class _BatchWorker(QObject):
     def _extract_decay(
         self, ds, cfg: dict
     ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
-        """Curves for one aggregation set, as ``(time_ns, {label: counts})``.
+        """Curves for one spec set, as ``(time_ns, {label: counts})``.
 
-        Every label names all three dimensions the dataset has, with ``∑`` for
-        the aggregated ones — ``F0S0D1``, ``F∑S0D0`` — so columns from
+        Every label names all three dimensions the dataset has, with ``a`` for
+        the aggregated ones — ``F0S0D1``, ``FaS0D0`` — so columns from
         different sets stay distinguishable when merged into one table.
         Normalisation is per set, applied to each curve's own peak.
         """
@@ -1037,21 +1008,13 @@ class _BatchWorker(QObject):
             return np.empty(0), {}
         da = ds["tcspc_histogram"]
 
-        _short = {"frame": "F", "sequence": "S", "channel": "D"}
-        agg_keys = {
-            "frame": "agg_frames",
-            "sequence": "agg_seqs",
-            "channel": "agg_dets",
-        }
-
+        spec = _read_spec(cfg)
         present = [d for d in ("frame", "sequence", "channel") if d in da.dims]
-        summed = [d for d in present if cfg.get(agg_keys[d])]
+        summed = [d for d in present if spec.get(d) == "a"]
         for dim in summed:
             da = da.sum(dim)
         free_dims = [d for d in present if d not in summed]
 
-        # tttrkit carries the time axis as a coordinate in seconds, which
-        # already accounts for any TCSPC bin factor.
         time_ns = np.asarray(da["tcspc_time"].values, dtype=float) * 1e9
         norm = cfg.get("norm", False)
 
@@ -1059,19 +1022,29 @@ class _BatchWorker(QObject):
             parts = []
             for d in present:
                 parts.append(
-                    f"{_short[d]}∑" if d in summed else f"{_short[d]}{sel[d]}"
+                    f"{_SHORT[d]}a" if d in summed else f"{_SHORT[d]}{sel[d]}"
                 )
-            return "".join(parts)
+            tag = "".join(parts)
+            if norm:
+                tag += "_norm"
+            return tag
+
+        free_ranges: dict[str, list[int]] = {}
+        for d in free_dims:
+            val = spec.get(d, "*")
+            if val == "*":
+                free_ranges[d] = list(range(da.sizes[d]))
+            else:
+                idx = min(int(val), da.sizes[d] - 1)
+                free_ranges[d] = [max(0, idx)]
 
         curves: dict[str, np.ndarray] = {}
         combos = (
             [{}]
-            if not free_dims
+            if not free_ranges
             else [
-                dict(zip(free_dims, vals, strict=True))
-                for vals in itertools.product(
-                    *[range(da.sizes[d]) for d in free_dims]
-                )
+                dict(zip(free_ranges.keys(), vals, strict=True))
+                for vals in itertools.product(*free_ranges.values())
             ]
         )
         for sel in combos:
@@ -1085,41 +1058,59 @@ class _BatchWorker(QObject):
 # Helpers
 
 
-def _agg_combos(ds, cfg: dict) -> tuple[list[str], list[tuple[dict, str]]]:
+_SHORT = {"frame": "F", "sequence": "S", "channel": "D"}
+
+_SPEC_DIMS = (
+    ("frame", "F"),
+    ("sequence", "S"),
+    ("channel", "D"),
+)
+
+
+def _read_spec(cfg: dict) -> dict[str, str]:
+    """Extract per-dimension spec from a config dict.
+
+    Keys ``spec_frame``, ``spec_seq``, ``spec_det`` map to the xarray dimension
+    names.  Missing keys default to ``"*"`` (iterate all).
     """
-    Return (sum_dims, free_combos) where free_combos is a list of
-    (sel_dict, label_suffix) for every combination of non-aggregated dims.
+    return {
+        "frame": cfg.get("spec_frame", "*") or "*",
+        "sequence": cfg.get("spec_seq", "*") or "*",
+        "channel": cfg.get("spec_det", "*") or "*",
+    }
+
+
+def _spec_combos(ds, spec: dict) -> tuple[list[str], list[tuple[dict, str]]]:
+    """Expand a parsed spec into ``(sum_dims, free_combos)``.
+
+    Each free_combo is ``(sel_dict, suffix_str)`` for one output.
     """
     sum_dims: list[str] = []
     free: dict[str, list[int]] = {}
-    for dim, key in (
-        ("frame", "agg_frames"),
-        ("sequence", "agg_seqs"),
-        ("channel", "agg_dets"),
-    ):
+
+    for dim, _short in _SPEC_DIMS:
         if dim not in ds.sizes:
             continue
-        if cfg.get(key):
+        val = spec.get(dim, "*")
+        if val == "a":
             sum_dims.append(dim)
-        else:
+        elif val == "*":
             free[dim] = list(range(ds.sizes[dim]))
+        else:
+            idx = min(int(val), ds.sizes[dim] - 1)
+            free[dim] = [max(0, idx)]
 
-    _short = {"frame": "F", "sequence": "S", "channel": "D"}
     if not free:
-        suffix = (
-            ("Sum" + "".join(d[0].upper() for d in sum_dims))
-            if sum_dims
-            else ""
-        )
-        return sum_dims, [({}, suffix)]
+        agg_tag = "".join(f"{_SHORT[d]}a" for d in sum_dims)
+        return sum_dims, [({}, agg_tag or "all")]
 
     combos = []
     for vals in itertools.product(*free.values()):
         sel = dict(zip(free.keys(), vals, strict=True))
-        suffix = "_".join(f"{_short.get(k,'?')}{v}" for k, v in sel.items())
+        parts = [f"{_SHORT[k]}{v}" for k, v in sel.items()]
         if sum_dims:
-            suffix += "_Sum" + "".join(d[0].upper() for d in sum_dims)
-        combos.append((sel, suffix))
+            parts.extend(f"{_SHORT[d]}a" for d in sum_dims)
+        combos.append((sel, "_".join(parts)))
     return sum_dims, combos
 
 
@@ -1277,7 +1268,7 @@ class BatchPanel(QWidget):
         # self._c_accu.setMaximumWidth(110)
         self._c_accu.setValidator(
             QRegularExpressionValidator(
-                QRegularExpression(r"\d+(\s*,\s*\d+)*")
+                QRegularExpression(r"[1-9]\d*(\s*,\s*[1-9]\d*)*")
             )
         )
         self._c_accu.setToolTip(
@@ -1502,14 +1493,12 @@ class BatchPanel(QWidget):
         self.state.file_loaded.connect(self._update_copy_enabled)
         self.state.dataset_changed.connect(self._on_dataset_changed)
         for edit in (self._c_frames, self._c_seqs, self._c_maxdet):
-            edit.textChanged.connect(self._sync_slice_limits)
-        self._sync_slice_limits()
+            edit.textChanged.connect(self._sync_dim_limits)
+        self._sync_dim_limits()
         self._update_input_label()
 
-    # ── directory pickers ────────────────────────────────────────────────
-
-    def _sync_slice_limits(self):
-        """Push the scan config's extents into the single-slice pickers."""
+    def _sync_dim_limits(self):
+        """Push scan config extents into the spec row validators."""
 
         def _n(edit, default: int) -> int:
             try:
@@ -1517,11 +1506,15 @@ class BatchPanel(QWidget):
             except ValueError:
                 return default
 
-        self._images_sec.set_dims(
+        f, s, d = (
             _n(self._c_frames, 1),
             _n(self._c_seqs, 1),
             _n(self._c_maxdet, 1),
         )
+        for sec in (self._images_sec, self._phasor_sec, self._decay_sec):
+            sec.set_dims(f, s, d)
+
+    # ── directory pickers ────────────────────────────────────────────────
 
     def _browse_ptu(self):
         """Pick a folder — every .ptu inside it is processed."""
