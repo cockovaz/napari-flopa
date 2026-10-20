@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 from qtpy.QtCore import Qt, QThreadPool, Signal, Slot
 from qtpy.QtWidgets import (
     QApplication,
@@ -100,8 +101,15 @@ class PtuPanel(QWidget):
         # file); pushed to the shared state when reconstruction finishes, so
         # the Phasor tab picks it up.
         self._cfg_calib_factor: complex | None = None
+        self._file_mask: np.ndarray | None = None
 
         self._build_ui()
+        self.viewer.layers.events.inserted.connect(
+            lambda _: self._refresh_roi_mask_layers()
+        )
+        self.viewer.layers.events.removed.connect(
+            lambda _: self._refresh_roi_mask_layers()
+        )
         # Let other tabs (Batch) pull these fields without a reconstruction.
         self.state.file_config_provider = self._file_config_or_none
         self.state.file_runtime_provider = lambda: {
@@ -250,6 +258,25 @@ class PtuPanel(QWidget):
         self.reconstruct_btn.clicked.connect(self._run_reconstruction)
         output_row.addWidget(self.reconstruct_btn)
         recon_layout.addLayout(output_row)
+
+        mask_row = QHBoxLayout()
+        mask_row.addWidget(QLabel("ROI Mask:"))
+        self._roi_mask_combo = QComboBox()
+        self._roi_mask_combo.addItem("None")
+        self._roi_mask_combo.addItem("Load from file...")
+        self._roi_mask_combo.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed
+        )
+        self._roi_mask_combo.setToolTip(
+            "Optional 2D mask (lines × pixels).\n"
+            "Photons outside the mask are excluded from reconstruction.\n"
+            "Select a napari Labels/Image layer, or load a .tif/.npy file."
+        )
+        self._roi_mask_combo.currentTextChanged.connect(
+            self._on_roi_mask_changed
+        )
+        mask_row.addWidget(self._roi_mask_combo, 1)
+        recon_layout.addLayout(mask_row)
 
         self.recon_progress = QProgressBar()
         self.recon_progress.setTextVisible(True)
@@ -1048,6 +1075,68 @@ class PtuPanel(QWidget):
             return
         self._log(f"Loaded config: {path.name}")
 
+    def _refresh_roi_mask_layers(self):
+        cur = self._roi_mask_combo.currentText()
+        self._roi_mask_combo.blockSignals(True)
+        self._roi_mask_combo.clear()
+        self._roi_mask_combo.addItem("None")
+        for layer in self.viewer.layers:
+            if type(layer).__name__ == "Labels":
+                self._roi_mask_combo.addItem(layer.name)
+        self._roi_mask_combo.addItem("Load from file...")
+        idx = self._roi_mask_combo.findText(cur)
+        self._roi_mask_combo.setCurrentIndex(max(0, idx))
+        self._roi_mask_combo.blockSignals(False)
+
+    def _on_roi_mask_changed(self, text: str):
+        if text == "Load from file...":
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Load ROI mask",
+                "",
+                "Mask files (*.tif *.tiff *.npy);;All files (*)",
+            )
+            if path:
+                self._load_mask_file(Path(path))
+            else:
+                self._roi_mask_combo.setCurrentIndex(0)
+        else:
+            self._file_mask = None
+
+    def _load_mask_file(self, path: Path):
+        try:
+            if path.suffix == ".npy":
+                arr = np.load(str(path))
+            else:
+                from skimage.io import imread
+
+                arr = imread(str(path))
+            self._file_mask = np.asarray(arr, dtype=bool)
+            self._roi_mask_combo.blockSignals(True)
+            idx = self._roi_mask_combo.findText("Load from file...")
+            display = f"File: {path.name}"
+            self._roi_mask_combo.insertItem(idx, display)
+            self._roi_mask_combo.setCurrentText(display)
+            self._roi_mask_combo.blockSignals(False)
+            self._log(f"Loaded ROI mask: {path.name} {self._file_mask.shape}")
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Mask Error", f"Failed to load mask:\n{e}"
+            )
+            self._roi_mask_combo.setCurrentIndex(0)
+
+    def _get_roi_mask(self) -> np.ndarray | None:
+        text = self._roi_mask_combo.currentText()
+        if text in ("None", "Load from file..."):
+            return None
+        if text.startswith("File: "):
+            return self._file_mask
+        try:
+            layer = self.viewer.layers[text]
+            return np.asarray(layer.data, dtype=bool)
+        except KeyError:
+            return None
+
     def _run_reconstruction(self):
         if not self.ptu_data:
             QMessageBox.warning(
@@ -1060,6 +1149,23 @@ class PtuPanel(QWidget):
         self.recon_progress.setVisible(True)
         self._log("Starting reconstruction...")
         QApplication.processEvents()
+
+        roi_mask = self._get_roi_mask()
+        if roi_mask is not None:
+            if roi_mask.ndim > 2:
+                roi_mask = roi_mask.squeeze()
+            expected = (self.lines_spin.value(), self.pixels_spin.value())
+            if roi_mask.ndim != 2 or roi_mask.shape != expected:
+                QMessageBox.warning(
+                    self,
+                    "Mask Shape Mismatch",
+                    f"ROI mask shape {roi_mask.shape} does not match "
+                    f"scan dimensions {expected} (lines, pixels).\n"
+                    "Adjust the mask or scan settings.",
+                )
+                self.reconstruct_btn.setEnabled(True)
+                self.recon_progress.setVisible(False)
+                return
 
         scan_settings = self.current_settings()
         scan_config = scan_settings.to_scan_config(
@@ -1081,6 +1187,7 @@ class PtuPanel(QWidget):
                 logger=logger,
                 progress_callback=emit_progress,
                 chunk_size=chunk_size,
+                roi_mask=roi_mask,
             )
 
         worker = Worker(_run)
@@ -1113,6 +1220,9 @@ class PtuPanel(QWidget):
         ds.attrs["scan_config"] = scan_settings.to_json_dict()["scan"]
         if self.ptu_filepath:
             ds.attrs["source_filename"] = self.ptu_filepath.name
+        mask_text = self._roi_mask_combo.currentText()
+        if mask_text not in ("None", "Load from file..."):
+            ds.attrs["roi_mask_source"] = mask_text
 
         self._log(f"Done. Dataset: {dict(ds.sizes)}")
         if self._cfg_calib_factor is not None:

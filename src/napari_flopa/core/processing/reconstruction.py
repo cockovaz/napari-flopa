@@ -1,3 +1,4 @@
+import numpy as np
 import xarray as xr
 from tttrkit.ptuio.decoder import T3OverflowCorrector
 from tttrkit.ptuio.reconstructor import ImageReconstructor, ScanConfig
@@ -19,6 +20,7 @@ def reconstruct_ptu_to_dataset(
     logger: ProgressLogger | None = None,
     progress_callback=None,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
+    roi_mask: np.ndarray | None = None,
 ) -> xr.Dataset:
     """
     Full pipeline: reconstruct from already-loaded PTU data → xarray Dataset.
@@ -58,6 +60,7 @@ def reconstruct_ptu_to_dataset(
 
     recon = ImageReconstructor(
         config=scan_config,
+        roi_mask=roi_mask,
         outputs=requested_outputs,
         laser_sync_rate=constants["repetition_rate"],
         tcspc_channels=tcspc_channels,
