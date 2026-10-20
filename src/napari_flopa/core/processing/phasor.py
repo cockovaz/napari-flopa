@@ -134,6 +134,25 @@ def lifetime_correction(ds, factor: complex) -> tuple[float, float] | None:
     return irf_delay_ns(factor, omega, res_ns), period
 
 
+def phasor_lifetimes(g, s, f_rep_hz: float):
+    """Phase and modulation lifetimes of phasor points, in ns.
+
+    τφ = s / (g·ω) and τm = √(1/M² − 1) / ω with M² = g² + s². Both equal
+    the true lifetime for a monoexponential decay on the semicircle. Points
+    with g ≤ 0 or M outside (0, 1) have no defined lifetime and are NaN.
+    """
+    g_arr = np.asarray(g, dtype=float)
+    s_arr = np.asarray(s, dtype=float)
+    omega = 2 * np.pi * f_rep_hz
+    m2 = g_arr**2 + s_arr**2
+    with np.errstate(divide="ignore", invalid="ignore"):
+        tau_phi = s_arr / (g_arr * omega) * 1e9
+        tau_mod = np.sqrt(1.0 / m2 - 1.0) / omega * 1e9
+    tau_phi[~(np.isfinite(tau_phi) & (g_arr > 0))] = np.nan
+    tau_mod[~(np.isfinite(tau_mod) & (m2 > 0) & (m2 < 1))] = np.nan
+    return tau_phi, tau_mod
+
+
 def component_fractions_2(
     g, s, tau1_ns: float, tau2_ns: float, f_rep_hz: float
 ):

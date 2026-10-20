@@ -40,6 +40,8 @@ dependencies = [
 # Allow easily installation with the full, default napari installation
 # (including Qt backend) using napari-flopa[all].
 all = ["napari[all]"]
+# Gaussian mixture / DBSCAN / HDBSCAN in the Analyzer's clustering.
+cluster = ["scikit-learn>=1.3"]
 
 [project.urls]
 "Homepage" = "https://github.com/cockovaz/napari-flopa"

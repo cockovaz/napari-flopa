@@ -6,12 +6,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
+    QCompleter,
     QDialog,
     QDoubleSpinBox,
     QFileDialog,
@@ -39,12 +40,32 @@ except ImportError:
         FigureCanvasQTAgg as FigureCanvas,
     )
 
+from napari_flopa.core.processing.clustering import (
+    METHOD_TAGS,
+    METHODS,
+    cluster_points,
+    method_available,
+)
 from napari_flopa.core.processing.phasor import (
     calibration_factor,
     component_fractions_2,
     component_fractions_3,
     lifetime_ticks,
     monoexp_phasor,
+    phasor_lifetimes,
+)
+from napari_flopa.core.processing.phasor_stats import (
+    contour_levels,
+    covariance_ellipse,
+    kde_grid,
+)
+from napari_flopa.core.processing.table_filter import (
+    OPS,
+    UNARY_OPS,
+    build_clause,
+)
+from napari_flopa.core.processing.table_filter import (
+    evaluate as evaluate_filter,
 )
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
@@ -52,6 +73,8 @@ from napari_flopa.ui.widgets.status_label import StatusLabel
 
 _MAX_TABLE_ROWS = 50_000
 _MAX_SCATTER = 300_000
+#: Beyond this many groups the per-group overlays become unreadable.
+_MAX_OVERLAY_GROUPS = 30
 
 
 def _auto_point_size(n: int) -> int:
@@ -75,6 +98,16 @@ class PhasorAnalyzerPanel(QWidget):
         self._valid_mask: np.ndarray | None = None
         self._plot_g: np.ndarray | None = None
         self._plot_s: np.ndarray | None = None
+        # Once the user asks for τφ/τm, the columns follow the calibration,
+        # the Apply toggle and f_rep until a new CSV is loaded.
+        self._lifetimes_on = False
+        # (color_map, labels) of the last categorical plot, for overlays.
+        self._group_colors: tuple[dict, np.ndarray] | None = None
+        self._cl_param_widgets: dict = {}
+        # Row filter as a query expression, re-evaluated on every use so it
+        # tracks recomputed columns. Rows are never dropped from _df.
+        self._filter_expr = ""
+        self._table_rows = np.empty(0, dtype=int)  # df positions in the table
         self._build_ui()
         self.state.dataset_changed.connect(self._sync_frep_from_state)
 
@@ -106,6 +139,18 @@ class PhasorAnalyzerPanel(QWidget):
         self._size_spin.setToolTip("Scatter point size (auto-scaled on plot)")
         self._size_spin.setMaximumWidth(50)
         tb.addWidget(self._size_spin)
+
+        self._filter_lbl = QLabel("")
+        self._filter_lbl.setStyleSheet(S.HINT)
+        self._filter_lbl.setVisible(False)
+        tb.addWidget(self._filter_lbl)
+        self._filter_clear_btn = QPushButton("✕")
+        self._filter_clear_btn.setToolTip("Clear the row filter")
+        self._filter_clear_btn.setStyleSheet(S.BTN_SMALL)
+        self._filter_clear_btn.setFixedWidth(22)
+        self._filter_clear_btn.setVisible(False)
+        self._filter_clear_btn.clicked.connect(lambda: self.set_filter(""))
+        tb.addWidget(self._filter_clear_btn)
 
         tb.addStretch()
 
@@ -148,6 +193,45 @@ class PhasorAnalyzerPanel(QWidget):
         self._legend_check.setChecked(True)
         color_row.addWidget(self._legend_check)
         root.addLayout(color_row)
+
+        # ── Per-group overlays ─────────────────────────────────────────
+        ov_row = QHBoxLayout()
+        ov_row.setSpacing(4)
+        ov_lbl = QLabel("Overlays:")
+        ov_lbl.setToolTip(
+            "Drawn per group of the 'Color by' column (categorical), or for "
+            "all points when coloring is None / continuous."
+        )
+        ov_row.addWidget(ov_lbl)
+        self._ov_contour = QCheckBox("Contours")
+        self._ov_contour.setToolTip(
+            "Density contours enclosing 25 / 50 / 75 % of each group's points"
+        )
+        self._ov_mean = QCheckBox("Mean")
+        self._ov_mean.setToolTip("Group mean, drawn as ✕")
+        self._ov_median = QCheckBox("Median")
+        self._ov_median.setToolTip("Group median (per axis), drawn as ✚")
+        self._ov_ellipse = QCheckBox("Ellipse")
+        self._ov_ellipse.setToolTip("Covariance ellipse of each group")
+        self._ov_sigma = QSpinBox()
+        self._ov_sigma.setRange(1, 3)
+        self._ov_sigma.setValue(2)
+        self._ov_sigma.setSuffix(" σ")
+        self._ov_sigma.setToolTip(
+            "Ellipse size: 1σ ≈ 39 %, 2σ ≈ 86 %, 3σ ≈ 99 % of a 2-D Gaussian"
+        )
+        self._ov_sigma.setEnabled(False)
+        self._ov_ellipse.toggled.connect(self._ov_sigma.setEnabled)
+        for w in (
+            self._ov_contour,
+            self._ov_mean,
+            self._ov_median,
+            self._ov_ellipse,
+            self._ov_sigma,
+        ):
+            ov_row.addWidget(w)
+        ov_row.addStretch()
+        root.addLayout(ov_row)
 
         # ── f_rep + τ marks ────────────────────────────────────────────
         freq_row = QHBoxLayout()
@@ -201,6 +285,14 @@ class PhasorAnalyzerPanel(QWidget):
         )
         factor_row.addWidget(self._apply_cal_check)
         factor_row.addStretch()
+        self._lt_btn = QPushButton("Phase / Mod. τ")
+        self._lt_btn.setToolTip(
+            "Add tau_phi_ns / tau_mod_ns columns (phase and modulation "
+            "lifetimes).\nThey use calibrated G,S when Apply is on, and "
+            "follow later calibration and f_rep changes."
+        )
+        self._lt_btn.clicked.connect(self._on_compute_lifetimes)
+        factor_row.addWidget(self._lt_btn)
         root.addLayout(factor_row)
 
         # ── Components ─────────────────────────────────────────────────
@@ -238,6 +330,52 @@ class PhasorAnalyzerPanel(QWidget):
 
         self._comp_group = comp_box
         root.addWidget(comp_box)
+
+        # ── Clustering ─────────────────────────────────────────────────
+        cl_box = QGroupBox("Clustering")
+        apply_style(cl_box, S.GROUP_PRIMARY)
+        cl_lay = QVBoxLayout(cl_box)
+        cl_lay.setSpacing(3)
+        cl_lay.setContentsMargins(6, 4, 6, 4)
+
+        cl_row = QHBoxLayout()
+        cl_row.addWidget(QLabel("Method:"))
+        self._cl_method = QComboBox()
+        first_ok = -1
+        for i, name in enumerate(METHODS):
+            self._cl_method.addItem(name)
+            if method_available(name):
+                if first_ok < 0:
+                    first_ok = i
+                continue
+            item = self._cl_method.model().item(i)
+            item.setEnabled(False)
+            self._cl_method.setItemData(
+                i,
+                f"Needs {METHODS[name]['needs']}: pip install scikit-learn",
+                Qt.ToolTipRole,
+            )
+        self._cl_method.setCurrentIndex(max(0, first_ok))
+        self._cl_method.currentTextChanged.connect(
+            self._rebuild_cluster_params
+        )
+        cl_row.addWidget(self._cl_method)
+        self._cl_run_btn = QPushButton("Run")
+        self._cl_run_btn.setToolTip(
+            "Cluster the plotted G,S (calibrated when Apply is on), ignoring "
+            "groups.\nAdds a cluster_<method> column and colors by it."
+        )
+        self._cl_run_btn.clicked.connect(self._on_run_clustering)
+        cl_row.addStretch()
+        cl_row.addWidget(self._cl_run_btn)
+        cl_lay.addLayout(cl_row)
+
+        self._cl_params_lay = QHBoxLayout()
+        self._cl_params_lay.setSpacing(4)
+        cl_lay.addLayout(self._cl_params_lay)
+        self._rebuild_cluster_params()
+
+        root.addWidget(cl_box)
 
         # ── Canvas + table splitter ────────────────────────────────────
         splitter = QSplitter(Qt.Vertical)
@@ -299,7 +437,15 @@ class PhasorAnalyzerPanel(QWidget):
         self._lifetimes_check.toggled.connect(self._on_setting_changed)
         self._legend_check.toggled.connect(self._on_setting_changed)
         self._size_spin.valueChanged.connect(self._on_setting_changed)
-        self._frep_spin.valueChanged.connect(self._on_setting_changed)
+        self._frep_spin.valueChanged.connect(self._on_frep_changed)
+        for w in (
+            self._ov_contour,
+            self._ov_mean,
+            self._ov_median,
+            self._ov_ellipse,
+        ):
+            w.toggled.connect(self._on_setting_changed)
+        self._ov_sigma.valueChanged.connect(self._on_setting_changed)
         self._apply_cal_check.toggled.connect(self._on_apply_cal_toggled)
         self._comp_show_check.toggled.connect(self._on_setting_changed)
         self._comp_group.toggled.connect(self._on_setting_changed)
@@ -350,6 +496,9 @@ class PhasorAnalyzerPanel(QWidget):
             return
         self._df = df
         self._plotted_once = False
+        self._lifetimes_on = False
+        self._filter_expr = ""
+        self._update_filter_indicator()
         self._refresh_column_combos()
         self._fill_table()
         self._plot_btn.setEnabled(True)
@@ -378,21 +527,74 @@ class PhasorAnalyzerPanel(QWidget):
         self._color_combo.blockSignals(False)
         self._update_unique_label()
 
+    # ------------------------------------------------------------------ #
+    # Row filter                                                           #
+    # ------------------------------------------------------------------ #
+
+    def _filter_mask(self) -> np.ndarray | None:
+        """Rows passing the filter, or None when no filter is active."""
+        if self._df is None or not self._filter_expr:
+            return None
+        try:
+            return evaluate_filter(self._df, self._filter_expr)
+        except ValueError as e:
+            self._status.error(f"Filter ignored — {e}")
+            return None
+
+    def set_filter(self, expr: str) -> bool:
+        """Activate a filter expression ("" clears it). False if invalid."""
+        expr = expr.strip()
+        if expr and self._df is not None:
+            try:
+                evaluate_filter(self._df, expr)
+            except ValueError as e:
+                self._status.error(f"Invalid filter: {e}")
+                return False
+        self._filter_expr = expr
+        self._update_filter_indicator()
+        self._fill_table()
+        if self._plotted_once and self._df is not None:
+            self._on_plot()
+        return True
+
+    def _update_filter_indicator(self):
+        mask = self._filter_mask()
+        active = mask is not None
+        self._filter_lbl.setVisible(active)
+        self._filter_clear_btn.setVisible(active)
+        if not active:
+            return
+        expr = self._filter_expr
+        short = expr if len(expr) <= 30 else expr[:29] + "…"
+        self._filter_lbl.setText(
+            f"Filter: {short} · {int(mask.sum()):,}/{len(mask):,}"
+        )
+        self._filter_lbl.setToolTip(f"Active row filter:\n{expr}")
+
+    def _filtered_df(self) -> pd.DataFrame:
+        mask = self._filter_mask()
+        return self._df if mask is None else self._df[mask]
+
     def _fill_table(self):
         if self._df is None:
             self._table.setRowCount(0)
             self._table.setColumnCount(0)
+            self._table_rows = np.empty(0, dtype=int)
             return
         df = self._df
-        n_rows = min(len(df), _MAX_TABLE_ROWS)
+        mask = self._filter_mask()
+        rows = np.flatnonzero(mask) if mask is not None else np.arange(len(df))
+        self._update_filter_indicator()
+        n_rows = min(len(rows), _MAX_TABLE_ROWS)
+        self._table_rows = rows[:n_rows]
         n_cols = len(df.columns)
         self._table.blockSignals(True)
         self._table.setRowCount(n_rows)
         self._table.setColumnCount(n_cols)
         self._table.setHorizontalHeaderLabels(list(df.columns))
-        for r in range(n_rows):
+        for r, pos in enumerate(self._table_rows):
             for c in range(n_cols):
-                val = df.iloc[r, c]
+                val = df.iloc[pos, c]
                 if isinstance(val, float):
                     text = f"{val:.4f}" if abs(val) < 1e6 else f"{val:.2e}"
                 else:
@@ -402,9 +604,9 @@ class PhasorAnalyzerPanel(QWidget):
                 self._table.setItem(r, c, item)
         self._table.resizeColumnsToContents()
         self._table.blockSignals(False)
-        if n_rows < len(df):
+        if n_rows < len(rows):
             self._status.warn(
-                f"Table shows first {n_rows:,} of {len(df):,} rows."
+                f"Table shows first {n_rows:,} of {len(rows):,} rows."
             )
 
     # ------------------------------------------------------------------ #
@@ -418,8 +620,12 @@ class PhasorAnalyzerPanel(QWidget):
         if not rows:
             self._clear_highlight()
             return
-        valid_indices = np.flatnonzero(self._valid_mask)
-        sel = [valid_indices[r] for r in rows if r < len(valid_indices)]
+        sel = []
+        for r in rows:
+            if r < len(self._table_rows):
+                pos = self._table_rows[r]
+                if self._valid_mask[pos]:
+                    sel.append(pos)
         if not sel:
             self._clear_highlight()
             return
@@ -464,21 +670,29 @@ class PhasorAnalyzerPanel(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def _do_plot(self):
+    def _current_gs(self) -> tuple[np.ndarray, np.ndarray, bool]:
+        """``(g, s, calibrated)`` — the pair everything plots and computes on."""
         df = self._df
         use_cal = (
             self._apply_cal_check.isChecked()
             and "calibrated_g" in df.columns
             and "calibrated_s" in df.columns
         )
-        if use_cal:
-            g = df["calibrated_g"].values.astype(np.float64)
-            s = df["calibrated_s"].values.astype(np.float64)
-        else:
-            g = df["g"].values.astype(np.float64)
-            s = df["s"].values.astype(np.float64)
+        gc, sc = ("calibrated_g", "calibrated_s") if use_cal else ("g", "s")
+        return (
+            df[gc].values.astype(np.float64),
+            df[sc].values.astype(np.float64),
+            use_cal,
+        )
+
+    def _do_plot(self):
+        df = self._df
+        g, s, _ = self._current_gs()
 
         valid = np.isfinite(g) & np.isfinite(s)
+        fmask = self._filter_mask()
+        if fmask is not None:
+            valid &= fmask
         self._valid_mask = valid
         self._plot_g = g
         self._plot_s = s
@@ -509,6 +723,7 @@ class PhasorAnalyzerPanel(QWidget):
             _draw_lifetime_ticks(ax, f_rep_hz)
 
         pt_size = self._size_spin.value()
+        self._group_colors = None
 
         color_col = self._color_combo.currentText()
         if color_col == "None" or color_col not in df.columns:
@@ -533,12 +748,19 @@ class PhasorAnalyzerPanel(QWidget):
                     ax, g_v, s_v, color_data, cmap_name, pt_size
                 )
 
+        self._draw_group_overlays(ax, g_v, s_v)
+
         if self._comp_group.isChecked() and self._comp_show_check.isChecked():
             self._draw_components(ax, f_rep_hz)
 
         self._finalise_axes(ax)
         self._canvas.draw_idle()
-        self._status.info(f"Plotted {valid.sum():,} points.")
+        if fmask is None:
+            self._status.info(f"Plotted {valid.sum():,} points.")
+        else:
+            self._status.info(
+                f"Plotted {valid.sum():,} of {len(valid):,} points (filtered)."
+            )
 
     def _plot_white(self, ax, g, s, pt_size):
         n = len(g)
@@ -570,6 +792,7 @@ class PhasorAnalyzerPanel(QWidget):
             }
 
         rgba_arr = np.array([color_map[v] for v in str_data])
+        self._group_colors = (color_map, np.asarray(str_data, dtype=object))
 
         gp, sp, cp = g, s, rgba_arr
         if len(gp) > _MAX_SCATTER:
@@ -629,6 +852,97 @@ class PhasorAnalyzerPanel(QWidget):
         cb.set_label(
             self._color_combo.currentText(), color=MPL.TICK, fontsize=8
         )
+
+    def _draw_group_overlays(self, ax, g, s):
+        """Contours / centroids / ellipses per colour group (*g*, *s* finite)."""
+        contours = self._ov_contour.isChecked()
+        mean = self._ov_mean.isChecked()
+        median = self._ov_median.isChecked()
+        ellipse = self._ov_ellipse.isChecked()
+        if not (contours or mean or median or ellipse) or g.size == 0:
+            return
+        from matplotlib.patches import Ellipse
+
+        if self._group_colors is not None:
+            color_map, labels = self._group_colors
+            groups = [(c, labels == v) for v, c in color_map.items()]
+        else:
+            groups = [("white", np.ones(g.size, dtype=bool))]
+        if len(groups) > _MAX_OVERLAY_GROUPS:
+            self._status.info(
+                f"Overlays skipped: {len(groups)} groups (limit "
+                f"{_MAX_OVERLAY_GROUPS})."
+            )
+            return
+
+        n_sigma = self._ov_sigma.value()
+        for color, member in groups:
+            gg, ss = g[member], s[member]
+            if gg.size < 3:
+                continue
+            if contours:
+                grid = kde_grid(gg, ss)
+                if grid is not None:
+                    X, Y, Z = grid
+                    levels = contour_levels(Z)
+                    if levels:
+                        ax.contour(
+                            X,
+                            Y,
+                            Z,
+                            levels=levels,
+                            colors=[color],
+                            linewidths=0.9,
+                            zorder=10,
+                        )
+            if ellipse:
+                e = covariance_ellipse(gg, ss, n_sigma)
+                if e is not None:
+                    cx, cy, w, h, ang = e
+                    ax.add_patch(
+                        Ellipse(
+                            (cx, cy),
+                            w,
+                            h,
+                            angle=ang,
+                            fill=False,
+                            edgecolor=color,
+                            linewidth=1.4,
+                            zorder=11,
+                        )
+                    )
+            for on, fn, marker in (
+                (mean, np.mean, "X"),
+                (median, np.median, "P"),
+            ):
+                if on:
+                    ax.scatter(
+                        [fn(gg)],
+                        [fn(ss)],
+                        marker=marker,
+                        s=90,
+                        c=[color],
+                        edgecolors="black",
+                        linewidths=0.8,
+                        zorder=12,
+                    )
+
+        if mean or median:
+            key = "   ".join(
+                t for on, t in ((mean, "✕ mean"), (median, "✚ median")) if on
+            )
+            ax.text(
+                0.98,
+                0.98,
+                key,
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=7,
+                color="white",
+                alpha=0.8,
+                zorder=13,
+            )
 
     def _draw_components(self, ax, f_rep_hz):
         taus = [sp.value() for sp in self._tau_spins if sp.value() > 0]
@@ -759,8 +1073,58 @@ class PhasorAnalyzerPanel(QWidget):
     def _on_apply_cal_toggled(self, checked):
         if checked:
             self._apply_calibration()
-        elif self._plotted_once and self._df is not None:
+            return
+        if self._update_lifetimes():
+            self._refresh_column_combos()
+            self._fill_table()
+        if self._plotted_once and self._df is not None:
             self._on_plot()
+
+    def _on_factor_changed(self):
+        """Keep calibrated columns (and τφ/τm) in step with a new factor."""
+        if not self._apply_cal_check.isChecked():
+            return
+        if self._calib_factor == (1.0 + 0j):
+            # Unchecking runs _on_apply_cal_toggled, which recomputes on raw.
+            self._apply_cal_check.setChecked(False)
+        else:
+            self._apply_calibration()
+
+    def _on_frep_changed(self, *_):
+        if self._update_lifetimes():
+            self._fill_table()
+        self._on_setting_changed()
+
+    def _on_compute_lifetimes(self):
+        if self._df is None:
+            self._status.info("Load a CSV first.")
+            return
+        self._lifetimes_on = True
+        self._update_lifetimes()
+        self._refresh_column_combos()
+        self._fill_table()
+        if self._plotted_once:
+            self._on_plot()
+
+    def _update_lifetimes(self) -> bool:
+        """Rewrite tau_phi_ns / tau_mod_ns if they are on; True if written."""
+        if not self._lifetimes_on or self._df is None:
+            return False
+        g, s, calibrated = self._current_gs()
+        f_mhz = self._frep_spin.value()
+        tau_phi, tau_mod = phasor_lifetimes(g, s, f_mhz * 1e6)
+        self._df["tau_phi_ns"] = tau_phi
+        self._df["tau_mod_ns"] = tau_mod
+        src = "calibrated" if calibrated else "raw"
+        self._lt_btn.setToolTip(
+            f"tau_phi_ns / tau_mod_ns from {src} G,S at {f_mhz:g} MHz.\n"
+            "Recomputed on calibration and f_rep changes."
+        )
+        self._status.info(
+            f"Phase / modulation lifetimes from {src} G,S at {f_mhz:g} MHz "
+            f"— {np.isfinite(tau_phi).sum():,}/{len(tau_phi):,} defined."
+        )
+        return True
 
     def _apply_calibration(self):
         if self._df is None:
@@ -777,11 +1141,12 @@ class PhasorAnalyzerPanel(QWidget):
         phasor_c = (g + 1j * s) * self._calib_factor
         df["calibrated_g"] = phasor_c.real
         df["calibrated_s"] = phasor_c.imag
-        self._refresh_column_combos()
-        self._fill_table()
         self._status.info(
             "Calibration applied → calibrated_g, calibrated_s columns added."
         )
+        self._update_lifetimes()
+        self._refresh_column_combos()
+        self._fill_table()
         if self._plotted_once:
             self._on_plot()
 
@@ -801,6 +1166,8 @@ class PhasorAnalyzerPanel(QWidget):
             self._status.info("Calibration factor updated.")
         except Exception as e:
             self._status.error(f"Calibration error: {e}")
+            return
+        self._on_factor_changed()
 
     def _on_custom_factor(self):
         from napari_flopa.ui.panels.phasor_panel import CustomFactorDialog
@@ -811,10 +1178,12 @@ class PhasorAnalyzerPanel(QWidget):
         r, i = dlg.get_values()
         self._calib_factor = complex(r, i)
         self._calib_display.setText(self._fmt_complex(self._calib_factor))
+        self._on_factor_changed()
 
     def _reset_calib(self):
         self._calib_factor = 1.0 + 0j
         self._calib_display.setText(self._fmt_complex(self._calib_factor))
+        self._on_factor_changed()
 
     @staticmethod
     def _fmt_complex(c: complex) -> str:
@@ -835,17 +1204,7 @@ class PhasorAnalyzerPanel(QWidget):
             return
 
         df = self._df
-        use_cal = (
-            self._apply_cal_check.isChecked()
-            and "calibrated_g" in df.columns
-            and "calibrated_s" in df.columns
-        )
-        if use_cal:
-            g = df["calibrated_g"].values.astype(np.float64)
-            s = df["calibrated_s"].values.astype(np.float64)
-        else:
-            g = df["g"].values.astype(np.float64)
-            s = df["s"].values.astype(np.float64)
+        g, s, _ = self._current_gs()
 
         f_rep_hz = self._frep_spin.value() * 1e6
 
@@ -882,6 +1241,97 @@ class PhasorAnalyzerPanel(QWidget):
         self._fill_table()
         if self._plotted_once:
             self._on_plot()
+
+    def _rebuild_cluster_params(self, *_):
+        while self._cl_params_lay.count():
+            item = self._cl_params_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._cl_param_widgets = {}
+        spec = METHODS[self._cl_method.currentText()]["params"]
+        for name, (kind, default, *rest) in spec.items():
+            self._cl_params_lay.addWidget(QLabel(name.replace("_", " ") + ":"))
+            if kind == "choice":
+                w = QComboBox()
+                w.addItems(rest[0])
+                w.setCurrentText(default)
+            elif kind == "float":
+                w = QDoubleSpinBox()
+                w.setDecimals(3)
+                w.setSingleStep(0.005)
+                w.setRange(rest[0], rest[1])
+                w.setValue(default)
+            else:
+                w = QSpinBox()
+                w.setRange(rest[0], rest[1])
+                w.setValue(default)
+            self._cl_params_lay.addWidget(w)
+            self._cl_param_widgets[name] = w
+        self._cl_params_lay.addStretch()
+
+    def _cluster_params(self) -> dict:
+        out = {}
+        for name, w in self._cl_param_widgets.items():
+            out[name] = (
+                w.currentText() if isinstance(w, QComboBox) else w.value()
+            )
+        return out
+
+    def _on_run_clustering(self):
+        if self._df is None:
+            self._status.info("Load a CSV first.")
+            return
+        method = self._cl_method.currentText()
+        g, s, calibrated = self._current_gs()
+        fmask = self._filter_mask()
+        if fmask is not None:
+            # Rows outside the filter are left out of the fit and the labels.
+            g = np.where(fmask, g, np.nan)
+            s = np.where(fmask, s, np.nan)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            labels = cluster_points(g, s, method, **self._cluster_params())
+        except Exception as e:
+            self._status.error(f"Clustering failed: {e}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        finite = np.isfinite(g) & np.isfinite(s)
+        n_clusters = int(labels.max()) + 1 if labels.size else 0
+        width = max(2, len(str(n_clusters)))
+        # Zero-padded strings sort correctly and are always treated as
+        # categorical by the colouring, whatever the cluster count.
+        values = np.where(
+            ~finite,
+            "",
+            np.where(
+                labels < 0,
+                "noise",
+                np.char.add(
+                    "C", np.char.zfill((labels + 1).astype(str), width)
+                ),
+            ),
+        ).astype(object)
+        col = f"cluster_{METHOD_TAGS[method]}"
+        self._df[col] = values
+        n_noise = int(((labels < 0) & finite).sum())
+
+        self._refresh_column_combos()
+        self._fill_table()
+        src = "calibrated" if calibrated else "raw"
+        if fmask is not None:
+            src += f", {int(fmask.sum()):,} filtered rows"
+        msg = f"{method}: {n_clusters} clusters on {src} G,S → {col}"
+        if n_noise:
+            msg += f" ({n_noise:,} noise points)"
+        if self._color_combo.currentText() == col:
+            self._on_plot()
+        else:
+            self._color_combo.setCurrentText(col)
+            if not self._plotted_once:
+                self._on_plot()
+        self._status.info(msg + ".")
 
     # ------------------------------------------------------------------ #
     # Data tools dialog                                                    #
@@ -932,9 +1382,15 @@ class PhasorAnalyzerPanel(QWidget):
         if not path:
             return
         try:
-            self._df.to_csv(path, index=False)
+            out = self._filtered_df()
+            out.to_csv(path, index=False)
+            note = (
+                f", filtered from {len(self._df):,}"
+                if len(out) != len(self._df)
+                else ""
+            )
             self._status.info(
-                f"Table saved: {Path(path).name} ({len(self._df):,} rows)"
+                f"Table saved: {Path(path).name} ({len(out):,} rows{note})"
             )
         except Exception as e:
             self._status.error(f"Save error: {e}")
@@ -955,6 +1411,70 @@ class _DataToolsDialog(QDialog):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
+
+        # ── Filter rows ────────────────────────────────────────────────
+        flt_box = QGroupBox("Filter rows")
+        apply_style(flt_box, S.GROUP_PRIMARY)
+        flt_box.setObjectName("plain")
+        flt_lay = QVBoxLayout(flt_box)
+        flt_lay.setSpacing(4)
+        flt_lay.setContentsMargins(6, 4, 6, 4)
+
+        b_row = QHBoxLayout()
+        self._flt_col = QComboBox()
+        self._flt_col.setMinimumWidth(80)
+        self._flt_col.currentTextChanged.connect(self._on_filter_col_changed)
+        b_row.addWidget(self._flt_col, 1)
+        self._flt_op = QComboBox()
+        self._flt_op.addItems(OPS)
+        self._flt_op.currentTextChanged.connect(self._on_filter_op_changed)
+        b_row.addWidget(self._flt_op)
+        self._flt_value = QLineEdit()
+        self._flt_value.setMinimumWidth(70)
+        self._flt_value.returnPressed.connect(self._on_filter_add)
+        b_row.addWidget(self._flt_value, 1)
+        add_btn = QPushButton("Add ▸")
+        add_btn.setToolTip(
+            "Append this condition to the expression (with 'and')"
+        )
+        add_btn.clicked.connect(self._on_filter_add)
+        b_row.addWidget(add_btn)
+        flt_lay.addLayout(b_row)
+
+        e_row = QHBoxLayout()
+        self._flt_expr = QLineEdit(self._panel._filter_expr)
+        self._flt_expr.setPlaceholderText(
+            "expression, e.g. tau_phi_ns > 2 and grp == 'A'"
+        )
+        self._flt_expr.setToolTip(
+            "pandas query expression — edit freely.\n"
+            "Combine with and / or / not and brackets. Examples:\n"
+            "  tau_phi_ns > 2 and tau_phi_ns < 4\n"
+            "  grp == 'A' or grp == 'B'\n"
+            "  photon_count_sum >= 1000\n"
+            "  dataset_name.str.contains('ctrl')\n"
+            "Column names with spaces go in `backticks`."
+        )
+        e_row.addWidget(self._flt_expr, 1)
+        flt_apply = QPushButton("Apply")
+        flt_apply.clicked.connect(self._on_filter_apply)
+        e_row.addWidget(flt_apply)
+        flt_clear = QPushButton("Clear")
+        flt_clear.clicked.connect(self._on_filter_clear)
+        e_row.addWidget(flt_clear)
+        flt_lay.addLayout(e_row)
+
+        self._flt_preview = QLabel("")
+        self._flt_preview.setStyleSheet(S.HINT)
+        self._flt_preview.setWordWrap(True)
+        flt_lay.addWidget(self._flt_preview)
+        root.addWidget(flt_box)
+
+        self._flt_timer = QTimer(self)
+        self._flt_timer.setSingleShot(True)
+        self._flt_timer.setInterval(250)
+        self._flt_timer.timeout.connect(self._update_filter_preview)
+        self._flt_expr.textChanged.connect(lambda *_: self._flt_timer.start())
 
         # ── Group from name ────────────────────────────────────────────
         grp_box = QGroupBox("Group from name")
@@ -1039,12 +1559,105 @@ class _DataToolsDialog(QDialog):
             return
         cols = list(df.columns)
         str_cols = [c for c in cols if df[c].dtype == object]
+        cur = self._flt_col.currentText()
+        self._flt_col.blockSignals(True)
+        self._flt_col.clear()
+        self._flt_col.addItems(cols)
+        self._flt_col.setCurrentIndex(max(0, self._flt_col.findText(cur)))
+        self._flt_col.blockSignals(False)
+        self._on_filter_col_changed()
+        self._update_filter_preview()
         self._grp_source_combo.clear()
         self._grp_source_combo.addItems(str_cols if str_cols else cols)
         self._comb_col1.clear()
         self._comb_col2.clear()
         self._comb_col1.addItems(cols)
         self._comb_col2.addItems(cols)
+
+    def _filter_col_numeric(self) -> bool:
+        df = self._panel._df
+        col = self._flt_col.currentText()
+        return (
+            df is not None
+            and col in df.columns
+            and pd.api.types.is_numeric_dtype(df[col])
+        )
+
+    def _on_filter_col_changed(self, *_):
+        """Hint the value field from the column: range or known values."""
+        df = self._panel._df
+        col = self._flt_col.currentText()
+        self._flt_value.setCompleter(None)
+        if df is None or col not in df.columns:
+            return
+        series = df[col]
+        if self._filter_col_numeric():
+            vals = pd.to_numeric(series, errors="coerce")
+            if vals.notna().any():
+                self._flt_value.setPlaceholderText(
+                    f"{vals.min():.4g} … {vals.max():.4g}"
+                )
+            if self._flt_op.currentText() in ("contains", "not contains"):
+                self._flt_op.setCurrentText(">")
+        else:
+            uniq = [str(v) for v in series.dropna().unique()[:200]]
+            self._flt_value.setPlaceholderText(
+                ", ".join(uniq[:3]) + (" …" if len(uniq) > 3 else "")
+            )
+            completer = QCompleter(uniq, self._flt_value)
+            completer.setCaseSensitivity(Qt.CaseInsensitive)
+            completer.setFilterMode(Qt.MatchContains)
+            self._flt_value.setCompleter(completer)
+            if self._flt_op.currentText() in (">", ">=", "<", "<="):
+                self._flt_op.setCurrentText("==")
+
+    def _on_filter_op_changed(self, op: str):
+        self._flt_value.setEnabled(op not in UNARY_OPS)
+
+    def _on_filter_add(self):
+        col = self._flt_col.currentText()
+        if not col:
+            return
+        op = self._flt_op.currentText()
+        value = self._flt_value.text().strip()
+        if op not in UNARY_OPS and not value:
+            self._flt_preview.setText("Enter a value.")
+            return
+        try:
+            clause = build_clause(col, op, value, self._filter_col_numeric())
+        except ValueError as e:
+            self._flt_preview.setText(str(e))
+            return
+        expr = self._flt_expr.text().strip()
+        self._flt_expr.setText(f"{expr} and {clause}" if expr else clause)
+        self._flt_value.clear()
+
+    def _update_filter_preview(self):
+        df = self._panel._df
+        expr = self._flt_expr.text().strip()
+        if df is None or not expr:
+            self._flt_preview.setStyleSheet(S.HINT)
+            n = 0 if df is None else len(df)
+            self._flt_preview.setText(f"No filter — all {n:,} rows.")
+            return
+        try:
+            mask = evaluate_filter(df, expr)
+        except ValueError as e:
+            self._flt_preview.setStyleSheet("color: #e06060;")
+            self._flt_preview.setText(f"Error: {e}")
+            return
+        self._flt_preview.setStyleSheet(S.HINT)
+        self._flt_preview.setText(
+            f"Matches {int(mask.sum()):,} / {len(mask):,} rows."
+        )
+
+    def _on_filter_apply(self):
+        if self._panel.set_filter(self._flt_expr.text()):
+            self._update_filter_preview()
+
+    def _on_filter_clear(self):
+        self._flt_expr.clear()
+        self._panel.set_filter("")
 
     def _extract_groups(self) -> pd.Series | None:
         df = self._panel._df
