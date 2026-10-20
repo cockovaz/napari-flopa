@@ -347,11 +347,26 @@ class _ImagesSection(_ExportSection):
         self._flim_chk.setChecked(True)
         self._int_chk.setChecked(True)
         self._lt_chk.setChecked(True)
-        for w in (self._flim_chk, self._int_chk, self._lt_chk):
+        self._lt_corr_chk = QCheckBox("Calibrated")
+        self._lt_corr_chk.setChecked(True)
+        self._lt_corr_chk.setToolTip(
+            "Subtract the IRF delay derived from the calibration factor in the "
+            "config\nfrom lifetime and FLIM RGB images (values below 0 wrap by "
+            "one period).\nNo effect when the factor is 1. Adds '_cal' to the "
+            "file names."
+        )
+        for w in (
+            self._flim_chk,
+            self._int_chk,
+            self._lt_chk,
+            self._lt_corr_chk,
+        ):
             row1.addWidget(w)
             w.setStyleSheet("font-weight: normal;")
         row1.addStretch()
         lay.addLayout(row1)
+        self._lt_chk.toggled.connect(self._update_lt_corr_enabled)
+        self._flim_chk.toggled.connect(self._update_lt_corr_enabled)
 
         # FLIM RGB colormap + contrast
         row2 = QHBoxLayout()
@@ -438,6 +453,11 @@ class _ImagesSection(_ExportSection):
         sp.setStyleSheet("font-weight: normal;")
         return sp
 
+    def _update_lt_corr_enabled(self, *_):
+        self._lt_corr_chk.setEnabled(
+            self._lt_chk.isChecked() or self._flim_chk.isChecked()
+        )
+
     def _on_flim_toggled(self, on: bool):
         for w in (
             self._cmap_combo,
@@ -457,6 +477,7 @@ class _ImagesSection(_ExportSection):
             export_flim=self._flim_chk.isChecked(),
             export_int=self._int_chk.isChecked(),
             export_lt=self._lt_chk.isChecked(),
+            lt_corrected=self._lt_corr_chk.isChecked(),
             lt_ns_lo=_opt(self._lt_lo),
             lt_ns_hi=_opt(self._lt_hi),
             int_lo=_opt(self._int_lo),
@@ -732,7 +753,7 @@ class _BatchWorker(QObject):
         phasor_file_rows: list[dict] = []
 
         for cfg in p.get("image_configs", []):
-            self._export_images(ds, cfg, stem, out_dir)
+            self._export_images(ds, cfg, stem, out_dir, cal)
 
         for cfg in p.get("phasor_configs", []):
             rows = self._extract_phasor(ds, cfg, stem, lbl_paths, lbl_dir)
@@ -764,12 +785,22 @@ class _BatchWorker(QObject):
         return phasor_file_rows, decay_time, decay_cols
 
     # image export
-    def _export_images(self, ds, cfg: dict, stem: str, out_dir: Path):
-        """Write TIFF images for one aggregation config pass."""
+    def _export_images(
+        self, ds, cfg: dict, stem: str, out_dir: Path, cal: complex
+    ):
+        """Write TIFF images for one aggregation config pass.
+
+        With ``lt_corrected`` (default on), lifetimes have the IRF delay from
+        the calibration factor *cal* subtracted, wrapped by one period.
+        """
         from napari_flopa.core.processing.image_utils import (
             aggregate_dataset,
             smooth_count,
             smooth_weighted,
+        )
+        from napari_flopa.core.processing.phasor import (
+            correct_lifetime,
+            lifetime_correction,
         )
 
         try:
@@ -791,6 +822,12 @@ class _BatchWorker(QObject):
         if cfg.get("export_flim") and "mean_arrival_time" in ds:
             lt_lut = colormap_to_lut(cfg.get("cmap", "rainbow"))
 
+        lt_corr = (
+            lifetime_correction(ds, cal)
+            if cfg.get("lt_corrected", True)
+            else None
+        )
+
         for combo, suffix in free_combos:
             sliced = ds.isel(**combo) if combo else ds
             agg = aggregate_dataset(sliced, sum_dims) if sum_dims else sliced
@@ -806,6 +843,7 @@ class _BatchWorker(QObject):
                 else None
             )
 
+            raw_ci = ci
             sm_tag = ""
             if cfg.get("smooth_lt") and cl is not None and ci is not None:
                 k_lt = cfg.get("smooth_lt_k", 3)
@@ -815,6 +853,11 @@ class _BatchWorker(QObject):
                 k_int = cfg.get("smooth_int_k", 3)
                 ci = smooth_count(ci, size=k_int)
                 sm_tag += f"_smInt{k_int}"
+
+            cl_ns = cl.astype(np.float32) * res_ns if cl is not None else None
+            if lt_corr is not None and cl_ns is not None:
+                cl_ns = correct_lifetime(cl_ns, *lt_corr, counts=raw_ci)
+                sm_tag += "_cal"
 
             pfx = f"{stem}_{suffix}{sm_tag}" if suffix else f"{stem}{sm_tag}"
 
@@ -826,20 +869,19 @@ class _BatchWorker(QObject):
                     check_contrast=False,
                 )
 
-            if cfg.get("export_lt") and cl is not None:
+            if cfg.get("export_lt") and cl_ns is not None:
                 imsave(
                     out_dir / f"{pfx}_lifetime.tif",
-                    (cl * res_ns).astype(np.float32),
+                    cl_ns,
                     check_contrast=False,
                 )
 
             if (
                 cfg.get("export_flim")
                 and ci is not None
-                and cl is not None
+                and cl_ns is not None
                 and lt_lut is not None
             ):
-                cl_ns = cl.astype(np.float32) * res_ns
                 ci_f = ci.astype(np.float32)
                 lt_auto = auto_range(cl_ns)
                 int_auto = auto_range(ci_f)
@@ -863,6 +905,7 @@ class _BatchWorker(QObject):
                         (lt_lo, lt_hi),
                         (int_lo, int_hi),
                         unit=lt_unit,
+                        irf_delay=lt_corr[0] if lt_corr else None,
                     ),
                     encoding="utf-8",
                 )

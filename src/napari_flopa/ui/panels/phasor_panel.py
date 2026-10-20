@@ -443,6 +443,9 @@ class PhasorPanel(QWidget):
             elif isinstance(w, (QSpinBox, QDoubleSpinBox)):
                 w.valueChanged.connect(self._on_setting_changed)
 
+        self._cal_group.toggled.connect(self.state.set_calib_enabled)
+        self.state.set_calib_enabled(self._cal_group.isChecked())
+
         self._per_pixel_radio.toggled.connect(self._update_control_states)
         self._mask_combo.currentTextChanged.connect(
             self._update_control_states

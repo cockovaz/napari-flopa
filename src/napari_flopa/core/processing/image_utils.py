@@ -160,19 +160,27 @@ def flim_export_info(
     lt_range: tuple[float, float],
     int_range: tuple[float, float],
     unit: str = "ch",
+    irf_delay: float | None = None,
 ) -> str:
     """Sidecar text describing how a FLIM RGB image was composited.
 
     An exported RGB is not quantitative on its own — these are the numbers
     needed to read it back. Shared by the interactive and batch exports so the
-    two sidecars stay comparable.
+    two sidecars stay comparable. *irf_delay* is the delay subtracted from the
+    lifetime, or None when it is uncorrected.
     """
     lt_lo, lt_hi = lt_range
     int_lo, int_hi = int_range
+    corr = (
+        "none"
+        if irf_delay is None
+        else f"IRF delay {irf_delay:.4g} {unit} subtracted (wrapped by period)"
+    )
     return (
         "FLIM RGB export\n"
         f"lifetime colormap : {cmap}\n"
         f"lifetime range    : {lt_lo:.4g} .. {lt_hi:.4g} {unit}\n"
+        f"lifetime correct. : {corr}\n"
         f"intensity range   : {int_lo:.4g} .. {int_hi:.4g} photon counts\n"
     )
 

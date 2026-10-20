@@ -31,6 +31,10 @@ from napari_flopa.core.processing.image_utils import (
     smooth_count,
     smooth_weighted,
 )
+from napari_flopa.core.processing.phasor import (
+    correct_lifetime,
+    lifetime_correction,
+)
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import S, apply_style
 from napari_flopa.ui.widgets.histogram_slider import HistogramSlider
@@ -79,6 +83,12 @@ class FlimViewPanel(QWidget):
         # self._smooth_cache = {}  # (type, id, shape, k) → smoothed array (caching disabled)
         self._layers_created = False
         self.selectors = {}
+        self.lt_corrected = None
+        self._lt_group = None
+        self._lifetime_unit = "ch"
+        # Set when the lifetime value range shifts (correction toggled or the
+        # factor changed), so the next slice re-runs lifetime auto-contrast.
+        self._lt_recontrast = False
 
         # Debounce timer kept as instance attr so it is not GC-collected
         self._debounce = QTimer()
@@ -87,6 +97,8 @@ class FlimViewPanel(QWidget):
 
         self._build_ui()
         self.setVisible(False)
+        self.state.calib_factor_changed.connect(self._on_calib_changed)
+        self.state.calib_enabled_changed.connect(self._on_calib_changed)
 
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
@@ -316,6 +328,7 @@ class FlimViewPanel(QWidget):
 
         # ---- Col 2: Lifetime ----
         lt_group = QGroupBox(f"Lifetime ({lifetime_unit})")
+        self._lt_group = lt_group
         apply_style(lt_group, S.GROUP_PRIMARY)
         lt_group.setEnabled(has_lifetime)
         lg = QHBoxLayout(lt_group)
@@ -344,6 +357,10 @@ class FlimViewPanel(QWidget):
         self.show_lifetime.setChecked(True)
         self.show_lifetime.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         lt_row1.addWidget(self.show_lifetime)
+        self.lt_corrected = QCheckBox("Calibrated")
+        self.lt_corrected.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        lt_row1.addWidget(self.lt_corrected)
+        lt_row1.addStretch()
         self.smooth_lt_check = QCheckBox("Smooth")
         self.smooth_lt_check.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         lt_row1.addWidget(self.smooth_lt_check)
@@ -741,6 +758,14 @@ class FlimViewPanel(QWidget):
                     if s_lt is not None
                     else None
                 )
+                corr = self._active_lt_correction()
+                if corr is not None and self._current_lifetime is not None:
+                    counts = (
+                        np.atleast_2d(raw_int) if raw_int is not None else None
+                    )
+                    self._current_lifetime = correct_lifetime(
+                        self._current_lifetime, *corr, counts=counts
+                    )
                 # Contrast survives every change alike — frame, sequence,
                 # detector, aggregation, smoothing — so aggregating and
                 # un-aggregating lands back where you were. It is only
@@ -763,10 +788,14 @@ class FlimViewPanel(QWidget):
                     if data is None:
                         continue
                     slider.update_data_keep_range(data)
-                    if first or live.isChecked():
+                    shifted = (
+                        slider is self.lifetime_slider and self._lt_recontrast
+                    )
+                    if first or live.isChecked() or shifted:
                         slider.set_auto_contrast()
                     slider.reset_mask_range()
                 _first_slice[0] = False
+                self._lt_recontrast = False
                 _display_data()
                 # Notify phasor/decay panels about current view settings
                 self.view_changed.emit(
@@ -911,6 +940,7 @@ class FlimViewPanel(QWidget):
             self.smooth_lt_check.toggled.connect(_queue_slice)
             self.smooth_lt_spin.valueChanged.connect(_queue_slice)
             self.show_lifetime.toggled.connect(_visibility_changed)
+            self.lt_corrected.toggled.connect(self._on_lt_corrected_toggled)
             self.lt_colormap.currentTextChanged.connect(_update_colormaps)
             self.lifetime_slider.valueChanged.connect(_fast_display)
             self.lifetime_slider.sliderReleased.connect(_fast_display)
@@ -918,9 +948,58 @@ class FlimViewPanel(QWidget):
         self._lut = (
             _make_lut(self.lt_colormap.currentText()) if has_lifetime else None
         )
+        self._update_lt_corrected_state()
         _slice()
         _update_colormaps()
         self._update_view_label()
+
+    def _lt_correction(self) -> tuple[float, float] | None:
+        """``(delay, period)`` the calibration allows, ignoring the checkbox."""
+        if self.dataset is None or not self.state.calib_enabled:
+            return None
+        return lifetime_correction(self.dataset, self.state.calib_factor)
+
+    def _active_lt_correction(self) -> tuple[float, float] | None:
+        if self.lt_corrected is None or not self.lt_corrected.isChecked():
+            return None
+        return self._lt_correction()
+
+    def _update_lt_corrected_state(self):
+        if self.lt_corrected is None:
+            return
+        corr = self._lt_correction()
+        unit = self._lifetime_unit
+        self.lt_corrected.setEnabled(corr is not None)
+        if corr is None:
+            self.lt_corrected.setToolTip(
+                "Subtract the IRF delay derived from the phasor calibration.\n"
+                "Enable Calibration in the Phasor tab (with a factor other "
+                "than 1) to use it."
+            )
+        else:
+            self.lt_corrected.setToolTip(
+                f"Subtract IRF delay {corr[0]:.3f} {unit} (from the phasor "
+                "calibration).\nValues below 0 wrap by one laser period "
+                f"({corr[1]:.3f} {unit})."
+            )
+        if self._lt_group is not None:
+            on = corr is not None and self.lt_corrected.isChecked()
+            self._lt_group.setTitle(
+                f"Lifetime ({unit}, calibrated)"
+                if on
+                else f"Lifetime ({unit})"
+            )
+
+    def _on_lt_corrected_toggled(self, _checked: bool):
+        self._update_lt_corrected_state()
+        self._lt_recontrast = True
+        self._debounce.start()
+
+    def _on_calib_changed(self, *_):
+        self._update_lt_corrected_state()
+        if self.lt_corrected is not None and self.lt_corrected.isChecked():
+            self._lt_recontrast = True
+            self._debounce.start()
 
     def _update_view_label(self):
         """Refresh the current-view line, e.g. ``View:  f0  s0  d1  l  p``.
@@ -1052,9 +1131,11 @@ class FlimViewPanel(QWidget):
 
     def _flim_export_info(self) -> str:
         """Human-readable mapping baked into the FLIM RGB (for the sidecar)."""
+        corr = self._active_lt_correction()
         return flim_export_info(
             self.lt_colormap.currentText(),
             self.lifetime_slider.value(),
             self.intensity_slider.value(),
-            getattr(self, "_lifetime_unit", "ch"),
+            self._lifetime_unit,
+            irf_delay=corr[0] if corr else None,
         )

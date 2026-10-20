@@ -102,13 +102,15 @@ def segment_profiles(
     *,
     chunk_records: int = DEFAULT_CHUNK_RECORDS,
     skip_chunks: int = 0,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """Forward and backward line profiles at the delays set on *config*.
 
-    Returns ``(forward, backward, time_axis)``. The time axis holds the centre
-    of each pixel's acceptance window in seconds from the line start marker —
-    the same reference the pre-alignment plot uses — and describes the forward
-    sweep; the backward one runs the other way through the same window.
+    Returns ``(forward, backward, time_axis, line_duration_s)``. The time axis
+    holds the centre of each pixel's acceptance window in seconds from the
+    line start marker — the same reference the pre-alignment plot uses — and
+    describes the forward sweep; the backward one runs the other way through
+    the same window. *line_duration_s* is the undelayed start-to-stop marker
+    time, i.e. where the stop marker really is.
     """
     sync_rate, wrap = _sync_rate_and_wrap(ptu_data)
     chunk, parity = _read_probe_chunk(
@@ -145,9 +147,10 @@ def segment_profiles(
         window / pixels
     )
     time_axis = centres / sync_rate
+    line_duration_s = float(config.line_duration) / sync_rate
 
     if parity == 0:
-        return even_lines, odd_lines, time_axis
+        return even_lines, odd_lines, time_axis, line_duration_s
     # The chunk starts on a backward line, so the reconstructor flipped the
     # wrong rows: the directions swap and both profiles come out mirrored.
-    return odd_lines[::-1], even_lines[::-1], time_axis
+    return odd_lines[::-1], even_lines[::-1], time_axis, line_duration_s

@@ -87,6 +87,53 @@ def calibration_factor(
     return complex(g_th, s_th) / measured
 
 
+def irf_delay_ns(
+    factor: complex, omega_per_channel: float, res_ns: float
+) -> float:
+    """IRF delay encoded in the phase of a calibration *factor*, in ns.
+
+    The phasor is built as ``exp(+iωt)``, so a delay Δ rotates it by +ωΔ and
+    the factor undoes that rotation: Δ = −arg(c)/ω. *omega_per_channel* must
+    be the one the phasor was reconstructed with (``ds["omega"]``).
+    """
+    return float(-np.angle(factor) / omega_per_channel * res_ns)
+
+
+def correct_lifetime(lt_ns, delay_ns: float, period_ns: float, counts=None):
+    """Subtract *delay_ns* from a lifetime image, wrapping into [0, period).
+
+    Values that would go negative wrap by one laser period, the circular
+    shift the Decay tab applies to curves. Pixels with zero *counts* stay 0.
+    """
+    out = np.mod(np.asarray(lt_ns, dtype=np.float32) - delay_ns, period_ns)
+    if counts is not None:
+        out[np.asarray(counts) == 0] = 0
+    return out
+
+
+def lifetime_correction(ds, factor: complex) -> tuple[float, float] | None:
+    """``(delay_ns, period_ns)`` for correcting *ds*'s lifetime, or None.
+
+    None when there is nothing to correct: identity factor, or a dataset
+    without the reconstruction ``omega`` or repetition rate.
+    """
+    if factor == 1 + 0j or "omega" not in ds:
+        return None
+    omega = float(ds["omega"].values)
+    ip = ds.attrs.get("instrument_params", {})
+    rep = float(ip.get("repetition_rate", 0) or 0)
+    if omega == 0 or rep <= 0:
+        return None
+    res_ns = float(ip.get("tcspc_resolution_ns", 1.0))
+    if ip.get("resolution_unit", "ns") == "ns":
+        period = 1e9 / rep
+    else:
+        # No resolution in the header: lifetimes are in channels, and the
+        # reconstruction omega is the only period estimate in those units.
+        period = 2 * np.pi / omega * res_ns
+    return irf_delay_ns(factor, omega, res_ns), period
+
+
 def component_fractions_2(
     g, s, tau1_ns: float, tau2_ns: float, f_rep_hz: float
 ):

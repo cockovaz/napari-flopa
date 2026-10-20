@@ -431,7 +431,7 @@ class AlignmentWizard(QDialog):
 
     @Slot(object)
     def _on_profiles_result(self, result):
-        forward, backward, time_axis = result
+        forward, backward, time_axis, line_duration_s = result
         time_us = np.asarray(time_axis, dtype=float) / US
 
         # Pixel index is a linear relabelling of the same axis, so the second
@@ -452,11 +452,10 @@ class AlignmentWizard(QDialog):
             lambda px: first + px * step,
         )
 
-        stop_us = float(time_us[-1]) + step * 0.5 if len(time_us) > 1 else 0.0
         self._show_profiles(
             time_us,
             [(forward, "forward"), (backward, "backward")],
-            np.array([stop_us]),
+            np.array([line_duration_s / US]),
         )
         self._tabs.setCurrentWidget(self._alignment_plot)
         self._status.info(

@@ -46,7 +46,7 @@ _MIN_BINS = 10
 _DENSE_MARKERS = ("line_start", "line_stop")
 
 #: Above this many markers in view the lines smear into a block.
-_MAX_MARKERS = 50
+_MAX_MARKERS = 1000
 
 
 def bin_step_for_window(window_s: float) -> float:

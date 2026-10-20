@@ -12,11 +12,13 @@ class FlopaState(QObject):
     Signals:
         dataset_changed — new xr.Dataset loaded (after reconstruction)
         calib_factor_changed — phasor calibration factor set by any panel
+        calib_enabled_changed — Phasor tab's Calibration box switched on/off
         file_loaded — a PTU was read in the File tab (before reconstruction)
     """
 
     dataset_changed = Signal()
     calib_factor_changed = Signal(object)  # complex
+    calib_enabled_changed = Signal(bool)
     file_loaded = Signal()  # File tab read a PTU — file_config() now has data
 
     def __init__(self):
@@ -26,6 +28,7 @@ class FlopaState(QObject):
         self.dataset: xr.Dataset | None = None
         self.frep_mhz: float = 40.0
         self.calib_factor: complex = 1.0 + 0j
+        self.calib_enabled: bool = False
         self.file_config_provider = None
         # Pull, like file_config_provider: returns the File tab's live
         # {"ptu_path": Path | None, "chunk_size": int}. The path and the chunk
@@ -46,6 +49,10 @@ class FlopaState(QObject):
     def set_calib_factor(self, factor: complex):
         self.calib_factor = complex(factor)
         self.calib_factor_changed.emit(self.calib_factor)
+
+    def set_calib_enabled(self, on: bool):
+        self.calib_enabled = bool(on)
+        self.calib_enabled_changed.emit(self.calib_enabled)
 
     # Accessors                                                            #
 
