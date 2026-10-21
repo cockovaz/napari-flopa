@@ -72,11 +72,17 @@ except ImportError:
     )
 
 from napari_flopa.core.processing.phasor import (
+    apply_calibration,
     calibration_factor,
-    lifetime_ticks,
 )
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
+from napari_flopa.ui.widgets.phasor_axes import (
+    count_outside,
+    draw_lifetime_ticks,
+    draw_semicircle,
+    finalise_phasor_axes,
+)
 from napari_flopa.ui.widgets.status_label import StatusLabel
 
 # Scatter subsample cap — display only; the CSV export always holds every
@@ -180,7 +186,7 @@ class PhasorPanel(QWidget):
         # Plot and Save), full explanation in the tooltip.
         self._lifetimes_check = QCheckBox("τ marks")
         self._lifetimes_check.setToolTip(
-            "Overlay mono-exponential lifetime reference marks on the "
+            "Overlay mono-exponential lifetime reference marks (ns) on the "
             "universal semicircle."
         )
         tb.addWidget(self._lifetimes_check)
@@ -714,11 +720,12 @@ class PhasorPanel(QWidget):
             phasor_s = phasor_c_smooth.imag
 
         # ── Calibration ─────────────────────────────────────────────────
-        phasor_c = phasor_g + 1j * phasor_s
         if self._cal_group.isChecked() and self._calib_factor != (1.0 + 0j):
-            phasor_c = phasor_c * self._calib_factor
-        phasor_g = phasor_c.real.astype(np.float32)
-        phasor_s = phasor_c.imag.astype(np.float32)
+            phasor_g, phasor_s = apply_calibration(
+                phasor_g, phasor_s, self._calib_factor
+            )
+        phasor_g = np.asarray(phasor_g, dtype=np.float32)
+        phasor_s = np.asarray(phasor_s, dtype=np.float32)
 
         shape_2d = phasor_g.shape
 
@@ -785,10 +792,9 @@ class PhasorPanel(QWidget):
                 photons_out.append(float(pc_arr[valid].sum()))
                 areas_out.append(int(valid.sum()))
                 colors_out.append((1.0, 1.0, 1.0, 0.9))  # white
-                lt_v = lt_2d[valid] if lt_2d is not None else None
                 lt_out.append(
-                    float(np.nanmean(lt_v))
-                    if lt_v is not None
+                    float(average_phasor(lt_2d, pc_arr, mask=valid))
+                    if lt_2d is not None
                     else float("nan")
                 )
             else:
@@ -810,10 +816,9 @@ class PhasorPanel(QWidget):
                     labels_out.append(int(lbl))
                     photons_out.append(float(pc_arr[valid].sum()))
                     areas_out.append(int(m.sum()))
-                    lt_v = lt_2d[valid] if lt_2d is not None else None
                     lt_out.append(
-                        float(np.nanmean(lt_v))
-                        if lt_v is not None
+                        float(average_phasor(lt_2d, pc_arr, mask=valid))
+                        if lt_2d is not None
                         else float("nan")
                     )
                     rgba = _get_napari_color(mask_layer, int(lbl))
@@ -970,19 +975,28 @@ class PhasorPanel(QWidget):
         self._stale.setToolTip("Plot is up to date.")
         self._stale.setVisible(True)
         self._roi_btn.setEnabled(True)
+        # Points outside the fixed axes are drawn but not visible, so they
+        # are left out of the plotted count and reported separately.
         n_plot = len(np.array(g_out).ravel())
+        n_vis = n_plot - count_outside(g_out, s_out)
         if per_object:
-            self._status.info(f"Plotted {n_plot:,} objects.")
+            msg, warn = f"Plotted {n_vis:,} objects.", False
+            n_out = n_plot - n_vis
         else:
             n_full = len(g_full)
             scope = " inside the mask" if mask_as_filter else ""
-            if n_plot < n_full:
-                self._status.warn(
-                    f"Plot subsampled: {n_plot:,} of {n_full:,} valid pixels"
-                    f"{scope} drawn. 'Save table' still exports all of them."
-                )
-            else:
-                self._status.info(f"Plotted {n_plot:,} pixels{scope}.")
+            warn = n_plot < n_full
+            msg = (
+                f"Plot subsampled: {n_vis:,} of {n_full:,} valid pixels"
+                f"{scope} drawn. 'Save table' still exports all of them."
+                if warn
+                else f"Plotted {n_vis:,} pixels{scope}."
+            )
+            n_out = count_outside(g_full, s_full)
+        if n_out:
+            msg += f" {n_out:,} outside the plot area (G/S beyond the axes)."
+            warn = True
+        (self._status.warn if warn else self._status.info)(msg)
 
     # ------------------------------------------------------------------ #
     # Drawing                                                              #
@@ -1015,19 +1029,9 @@ class PhasorPanel(QWidget):
         ax.set_facecolor(MPL.AXES_BG)
         fig.patch.set_facecolor(MPL.FIG_BG)
 
-        # Universal semicircle
-        theta = np.linspace(0, np.pi, 300)
-        ax.plot(
-            0.5 + 0.5 * np.cos(theta),
-            0.5 * np.sin(theta),
-            color="white",
-            linewidth=0.8,
-            alpha=0.5,
-            zorder=5,
-        )
-
+        draw_semicircle(ax)
         if self._lifetimes_check.isChecked():
-            _draw_lifetime_ticks(ax, sync_hz)
+            draw_lifetime_ticks(ax, sync_hz)
 
         if len(g) == 0:
             self._finalise_axes(ax)
@@ -1177,14 +1181,7 @@ class PhasorPanel(QWidget):
         self._canvas.draw_idle()
 
     def _finalise_axes(self, ax):
-        ax.set_xlim(-0.05, 1.05)
-        ax.set_ylim(-0.05, 0.80)
-        ax.set_aspect("equal", adjustable="box")
-        ax.set_xlabel("G", color=MPL.TICK)
-        ax.set_ylabel("S", color=MPL.TICK)
-        ax.tick_params(colors=MPL.TICK, labelsize=8)
-        for sp in ax.spines.values():
-            sp.set_edgecolor(MPL.SPINE)
+        finalise_phasor_axes(ax)
 
     def _draw_empty(self):
         self._fig.clear()
@@ -1192,13 +1189,7 @@ class PhasorPanel(QWidget):
         self._ax = ax
         ax.set_facecolor(MPL.AXES_BG)
         self._fig.patch.set_facecolor(MPL.FIG_BG)
-        theta = np.linspace(0, np.pi, 300)
-        ax.plot(
-            0.5 + 0.5 * np.cos(theta),
-            0.5 * np.sin(theta),
-            color="#555555",
-            linewidth=0.8,
-        )
+        draw_semicircle(ax, color="#555555", alpha=1.0)
         ax.text(
             0.5,
             0.25,
@@ -1247,34 +1238,37 @@ class PhasorPanel(QWidget):
             if labels is not None and np.any(np.isfinite(labels))
             else []
         )
-        if len(unique) == 0:
-            # Whole image summary — intensity-weighted means to match per-object mode
-            self._table.setRowCount(1)
-            w = photons.astype(np.float64) if photons is not None else None
-            wsum = float(np.nansum(w)) if w is not None else 0.0
-            if wsum > 0:
-                g_val = float(np.nansum(g.astype(np.float64) * w) / wsum)
-                s_val = float(np.nansum(s.astype(np.float64) * w) / wsum)
-                lt_val = (
-                    float(np.nansum(lt.astype(np.float64) * w) / wsum)
-                    if lt is not None
-                    else float("nan")
-                )
-            else:
-                g_val = float(np.nanmean(g))
-                s_val = float(np.nanmean(s))
-                lt_val = (
-                    float(np.nanmean(lt)) if lt is not None else float("nan")
-                )
-            self._set_table_row(
-                0,
-                (1.0, 1.0, 1.0),
-                "All",
-                len(g),
-                g_val,
-                s_val,
+        from tttrkit.analysis.phasor import average_phasor
+
+        # Photon-weighted, exactly like per-object mode and Batch.
+        g = np.asarray(g, dtype=np.float64)
+        w = (
+            np.asarray(photons, dtype=np.float64)
+            if photons is not None
+            else np.ones(g.shape)
+        )
+        phasor_c = g + 1j * np.asarray(s, dtype=np.float64)
+
+        def _row_stats(m):
+            avg = average_phasor(phasor_c, w, mask=m)
+            lt_val = (
+                float(average_phasor(np.asarray(lt, float), w, mask=m))
+                if lt is not None
+                else float("nan")
+            )
+            used = (m if m is not None else True) & np.isfinite(phasor_c)
+            return (
+                float(avg.real),
+                float(avg.imag),
                 lt_val,
-                wsum if wsum > 0 else float(len(g)),
+                float(w[used].sum()),
+            )
+
+        if len(unique) == 0:
+            self._table.setRowCount(1)
+            g_val, s_val, lt_val, total = _row_stats(None)
+            self._set_table_row(
+                0, (1.0, 1.0, 1.0), "All", len(g), g_val, s_val, lt_val, total
             )
         else:
             self._table.setRowCount(len(unique))
@@ -1285,23 +1279,16 @@ class PhasorPanel(QWidget):
                     if mask_layer
                     else (0.5, 0.5, 0.5)
                 )
+                g_val, s_val, lt_val, total = _row_stats(m)
                 self._set_table_row(
                     r,
                     rgba,
                     str(lbl),
                     int(m.sum()),
-                    float(np.nanmean(g[m])),
-                    float(np.nanmean(s[m])),
-                    (
-                        float(np.nanmean(lt[m]))
-                        if lt is not None
-                        else float("nan")
-                    ),
-                    (
-                        float(np.nansum(photons[m]))
-                        if photons is not None
-                        else float(m.sum())
-                    ),
+                    g_val,
+                    s_val,
+                    lt_val,
+                    total,
                 )
         self._table.resizeColumnsToContents()
         self._table.setColumnWidth(0, 24)
@@ -1749,32 +1736,3 @@ def _get_napari_color(layer, label_id: int) -> tuple:
         return (float(rgba[0]), float(rgba[1]), float(rgba[2]), float(rgba[3]))
     except Exception:
         return (0.5, 0.5, 0.5, 0.8)
-
-
-def _draw_lifetime_ticks(ax, sync_hz: float):
-    """Draw the monoexponential reference marks. Positions come from core."""
-    center = np.array([0.5, 0.0])
-    tick_len = 0.018
-    for tau_ns, g_t, s_t in lifetime_ticks(sync_hz):
-        p = np.array([g_t, s_t])
-        v = p - center
-        nrm = np.linalg.norm(v)
-        if nrm < 1e-9:
-            continue
-        v_u = v / nrm
-        p1, p2 = p - tick_len / 2 * v_u, p + tick_len / 2 * v_u
-        ax.plot(
-            [p1[0], p2[0]], [p1[1], p2[1]], "w-", lw=0.8, alpha=0.6, zorder=4
-        )
-        lp = p + tick_len * 1.7 * v_u
-        ax.text(
-            lp[0],
-            lp[1],
-            f"{tau_ns}ns",
-            fontsize=6,
-            ha="center",
-            va="center",
-            color="white",
-            alpha=0.7,
-            zorder=4,
-        )

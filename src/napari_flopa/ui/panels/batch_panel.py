@@ -55,6 +55,7 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from tttrkit.analysis.phasor import average_phasor
 
 from napari_flopa.core.io.config import (
     DEFAULT_LASER_DUTY,
@@ -70,6 +71,7 @@ from napari_flopa.core.processing.image_utils import (
     flim_export_info,
     flim_rgb,
 )
+from napari_flopa.core.processing.phasor import apply_calibration
 from napari_flopa.core.processing.reconstruction import (
     DEFAULT_CHUNK_SIZE,
     MIN_CHUNK_SIZE,
@@ -719,17 +721,18 @@ class _BatchWorker(QObject):
         if cal != (1 + 0j) and "phasor_g" in ds and "phasor_s" in ds:
             import xarray as xr
 
-            raw = ds["phasor_g"].values + 1j * ds["phasor_s"].values
-            cal_result = raw * cal
+            g_cal, s_cal = apply_calibration(
+                ds["phasor_g"].values, ds["phasor_s"].values, cal
+            )
             ds = ds.assign(
                 {
                     "phasor_g": xr.DataArray(
-                        cal_result.real,
+                        g_cal,
                         dims=ds["phasor_g"].dims,
                         coords=ds["phasor_g"].coords,
                     ),
                     "phasor_s": xr.DataArray(
-                        cal_result.imag,
+                        s_cal,
                         dims=ds["phasor_s"].dims,
                         coords=ds["phasor_s"].coords,
                     ),
@@ -1019,17 +1022,20 @@ class _BatchWorker(QObject):
                                 )
                             )
                     else:
-                        w = pc_m
-                        ws = w.sum() or 1.0
+                        avg = average_phasor(
+                            g2d + 1j * s2d,
+                            pc2d if pc2d is not None else np.ones(g2d.shape),
+                            mask=mask,
+                        )
                         rows.append(
                             dict(
                                 ptu_file=stem,
                                 labels_file=lbl_name,
                                 agg=agg_label_full,
                                 label_id=int(lid),
-                                g=float((g_m * w).sum() / ws),
-                                s=float((s_m * w).sum() / ws),
-                                photon_count=float(ws),
+                                g=float(avg.real),
+                                s=float(avg.imag),
+                                photon_count=float(pc_m.sum()),
                                 area_pixels=int(valid.sum()),
                             )
                         )

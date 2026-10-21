@@ -47,10 +47,10 @@ from napari_flopa.core.processing.clustering import (
     method_available,
 )
 from napari_flopa.core.processing.phasor import (
+    apply_calibration,
     calibration_factor,
     component_fractions_2,
     component_fractions_3,
-    lifetime_ticks,
     monoexp_phasor,
     phasor_lifetimes,
 )
@@ -69,12 +69,32 @@ from napari_flopa.core.processing.table_filter import (
 )
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
+from napari_flopa.ui.widgets.phasor_axes import (
+    count_outside,
+    draw_lifetime_ticks,
+    draw_semicircle,
+    finalise_phasor_axes,
+)
 from napari_flopa.ui.widgets.status_label import StatusLabel
 
 _MAX_TABLE_ROWS = 50_000
 _MAX_SCATTER = 300_000
 #: Beyond this many groups the per-group overlays become unreadable.
 _MAX_OVERLAY_GROUPS = 30
+_OV_SAME_AS_COLOR = "Same as color"
+_OV_ALL_POINTS = "All points"
+_CMAPS = ("tab10", "Set1", "viridis", "plasma", "inferno", "hot", "rainbow")
+
+
+def _categorical_colors(unique: list[str], cmap_name: str) -> dict:
+    """Colour per category: qualitative maps cycle, continuous ones spread."""
+    import matplotlib.pyplot as plt
+
+    cmap = plt.get_cmap(cmap_name)
+    if getattr(cmap, "N", 256) <= 20:
+        return {v: cmap(i % cmap.N) for i, v in enumerate(unique)}
+    n = max(len(unique) - 1, 1)
+    return {v: cmap(i / n) for i, v in enumerate(unique)}
 
 
 def _auto_point_size(n: int) -> int:
@@ -171,7 +191,8 @@ class PhasorAnalyzerPanel(QWidget):
 
         # ── Color by ──────────────────────────────────────────────────
         color_row = QHBoxLayout()
-        color_row.addWidget(QLabel("Color by:"))
+        color_lbl = QLabel("Color by:")
+        color_row.addWidget(color_lbl)
         self._color_combo = QComboBox()
         self._color_combo.addItem("None")
         self._color_combo.setSizePolicy(
@@ -184,9 +205,7 @@ class PhasorAnalyzerPanel(QWidget):
         color_row.addWidget(self._unique_label)
         color_row.addWidget(QLabel("Cmap:"))
         self._cmap_combo = QComboBox()
-        self._cmap_combo.addItems(
-            ["tab10", "Set1", "viridis", "plasma", "inferno", "hot", "rainbow"]
-        )
+        self._cmap_combo.addItems(_CMAPS)
         self._cmap_combo.setMaximumWidth(85)
         color_row.addWidget(self._cmap_combo)
         self._legend_check = QCheckBox("Legend")
@@ -195,14 +214,51 @@ class PhasorAnalyzerPanel(QWidget):
         root.addLayout(color_row)
 
         # ── Per-group overlays ─────────────────────────────────────────
+        # Same column layout as the Color by row: label, column combo,
+        # a 60 px slot, Cmap, Legend.
         ov_row = QHBoxLayout()
-        ov_row.setSpacing(4)
         ov_lbl = QLabel("Overlays:")
         ov_lbl.setToolTip(
-            "Drawn per group of the 'Color by' column (categorical), or for "
-            "all points when coloring is None / continuous."
+            "Contours, centroids and ellipses drawn per group of the column "
+            "picked next to this label."
         )
+        label_w = max(ov_lbl.sizeHint().width(), color_lbl.sizeHint().width())
+        for lbl in (color_lbl, ov_lbl):
+            lbl.setFixedWidth(label_w)
         ov_row.addWidget(ov_lbl)
+        self._ov_group_combo = QComboBox()
+        self._ov_group_combo.addItems([_OV_SAME_AS_COLOR, _OV_ALL_POINTS])
+        self._ov_group_combo.setToolTip(
+            "Column that defines the overlay groups.\n"
+            f"'{_OV_SAME_AS_COLOR}' follows Color by (all points when "
+            "coloring is None or continuous)."
+        )
+        self._ov_group_combo.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed
+        )
+        ov_row.addWidget(self._ov_group_combo, 1)
+        ov_row.addSpacing(60 + ov_row.spacing())
+        ov_row.addWidget(QLabel("Cmap:"))
+        self._ov_cmap_combo = QComboBox()
+        self._ov_cmap_combo.addItems(_CMAPS)
+        self._ov_cmap_combo.setMaximumWidth(85)
+        self._ov_cmap_combo.setToolTip(
+            "Colours of the overlay groups when they come from a column other "
+            "than Color by"
+        )
+        ov_row.addWidget(self._ov_cmap_combo)
+        self._ov_legend_check = QCheckBox("Legend")
+        self._ov_legend_check.setChecked(True)
+        self._ov_legend_check.setToolTip(
+            "Name the overlay groups in the plot (only when they come from a "
+            "column other than Color by)"
+        )
+        ov_row.addWidget(self._ov_legend_check)
+        root.addLayout(ov_row)
+
+        ov_row2 = QHBoxLayout()
+        ov_row2.setSpacing(4)
+        ov_row2.addSpacing(label_w + ov_row.spacing())
         self._ov_contour = QCheckBox("Contours")
         self._ov_contour.setToolTip(
             "Density contours enclosing 25 / 50 / 75 % of each group's points"
@@ -213,10 +269,9 @@ class PhasorAnalyzerPanel(QWidget):
         self._ov_median.setToolTip("Group median (per axis), drawn as ✚")
         self._ov_ellipse = QCheckBox("Ellipse")
         self._ov_ellipse.setToolTip("Covariance ellipse of each group")
-        self._ov_sigma = QSpinBox()
-        self._ov_sigma.setRange(1, 3)
-        self._ov_sigma.setValue(2)
-        self._ov_sigma.setSuffix(" σ")
+        self._ov_sigma = QComboBox()
+        self._ov_sigma.addItems(["1σ", "2σ", "3σ"])
+        self._ov_sigma.setCurrentIndex(1)
         self._ov_sigma.setToolTip(
             "Ellipse size: 1σ ≈ 39 %, 2σ ≈ 86 %, 3σ ≈ 99 % of a 2-D Gaussian"
         )
@@ -229,9 +284,10 @@ class PhasorAnalyzerPanel(QWidget):
             self._ov_ellipse,
             self._ov_sigma,
         ):
-            ov_row.addWidget(w)
-        ov_row.addStretch()
-        root.addLayout(ov_row)
+            ov_row2.addWidget(w)
+        ov_row2.addStretch()
+        root.addLayout(ov_row2)
+        self._update_overlay_controls()
 
         # ── f_rep + τ marks ────────────────────────────────────────────
         freq_row = QHBoxLayout()
@@ -244,7 +300,7 @@ class PhasorAnalyzerPanel(QWidget):
         freq_row.addWidget(self._frep_spin)
         self._lifetimes_check = QCheckBox("τ marks")
         self._lifetimes_check.setToolTip(
-            "Overlay mono-exponential lifetime reference marks on the "
+            "Overlay mono-exponential lifetime reference marks (ns) on the "
             "universal semicircle."
         )
         freq_row.addWidget(self._lifetimes_check)
@@ -254,7 +310,7 @@ class PhasorAnalyzerPanel(QWidget):
         # ── Calibration factor ─────────────────────────────────────────
         factor_row = QHBoxLayout()
         factor_row.setSpacing(4)
-        factor_row.addWidget(QLabel("Factor:"))
+        factor_row.addWidget(QLabel("Calibration factor:"))
         self._calib_display = QLineEdit(self._fmt_complex(self._calib_factor))
         self._calib_display.setReadOnly(True)
         self._calib_display.setStyleSheet(S.DISPLAY)
@@ -285,15 +341,19 @@ class PhasorAnalyzerPanel(QWidget):
         )
         factor_row.addWidget(self._apply_cal_check)
         factor_row.addStretch()
-        self._lt_btn = QPushButton("Phase / Mod. τ")
+        root.addLayout(factor_row)
+
+        lt_row = QHBoxLayout()
+        self._lt_btn = QPushButton("Compute phase / modulation τ")
         self._lt_btn.setToolTip(
             "Add tau_phi_ns / tau_mod_ns columns (phase and modulation "
             "lifetimes).\nThey use calibrated G,S when Apply is on, and "
             "follow later calibration and f_rep changes."
         )
         self._lt_btn.clicked.connect(self._on_compute_lifetimes)
-        factor_row.addWidget(self._lt_btn)
-        root.addLayout(factor_row)
+        lt_row.addWidget(self._lt_btn)
+        lt_row.addStretch()
+        root.addLayout(lt_row)
 
         # ── Components ─────────────────────────────────────────────────
         comp_box = QGroupBox("Component fractions")
@@ -316,17 +376,20 @@ class PhasorAnalyzerPanel(QWidget):
             tau_row.addWidget(QLabel(f"τ{i + 1}:"))
             tau_row.addWidget(sp, stretch=1)
             self._tau_spins.append(sp)
-        comp_lay.addLayout(tau_row)
-
-        comp_btn_row = QHBoxLayout()
-        self._comp_compute_btn = QPushButton("Compute fractions")
+        self._comp_compute_btn = QPushButton("Compute")
+        self._comp_compute_btn.setToolTip(
+            "Add f1/f2(/f3) columns (+ residual for 2 components) from the "
+            "plotted G,S. Set at least two non-zero lifetimes (ns)."
+        )
         self._comp_compute_btn.clicked.connect(self._on_compute_fractions)
-        comp_btn_row.addWidget(self._comp_compute_btn)
-        self._comp_show_check = QCheckBox("Show on plot")
+        tau_row.addWidget(self._comp_compute_btn)
+        self._comp_show_check = QCheckBox("Show")
+        self._comp_show_check.setToolTip(
+            "Draw the component positions and their line / triangle on the plot"
+        )
         self._comp_show_check.setChecked(True)
-        comp_btn_row.addWidget(self._comp_show_check)
-        comp_btn_row.addStretch()
-        comp_lay.addLayout(comp_btn_row)
+        tau_row.addWidget(self._comp_show_check)
+        comp_lay.addLayout(tau_row)
 
         self._comp_group = comp_box
         root.addWidget(comp_box)
@@ -360,6 +423,9 @@ class PhasorAnalyzerPanel(QWidget):
             self._rebuild_cluster_params
         )
         cl_row.addWidget(self._cl_method)
+        self._cl_params_lay = QHBoxLayout()
+        self._cl_params_lay.setSpacing(4)
+        cl_row.addLayout(self._cl_params_lay)
         self._cl_run_btn = QPushButton("Run")
         self._cl_run_btn.setToolTip(
             "Cluster the plotted G,S (calibrated when Apply is on), ignoring "
@@ -369,10 +435,6 @@ class PhasorAnalyzerPanel(QWidget):
         cl_row.addStretch()
         cl_row.addWidget(self._cl_run_btn)
         cl_lay.addLayout(cl_row)
-
-        self._cl_params_lay = QHBoxLayout()
-        self._cl_params_lay.setSpacing(4)
-        cl_lay.addLayout(self._cl_params_lay)
         self._rebuild_cluster_params()
 
         root.addWidget(cl_box)
@@ -445,7 +507,20 @@ class PhasorAnalyzerPanel(QWidget):
             self._ov_ellipse,
         ):
             w.toggled.connect(self._on_setting_changed)
-        self._ov_sigma.valueChanged.connect(self._on_setting_changed)
+        self._ov_sigma.currentIndexChanged.connect(self._on_setting_changed)
+        self._ov_group_combo.currentTextChanged.connect(
+            self._on_setting_changed
+        )
+        self._ov_cmap_combo.currentTextChanged.connect(
+            self._on_setting_changed
+        )
+        self._ov_legend_check.toggled.connect(self._on_setting_changed)
+        self._ov_group_combo.currentTextChanged.connect(
+            self._update_overlay_controls
+        )
+        self._color_combo.currentTextChanged.connect(
+            self._update_overlay_controls
+        )
         self._apply_cal_check.toggled.connect(self._on_apply_cal_toggled)
         self._comp_show_check.toggled.connect(self._on_setting_changed)
         self._comp_group.toggled.connect(self._on_setting_changed)
@@ -525,6 +600,17 @@ class PhasorAnalyzerPanel(QWidget):
         idx = self._color_combo.findText(cur_color)
         self._color_combo.setCurrentIndex(max(0, idx))
         self._color_combo.blockSignals(False)
+
+        cur_ov = self._ov_group_combo.currentText()
+        self._ov_group_combo.blockSignals(True)
+        self._ov_group_combo.clear()
+        self._ov_group_combo.addItems([_OV_SAME_AS_COLOR, _OV_ALL_POINTS])
+        self._ov_group_combo.addItems(cols)
+        self._ov_group_combo.setCurrentIndex(
+            max(0, self._ov_group_combo.findText(cur_ov))
+        )
+        self._ov_group_combo.blockSignals(False)
+        self._update_overlay_controls()
         self._update_unique_label()
 
     # ------------------------------------------------------------------ #
@@ -708,19 +794,10 @@ class PhasorAnalyzerPanel(QWidget):
         fig.patch.set_facecolor(MPL.FIG_BG)
         self._highlight_artist = None
 
-        theta = np.linspace(0, np.pi, 300)
-        ax.plot(
-            0.5 + 0.5 * np.cos(theta),
-            0.5 * np.sin(theta),
-            color="white",
-            linewidth=0.8,
-            alpha=0.5,
-            zorder=5,
-        )
-
+        draw_semicircle(ax)
         f_rep_hz = self._frep_spin.value() * 1e6
         if self._lifetimes_check.isChecked():
-            _draw_lifetime_ticks(ax, f_rep_hz)
+            draw_lifetime_ticks(ax, f_rep_hz)
 
         pt_size = self._size_spin.value()
         self._group_colors = None
@@ -755,12 +832,19 @@ class PhasorAnalyzerPanel(QWidget):
 
         self._finalise_axes(ax)
         self._canvas.draw_idle()
-        if fmask is None:
-            self._status.info(f"Plotted {valid.sum():,} points.")
-        else:
-            self._status.info(
-                f"Plotted {valid.sum():,} of {len(valid):,} points (filtered)."
+        n_out = count_outside(g_v, s_v)
+        n_vis = int(valid.sum()) - n_out
+        msg = (
+            f"Plotted {n_vis:,} points"
+            if fmask is None
+            else f"Plotted {n_vis:,} of {len(valid):,} points (filtered)"
+        )
+        if n_out:
+            self._status.warn(
+                f"{msg} — {n_out:,} outside the plot area (G/S beyond the axes)."
             )
+        else:
+            self._status.info(msg + ".")
 
     def _plot_white(self, ax, g, s, pt_size):
         n = len(g)
@@ -774,23 +858,13 @@ class PhasorAnalyzerPanel(QWidget):
         )
 
     def _plot_categorical(self, ax, g, s, color_data, cmap_name, pt_size):
-        import matplotlib.pyplot as plt
-
         str_data = [str(v) for v in color_data]
         unique = sorted(set(str_data))
         if not unique:
             self._plot_white(ax, g, s, pt_size)
             return
 
-        cmap = plt.get_cmap(cmap_name)
-        n = len(unique)
-        if hasattr(cmap, "N") and cmap.N <= 20:
-            color_map = {v: cmap(i % cmap.N) for i, v in enumerate(unique)}
-        else:
-            color_map = {
-                v: cmap(i / max(n - 1, 1)) for i, v in enumerate(unique)
-            }
-
+        color_map = _categorical_colors(unique, cmap_name)
         rgba_arr = np.array([color_map[v] for v in str_data])
         self._group_colors = (color_map, np.asarray(str_data, dtype=object))
 
@@ -853,6 +927,45 @@ class PhasorAnalyzerPanel(QWidget):
             self._color_combo.currentText(), color=MPL.TICK, fontsize=8
         )
 
+    def _overlay_groups(self, n: int) -> tuple[list[tuple], bool]:
+        """``([(name, color, member_mask), …], own_colors)`` for overlays.
+
+        *n* is the number of plotted (valid) points. *own_colors* is True when
+        the groups come from a column other than the point colouring, so their
+        colours need a legend of their own.
+        """
+        choice = self._ov_group_combo.currentText()
+        everything = [("all", "white", np.ones(n, dtype=bool))]
+        color_col = self._color_combo.currentText()
+        if choice == _OV_SAME_AS_COLOR or (
+            choice == color_col and self._group_colors is not None
+        ):
+            if self._group_colors is None:
+                return everything, False
+            color_map, labels = self._group_colors
+            return [(v, c, labels == v) for v, c in color_map.items()], False
+        if choice == _OV_ALL_POINTS or choice not in self._df.columns:
+            return everything, False
+
+        labels = np.asarray(
+            [str(v) for v in self._df[choice].values[self._valid_mask]],
+            dtype=object,
+        )
+        unique = sorted(set(labels))
+        colors = _categorical_colors(unique, self._ov_cmap_combo.currentText())
+        return [(v, colors[v], labels == v) for v in unique], True
+
+    def _update_overlay_controls(self, *_):
+        """Overlay Cmap / Legend only matter for groups of their own."""
+        choice = self._ov_group_combo.currentText()
+        own = choice not in (
+            _OV_SAME_AS_COLOR,
+            _OV_ALL_POINTS,
+            self._color_combo.currentText(),
+        )
+        self._ov_cmap_combo.setEnabled(own)
+        self._ov_legend_check.setEnabled(own)
+
     def _draw_group_overlays(self, ax, g, s):
         """Contours / centroids / ellipses per colour group (*g*, *s* finite)."""
         contours = self._ov_contour.isChecked()
@@ -863,20 +976,34 @@ class PhasorAnalyzerPanel(QWidget):
             return
         from matplotlib.patches import Ellipse
 
-        if self._group_colors is not None:
-            color_map, labels = self._group_colors
-            groups = [(c, labels == v) for v, c in color_map.items()]
-        else:
-            groups = [("white", np.ones(g.size, dtype=bool))]
+        groups, own_colors = self._overlay_groups(g.size)
         if len(groups) > _MAX_OVERLAY_GROUPS:
             self._status.info(
                 f"Overlays skipped: {len(groups)} groups (limit "
                 f"{_MAX_OVERLAY_GROUPS})."
             )
             return
+        if own_colors and self._ov_legend_check.isChecked():
+            # The overlay groups don't match the point colours, so name them.
+            from matplotlib.lines import Line2D
 
-        n_sigma = self._ov_sigma.value()
-        for color, member in groups:
+            leg = ax.legend(
+                handles=[
+                    Line2D([], [], color=c, lw=1.4, label=name)
+                    for name, c, _ in groups
+                ],
+                loc="upper left",
+                fontsize=6,
+                frameon=False,
+                labelcolor="white",
+                title=self._ov_group_combo.currentText(),
+                title_fontsize=6,
+            )
+            leg.get_title().set_color("white")
+            leg.set_zorder(13)
+
+        n_sigma = self._ov_sigma.currentIndex() + 1
+        for _, color, member in groups:
             gg, ss = g[member], s[member]
             if gg.size < 3:
                 continue
@@ -944,8 +1071,18 @@ class PhasorAnalyzerPanel(QWidget):
                 zorder=13,
             )
 
+    def _component_taus(self) -> list[float]:
+        """Non-zero component lifetimes (ns), rounded to the boxes' precision.
+
+        Spin-box stepping accumulates float error (0.1 × 3 → 0.30000000000000004,
+        and back down to ~1e-17 instead of 0), so the raw values are rounded
+        to what the box shows before they are used or printed.
+        """
+        vals = (round(sp.value(), sp.decimals()) for sp in self._tau_spins)
+        return [v for v in vals if v > 0]
+
     def _draw_components(self, ax, f_rep_hz):
-        taus = [sp.value() for sp in self._tau_spins if sp.value() > 0]
+        taus = self._component_taus()
         if not taus:
             return
         points = []
@@ -963,7 +1100,7 @@ class PhasorAnalyzerPanel(QWidget):
                 zorder=15,
             )
             ax.annotate(
-                f"τ{i + 1}={tau_ns}ns",
+                f"τ{i + 1}={tau_ns:g}ns",
                 (g_c, s_c),
                 textcoords="offset points",
                 xytext=(5, 5),
@@ -994,14 +1131,7 @@ class PhasorAnalyzerPanel(QWidget):
                 )
 
     def _finalise_axes(self, ax):
-        ax.set_xlim(-0.05, 1.05)
-        ax.set_ylim(-0.05, 0.80)
-        ax.set_aspect("equal", adjustable="box")
-        ax.set_xlabel("G", color=MPL.TICK)
-        ax.set_ylabel("S", color=MPL.TICK)
-        ax.tick_params(colors=MPL.TICK, labelsize=8)
-        for sp in ax.spines.values():
-            sp.set_edgecolor(MPL.SPINE)
+        finalise_phasor_axes(ax)
 
     def _draw_empty(self):
         self._fig.clear()
@@ -1009,13 +1139,7 @@ class PhasorAnalyzerPanel(QWidget):
         self._ax = ax
         ax.set_facecolor(MPL.AXES_BG)
         self._fig.patch.set_facecolor(MPL.FIG_BG)
-        theta = np.linspace(0, np.pi, 300)
-        ax.plot(
-            0.5 + 0.5 * np.cos(theta),
-            0.5 * np.sin(theta),
-            color="#555555",
-            linewidth=0.8,
-        )
+        draw_semicircle(ax, color="#555555", alpha=1.0)
         ax.text(
             0.5,
             0.25,
@@ -1136,11 +1260,9 @@ class PhasorAnalyzerPanel(QWidget):
             self._apply_cal_check.blockSignals(False)
             return
         df = self._df
-        g = df["g"].values.astype(np.float64)
-        s = df["s"].values.astype(np.float64)
-        phasor_c = (g + 1j * s) * self._calib_factor
-        df["calibrated_g"] = phasor_c.real
-        df["calibrated_s"] = phasor_c.imag
+        df["calibrated_g"], df["calibrated_s"] = apply_calibration(
+            df["g"].values, df["s"].values, self._calib_factor
+        )
         self._status.info(
             "Calibration applied → calibrated_g, calibrated_s columns added."
         )
@@ -1198,7 +1320,7 @@ class PhasorAnalyzerPanel(QWidget):
         if self._df is None:
             self._status.info("Load a CSV first.")
             return
-        taus = [sp.value() for sp in self._tau_spins if sp.value() > 0]
+        taus = self._component_taus()
         if len(taus) < 2:
             self._status.error("Set at least two non-zero lifetimes.")
             return
@@ -1220,7 +1342,7 @@ class PhasorAnalyzerPanel(QWidget):
             valid = np.isfinite(f1).sum()
             self._status.info(
                 f"2-component fractions — {valid}/{len(f1)} valid "
-                f"(τ₁={taus[0]}, τ₂={taus[1]} ns)."
+                f"(τ₁={taus[0]:g}, τ₂={taus[1]:g} ns)."
             )
         else:
             f1, f2, f3 = component_fractions_3(
@@ -1234,7 +1356,7 @@ class PhasorAnalyzerPanel(QWidget):
             valid = np.isfinite(f1).sum()
             self._status.info(
                 f"3-component fractions — {valid}/{len(f1)} inside triangle "
-                f"(τ₁={taus[0]}, τ₂={taus[1]}, τ₃={taus[2]} ns)."
+                f"(τ₁={taus[0]:g}, τ₂={taus[1]:g}, τ₃={taus[2]:g} ns)."
             )
 
         self._refresh_column_combos()
@@ -1267,7 +1389,6 @@ class PhasorAnalyzerPanel(QWidget):
                 w.setValue(default)
             self._cl_params_lay.addWidget(w)
             self._cl_param_widgets[name] = w
-        self._cl_params_lay.addStretch()
 
     def _cluster_params(self) -> dict:
         out = {}
@@ -1735,39 +1856,3 @@ class _DataToolsDialog(QDialog):
         self._panel._fill_table()
         self._populate_combos()
         self._panel._status.info(f"Added column '{name}' = {col1} + {col2}.")
-
-
-# ── Module-level helpers ──────────────────────────────────────────────────
-
-
-def _draw_lifetime_ticks(ax, sync_hz: float):
-    center = np.array([0.5, 0.0])
-    tick_len = 0.018
-    for tau_ns, g_t, s_t in lifetime_ticks(sync_hz):
-        p = np.array([g_t, s_t])
-        v = p - center
-        nrm = np.linalg.norm(v)
-        if nrm < 1e-9:
-            continue
-        v_u = v / nrm
-        p1, p2 = p - tick_len / 2 * v_u, p + tick_len / 2 * v_u
-        ax.plot(
-            [p1[0], p2[0]],
-            [p1[1], p2[1]],
-            "w-",
-            lw=0.8,
-            alpha=0.6,
-            zorder=4,
-        )
-        lp = p + tick_len * 1.7 * v_u
-        ax.text(
-            lp[0],
-            lp[1],
-            f"{tau_ns}ns",
-            fontsize=6,
-            ha="center",
-            va="center",
-            color="white",
-            alpha=0.7,
-            zorder=4,
-        )

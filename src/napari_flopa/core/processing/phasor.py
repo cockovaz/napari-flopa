@@ -39,32 +39,64 @@ def monoexp_phasor(tau_s, f_rep_hz: float):
     return g, s
 
 
+def _tick_priority(tau_ns: float) -> int:
+    """Lower = kept first: 1 and 0.5 ns, then multiples of 10, 5, 2, 1."""
+    if tau_ns in (0.5, 1.0):
+        return 0
+    for rank, step in enumerate((10, 5, 2), start=1):
+        if tau_ns % step == 0:
+            return rank
+    return 4
+
+
 def lifetime_ticks(
-    f_rep_hz: float, tau_max_ns: int | None = None
-) -> list[tuple[int, float, float]]:
+    f_rep_hz: float,
+    tau_max_ns: int | None = None,
+    min_spacing: float = 0.05,
+) -> list[tuple[float, float, float]]:
     """Reference lifetimes to mark on the universal semicircle.
+
+    Candidates are 0.5 ns and every whole ns up to *tau_max_ns*. They are
+    accepted in order of roundness (see :func:`_tick_priority`) only if their
+    phasor point is at least *min_spacing* (phasor units) from every tick
+    already accepted, so low repetition rates — where long lifetimes crowd
+    towards the origin — automatically keep only the round values.
 
     Args:
         f_rep_hz: Excitation repetition rate in Hz.
-        tau_max_ns: Largest lifetime to include, in ns. Defaults to half the
-            laser period — beyond that the points crowd into the origin and
-            stop being readable (13 ns at 40 MHz).
+        tau_max_ns: Largest lifetime to consider, in ns. Defaults to half the
+            laser period.
+        min_spacing: Minimum distance between two tick points in (g, s).
 
     Returns:
-        ``[(tau_ns, g, s), …]`` for τ = 1 … *tau_max_ns* ns.
+        ``[(tau_ns, g, s), …]`` sorted by lifetime.
     """
     if f_rep_hz <= 0:
         return []
     if tau_max_ns is None:
-        period_ns = 1e9 / f_rep_hz
-        tau_max_ns = int(np.ceil(period_ns / 2))
+        tau_max_ns = int(np.ceil(1e9 / f_rep_hz / 2))
     tau_max_ns = max(1, int(tau_max_ns))
 
-    ticks = []
-    for tau_ns in range(1, tau_max_ns + 1):
+    candidates = [0.5] + [float(t) for t in range(1, tau_max_ns + 1)]
+    chosen: list[tuple[float, float, float]] = []
+    for tau_ns in sorted(candidates, key=lambda t: (_tick_priority(t), t)):
         g, s = monoexp_phasor(tau_ns * 1e-9, f_rep_hz)
-        ticks.append((tau_ns, g, s))
-    return ticks
+        forced = _tick_priority(tau_ns) == 0
+        if forced or all(
+            np.hypot(g - cg, s - cs) >= min_spacing for _, cg, cs in chosen
+        ):
+            chosen.append((tau_ns, g, s))
+    return sorted(chosen)
+
+
+def apply_calibration(g, s, factor: complex) -> tuple[np.ndarray, np.ndarray]:
+    """Calibrated phasor coordinates: ``(g + i·s) · factor``.
+
+    *factor* is the complex value from :func:`calibration_factor` (rotation by
+    the IRF phase plus modulation scaling). NaNs stay NaN.
+    """
+    c = (np.asarray(g, dtype=float) + 1j * np.asarray(s, dtype=float)) * factor
+    return c.real, c.imag
 
 
 def calibration_factor(
