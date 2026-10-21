@@ -24,7 +24,6 @@ class FlopaState(QObject):
     def __init__(self):
         super().__init__()
 
-        # --- Dataset ---
         self.dataset: xr.Dataset | None = None
         self.frep_mhz: float = 40.0
         self.calib_factor: complex = 1.0 + 0j

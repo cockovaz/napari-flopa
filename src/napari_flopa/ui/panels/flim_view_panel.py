@@ -111,8 +111,6 @@ class FlimViewPanel(QWidget):
         main_layout.addWidget(self.container)
         main_layout.addStretch()
 
-    # ------------------------------------------------------------------ #
-
     @Slot(object)
     def update_data(self, dataset: xr.Dataset):
         """
@@ -132,8 +130,6 @@ class FlimViewPanel(QWidget):
             return
         self.setVisible(True)
         self._create_controls(has_intensity, has_lifetime)
-
-    # ------------------------------------------------------------------ #
 
     def _create_controls(self, has_intensity: bool, has_lifetime: bool):
         """
@@ -191,7 +187,6 @@ class FlimViewPanel(QWidget):
         grid.setColumnStretch(3, 1)
         self.view_layout.addLayout(grid)
 
-        # ---- Col 0: slicing selectors ----
         sel_group = QGroupBox("Dims")
         apply_style(sel_group, S.GROUP_PRIMARY)
         sel_group.setFlat(True)
@@ -201,21 +196,24 @@ class FlimViewPanel(QWidget):
         frame_sel = QSpinBox()
         frame_sel.setRange(0, max(0, n_frames - 1))
         frame_sel.setMaximumWidth(50)
+        frame_sel.setToolTip("Frame to display (0-based)")
         sum_frames = QCheckBox("∑")
         sum_frames.setEnabled(n_frames > 1)
-        sum_frames.setToolTip("Sum all frames")
+        sum_frames.setToolTip("Aggregate all frames")
         seq_sel = QSpinBox()
         seq_sel.setRange(0, max(0, n_sequences - 1))
         seq_sel.setMaximumWidth(50)
+        seq_sel.setToolTip("Sequence to display (0-based)")
         sum_seqs = QCheckBox("∑")
         sum_seqs.setEnabled(n_sequences > 1)
-        sum_seqs.setToolTip("Sum all sequences")
+        sum_seqs.setToolTip("Aggregate all sequences")
         chan_sel = QSpinBox()
         chan_sel.setRange(0, max(0, n_channels - 1))
         chan_sel.setMaximumWidth(50)
+        chan_sel.setToolTip("Detector channel to display (0-based)")
         sum_chans = QCheckBox("∑")
         sum_chans.setEnabled(n_channels > 1)
-        sum_chans.setToolTip("Sum all detector channels")
+        sum_chans.setToolTip("Aggregate all detector channels")
 
         for row, (lbl, spin, chk) in enumerate(
             [
@@ -238,7 +236,6 @@ class FlimViewPanel(QWidget):
             "sum_channels": sum_chans,
         }
 
-        # ---- Col 1: Intensity ----
         int_group = QGroupBox("Intensity")
         apply_style(int_group, S.GROUP_PRIMARY)
         int_group.setEnabled(has_intensity)
@@ -266,6 +263,9 @@ class FlimViewPanel(QWidget):
         int_row1.setSpacing(3)
         self.show_intensity = QCheckBox("Show")
         self.show_intensity.setChecked(True)
+        self.show_intensity.setToolTip(
+            "Show the Intensity layer in the viewer"
+        )
         self.show_intensity.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         int_row1.addWidget(self.show_intensity)
         # int_row1.addSpacing(30)
@@ -280,6 +280,10 @@ class FlimViewPanel(QWidget):
         self.smooth_int_spin.setSingleStep(2)  # odd kernel sizes only
         self.smooth_int_spin.setValue(3)
         self.smooth_int_spin.setEnabled(False)
+        self.smooth_int_check.setToolTip(
+            "Box-smooth the displayed intensity (local mean)"
+        )
+        self.smooth_int_spin.setToolTip("Smoothing kernel size in px")
         self.smooth_int_check.toggled.connect(self.smooth_int_spin.setEnabled)
         int_row1.addWidget(self.smooth_int_spin)
         int_ctrl.addLayout(int_row1)
@@ -317,7 +321,7 @@ class FlimViewPanel(QWidget):
         self.int_mask_btn = QPushButton("→ Generate Int. Mask")
         # self.int_mask_btn.setStyleSheet(S.BTN_DANGER)
         self.int_mask_btn.setToolTip(
-            "Create a new Labels layer from pixels within the red slider range."
+            "Create a new Labels layer from pixels inside the red intensity range."
         )
         self.int_mask_btn.setEnabled(False)
         int_ctrl.addWidget(self.int_mask_btn)
@@ -326,7 +330,6 @@ class FlimViewPanel(QWidget):
 
         grid.addWidget(int_group, 0, 1)
 
-        # ---- Col 2: Lifetime ----
         lt_group = QGroupBox(f"Lifetime ({lifetime_unit})")
         self._lt_group = lt_group
         apply_style(lt_group, S.GROUP_PRIMARY)
@@ -355,6 +358,7 @@ class FlimViewPanel(QWidget):
         lt_row1.setSpacing(3)
         self.show_lifetime = QCheckBox("Show")
         self.show_lifetime.setChecked(True)
+        self.show_lifetime.setToolTip("Show the Lifetime layer in the viewer")
         self.show_lifetime.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         lt_row1.addWidget(self.show_lifetime)
         self.lt_corrected = QCheckBox("Calibrated")
@@ -369,6 +373,10 @@ class FlimViewPanel(QWidget):
         self.smooth_lt_spin.setSingleStep(2)  # odd kernel sizes only
         self.smooth_lt_spin.setValue(3)
         self.smooth_lt_spin.setEnabled(False)
+        self.smooth_lt_check.setToolTip(
+            "Photon-weighted smoothing of the displayed lifetime"
+        )
+        self.smooth_lt_spin.setToolTip("Smoothing kernel size in px (odd)")
         self.smooth_lt_check.toggled.connect(self.smooth_lt_spin.setEnabled)
         lt_row1.addWidget(self.smooth_lt_spin)
         lt_ctrl.addLayout(lt_row1)
@@ -407,7 +415,7 @@ class FlimViewPanel(QWidget):
         self.lt_mask_btn = QPushButton("→ Generate Lt. Mask")
         # self.lt_mask_btn.setStyleSheet(S.BTN_DANGER)
         self.lt_mask_btn.setToolTip(
-            "Create a new Labels layer from pixels within the red slider range."
+            "Create a new Labels layer from pixels inside the red lifetime range."
         )
         self.lt_mask_btn.setEnabled(False)
 
@@ -428,7 +436,6 @@ class FlimViewPanel(QWidget):
 
         grid.addWidget(lt_group, 0, 2)
 
-        # ---- Col 3: Export ----
         exp_group = QGroupBox("Export")
         apply_style(exp_group, S.GROUP_PRIMARY)
         el = QVBoxLayout(exp_group)
@@ -450,6 +457,16 @@ class FlimViewPanel(QWidget):
         self.exp_flim_chk = QCheckBox("FLIM RGB")
         self.exp_flim_chk.setEnabled(has_flim)
         self.exp_flim_chk.setChecked(has_flim)
+        self.exp_int_chk.setToolTip(
+            "Save <name>_int.tif — the displayed intensity as float32"
+        )
+        self.exp_lt_chk.setToolTip(
+            "Save <name>_lt.tif — the displayed lifetime"
+        )
+        self.exp_flim_chk.setToolTip(
+            "Save <name>_flim.png with the current contrast and colormap,\n"
+            "plus <name>_flim.txt describing them"
+        )
         for chk in (self.exp_int_chk, self.exp_lt_chk, self.exp_flim_chk):
             chk_row.addWidget(chk)
         el.addLayout(chk_row)
@@ -485,6 +502,9 @@ class FlimViewPanel(QWidget):
         # Row 3: Save + "→ RGB FLIM layer" side by side.
         self.export_save_btn = QPushButton("Save")
         self.export_save_btn.setEnabled(False)
+        self.export_save_btn.setToolTip(
+            "Save the checked images of the current view, asks for a base name"
+        )
         self.export_save_btn.clicked.connect(self._on_export_save)
 
         # Add the current FLIM RGB composite as a static napari layer (same
@@ -572,10 +592,6 @@ class FlimViewPanel(QWidget):
             lambda _: _sync_int_histogram_colormap()
         )
         _sync_int_histogram_colormap()
-
-        # ------------------------------------------------------------------ #
-        # Helpers                                                              #
-        # ------------------------------------------------------------------ #
 
         def _set_visible(name: str, value: bool):
             if name in self.viewer.layers:
@@ -666,10 +682,6 @@ class FlimViewPanel(QWidget):
                 #         self._smooth_cache.pop(next(iter(self._smooth_cache)))
                 # s_lt = self._smooth_cache[key]
             return s_int, s_lt
-
-        # ------------------------------------------------------------------ #
-        # Display                                                              #
-        # ------------------------------------------------------------------ #
 
         def _display_data():
             try:
@@ -893,7 +905,6 @@ class FlimViewPanel(QWidget):
                 name=_next_layer_name("Combined Mask"),
             )
 
-        # ---- wire signals ----
         # Everything that changes the data goes through one debounced _slice,
         # so aggregating behaves exactly like stepping a frame. Swallow the
         # signal's argument: QTimer.start(int) would otherwise take it as the
@@ -1025,10 +1036,6 @@ class FlimViewPanel(QWidget):
                 parts.append(f"{letter}: {self.selectors[dim].value()}")
         self._view_lbl.setText("Current view =  " + "  ".join(parts))
 
-    # ------------------------------------------------------------------ #
-    # Export                                                               #
-    # ------------------------------------------------------------------ #
-
     def _on_export_save(self):
         """Unified Save handler — asks for base name/directory once, saves all checked types."""
         do_int = self.exp_int_chk.isChecked() and self.exp_int_chk.isEnabled()
@@ -1086,15 +1093,17 @@ class FlimViewPanel(QWidget):
         )
 
     def _save_intensity(self, path):
-        """Write cached intensity as actual photon counts (uint32 TIFF).
+        """Write the displayed intensity as a float32 TIFF.
 
-        Not rescaled — pixel values are the real counts (rounded when the view
-        is smoothed/aggregated), so the TIFF stays quantitative.
+        Not rescaled - summed counts stay exact, smoothed view keeps local mean.
         """
         from skimage.io import imsave
 
-        counts = np.rint(self._current_intensity).astype(np.uint32)
-        imsave(str(path), counts, check_contrast=False)
+        imsave(
+            str(path),
+            self._current_intensity.astype(np.float32),
+            check_contrast=False,
+        )
 
     def _save_lifetime(self, path):
         """Write cached lifetime as float32 TIFF (values in ns)."""

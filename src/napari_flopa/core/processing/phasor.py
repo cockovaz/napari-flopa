@@ -1,26 +1,22 @@
-"""
-Monoexponential phasor maths.
-
-The phasor of a single-exponential decay of lifetime τ at excitation angular
-frequency ω = 2πf lies on the universal semicircle::
-
-    g = 1 / (1 + (ωτ)²)
-    s = ωτ / (1 + (ωτ)²)
-
-Everything that needs that relation — the lifetime tick marks drawn on the
-phasor plot and the calibration factor derived from a reference dye — goes
-through :func:`monoexp_phasor`, so the formula exists once.
-
-The frequency must be the one the phasor data itself was reconstructed with,
-i.e. ``repetition_rate`` from the file header (see ``core/io/loader.py``), not a
-user-entered value; otherwise the reference points do not describe the data.
-"""
-
 import numpy as np
+import xarray as xr
+from numpy.typing import ArrayLike
 
 
-def monoexp_phasor(tau_s, f_rep_hz: float):
+def monoexp_phasor(
+    tau_s: ArrayLike, f_rep_hz: float
+) -> tuple[float, float] | tuple[np.ndarray, np.ndarray]:
     """Phasor coordinates of a monoexponential decay.
+
+    The universal semicircle, with ω = 2πf::
+
+        g = 1 / (1 + (ωτ)²)
+        s = ωτ / (1 + (ωτ)²)
+
+    Lifetime ticks, the calibration factor and the component fractions all
+    go through this function. *f_rep_hz* must be the rate the phasor data was
+    reconstructed with (``repetition_rate`` from the file header), not a
+    user-entered value, or the reference points do not describe the data.
 
     Args:
         tau_s: Lifetime in **seconds**; scalar or array.
@@ -89,7 +85,9 @@ def lifetime_ticks(
     return sorted(chosen)
 
 
-def apply_calibration(g, s, factor: complex) -> tuple[np.ndarray, np.ndarray]:
+def apply_calibration(
+    g: ArrayLike, s: ArrayLike, factor: complex
+) -> tuple[np.ndarray, np.ndarray]:
     """Calibrated phasor coordinates: ``(g + i·s) · factor``.
 
     *factor* is the complex value from :func:`calibration_factor` (rotation by
@@ -131,7 +129,12 @@ def irf_delay_ns(
     return float(-np.angle(factor) / omega_per_channel * res_ns)
 
 
-def correct_lifetime(lt_ns, delay_ns: float, period_ns: float, counts=None):
+def correct_lifetime(
+    lt_ns: ArrayLike,
+    delay_ns: float,
+    period_ns: float,
+    counts: ArrayLike | None = None,
+) -> np.ndarray:
     """Subtract *delay_ns* from a lifetime image, wrapping into [0, period).
 
     Values that would go negative wrap by one laser period, the circular
@@ -143,7 +146,9 @@ def correct_lifetime(lt_ns, delay_ns: float, period_ns: float, counts=None):
     return out
 
 
-def lifetime_correction(ds, factor: complex) -> tuple[float, float] | None:
+def lifetime_correction(
+    ds: xr.Dataset, factor: complex
+) -> tuple[float, float] | None:
     """``(delay_ns, period_ns)`` for correcting *ds*'s lifetime, or None.
 
     None when there is nothing to correct: identity factor, or a dataset
@@ -166,7 +171,9 @@ def lifetime_correction(ds, factor: complex) -> tuple[float, float] | None:
     return irf_delay_ns(factor, omega, res_ns), period
 
 
-def phasor_lifetimes(g, s, f_rep_hz: float):
+def phasor_lifetimes(
+    g: ArrayLike, s: ArrayLike, f_rep_hz: float
+) -> tuple[np.ndarray, np.ndarray]:
     """Phase and modulation lifetimes of phasor points, in ns.
 
     τφ = s / (g·ω) and τm = √(1/M² − 1) / ω with M² = g² + s². Both equal
@@ -186,8 +193,8 @@ def phasor_lifetimes(g, s, f_rep_hz: float):
 
 
 def component_fractions_2(
-    g, s, tau1_ns: float, tau2_ns: float, f_rep_hz: float
-):
+    g: ArrayLike, s: ArrayLike, tau1_ns: float, tau2_ns: float, f_rep_hz: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Fractional contributions of two monoexponential components.
 
     Each data point (g, s) is projected onto the line between the two
@@ -218,8 +225,13 @@ def component_fractions_2(
 
 
 def component_fractions_3(
-    g, s, tau1_ns: float, tau2_ns: float, tau3_ns: float, f_rep_hz: float
-):
+    g: ArrayLike,
+    s: ArrayLike,
+    tau1_ns: float,
+    tau2_ns: float,
+    tau3_ns: float,
+    f_rep_hz: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Barycentric fractions for three monoexponential components.
 
     Solves ``P = f1·P1 + f2·P2 + f3·P3`` with ``f1+f2+f3 = 1`` via the 2×2

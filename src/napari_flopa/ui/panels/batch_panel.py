@@ -1,26 +1,3 @@
-"""
-Batch analysis panel.
-
-Reconstructs a directory of .ptu files — or a hand-picked subset of it — with
-a shared ScanConfig + calibration factor and writes any combination of:
-  • FLIM RGB / Intensity / Lifetime  TIFF images
-  • Phasor CSV tables  (per-object or per-pixel)
-  • Decay CSV tables
-
-Each export type has independent aggregation passes: add multiple rows to
-run e.g. "no aggregation" AND "sum-frames + sum-detectors" in one batch.
-
-Labels (optional): integer TIFFs in a separate folder matched by PTU name
-prefix (0 = background).  Multiple label files per PTU are merged into one
-per-file table; 'labels_file' is a column in every row.
-
-Output: written to  <ptu_dir>/batch_<timestamp>/
-Processing: sequential in a QThread — UI stays responsive; Stop aborts
-between files.
-
-Scan config + calibration can be saved/loaded.
-"""
-
 import csv
 import datetime
 import itertools
@@ -78,11 +55,6 @@ from napari_flopa.core.processing.reconstruction import (
 )
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import S, apply_style
-
-# ── log colour helpers ────────────────────────────────────────────────────
-_ERR = '<span style="color:#ff6060">{}</span>'
-_OK = '<span style="color:#60cc60">{}</span>'
-_INFO = '<span style="color:#aaaaaa">{}</span>'
 
 
 class _DimValidator(QValidator):
@@ -349,6 +321,16 @@ class _ImagesSection(_ExportSection):
         self._flim_chk.setChecked(True)
         self._int_chk.setChecked(True)
         self._lt_chk.setChecked(True)
+        self._flim_chk.setToolTip(
+            "Write <file>_flim.png (lifetime colour × intensity brightness)\n"
+            "plus <file>_flim.txt with the colormap and ranges used"
+        )
+        self._int_chk.setToolTip(
+            "Write <file>_intensity.tif - photon counts (float32)"
+        )
+        self._lt_chk.setToolTip(
+            "Write <file>_lifetime.tif — mean arrival time in ns (float32)"
+        )
         self._lt_corr_chk = QCheckBox("Calibrated")
         self._lt_corr_chk.setChecked(True)
         self._lt_corr_chk.setToolTip(
@@ -378,6 +360,7 @@ class _ImagesSection(_ExportSection):
         self._cmap_combo = QComboBox()
         self._cmap_combo.addItems(LIFETIME_COLORMAPS)
         self._cmap_combo.setStyleSheet("font-weight: normal;")
+        self._cmap_combo.setToolTip("Lifetime colormap of the FLIM RGB image")
         row2.addWidget(self._cmap_combo)
         row2.addStretch()
         lay.addLayout(row2)
@@ -431,12 +414,21 @@ class _ImagesSection(_ExportSection):
         self._sm_int_spin = self._kernel_spin()
         self._sm_lt_chk = QCheckBox("Smooth Lt.")
         self._sm_lt_spin = self._kernel_spin()
+        self._sm_int_chk.setToolTip(
+            "Box-smooth the intensity image (local mean);\n"
+            "adds _smInt<k> to the file names"
+        )
+        self._sm_lt_chk.setToolTip(
+            "Photon-weighted smoothing of the lifetime image;\n"
+            "adds _smLt<k> to the file names"
+        )
         for chk, spin in (
             (self._sm_int_chk, self._sm_int_spin),
             (self._sm_lt_chk, self._sm_lt_spin),
         ):
             chk.setStyleSheet("font-weight: normal;")
             spin.setEnabled(False)
+            spin.setToolTip("Smoothing kernel size in px")
             chk.toggled.connect(spin.setEnabled)
             row_sm.addWidget(chk)
             row_sm.addWidget(spin)
@@ -504,6 +496,13 @@ class _PhasorSection(_ExportSection):
         self._obj_radio = QRadioButton("Per object")
         self._px_radio = QRadioButton("Per pixel")
         self._obj_radio.setChecked(True)
+        self._obj_radio.setToolTip(
+            "One row per label (whole image without labels): photon-weighted\n"
+            "mean G, S, total photon_count and area_pixels"
+        )
+        self._px_radio.setToolTip(
+            "One row per valid pixel (G, S, photon_count)"
+        )
         for r in (self._obj_radio, self._px_radio):
             self._grp.addButton(r)
             r.setStyleSheet("font-weight: normal;")
@@ -526,6 +525,11 @@ class _PhasorSection(_ExportSection):
         self._smooth_spin.setValue(3)
         self._smooth_spin.setFixedWidth(46)
         self._smooth_spin.setEnabled(False)
+        self._smooth_spin.setToolTip("Smoothing kernel size in px (odd)")
+        self._smooth_chk.setToolTip(
+            "Photon-weighted smoothing of G and S before averaging;\n"
+            "adds _sm<k> to the agg column"
+        )
         self._smooth_chk.setStyleSheet("font-weight: normal;")
         self._smooth_chk.toggled.connect(self._smooth_spin.setEnabled)
         row2.addWidget(self._smooth_chk)
@@ -546,11 +550,6 @@ class _DecaySection(_ExportSection):
 
     def __init__(self, parent=None):
         super().__init__("Decay table (CSV)", kind="decay", parent=parent)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# _BatchWorker  — runs in QThread
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class _BatchWorker(QObject):
@@ -592,13 +591,13 @@ class _BatchWorker(QObject):
             glob = "**/*.ptu" if p.get("recursive") else "*.ptu"
             ptu_files = sorted(ptu_dir.glob(glob))
         if not ptu_files:
-            self.log.emit(_ERR.format("No .ptu files found."))
+            self.log.emit(S.LOG_ERR.format("No .ptu files found."))
             self.finished.emit("No files processed.")
             return
 
         wanted = _needed_outputs(p)
         self.log.emit(
-            _INFO.format(
+            S.LOG_INFO.format(
                 "Reconstructing: "
                 + (", ".join(wanted) if wanted else "all outputs")
             )
@@ -613,11 +612,11 @@ class _BatchWorker(QObject):
 
         for i, path in enumerate(ptu_files):
             if self._stop:
-                self.log.emit(_INFO.format("Stopped by user."))
+                self.log.emit(S.LOG_INFO.format("Stopped by user."))
                 break
             self.progress.emit(i, len(ptu_files))
             self.log.emit(
-                _INFO.format(f"[{i+1}/{len(ptu_files)}]  {path.name}")
+                S.LOG_INFO.format(f"[{i+1}/{len(ptu_files)}]  {path.name}")
             )
             try:
                 ph_rows, d_time, d_cols = self._process_one(
@@ -629,7 +628,7 @@ class _BatchWorker(QObject):
                         decay_time = d_time
                     elif d_time.size != decay_time.size:
                         self.log.emit(
-                            _ERR.format(
+                            S.LOG_ERR.format(
                                 f"  ! {path.name}: {d_time.size} TCSPC bins vs "
                                 f"{decay_time.size} in the merged table — "
                                 "columns padded/truncated to match"
@@ -641,10 +640,10 @@ class _BatchWorker(QObject):
                         col[: min(n, counts.size)] = counts[:n]
                         decay_merged[f"{path.stem}_{lbl}"] = col
                 n_ok += 1
-                self.log.emit(_OK.format("  ✓"))
+                self.log.emit(S.LOG_OK.format("  ✓"))
             except Exception as exc:
                 n_err += 1
-                self.log.emit(_ERR.format(f"  ✗  {exc}"))
+                self.log.emit(S.LOG_ERR.format(f"  ✗  {exc}"))
                 traceback.print_exc()
 
         self.progress.emit(len(ptu_files), len(ptu_files))
@@ -653,7 +652,7 @@ class _BatchWorker(QObject):
         if p.get("single_table") and phasor_merged and p.get("phasor_configs"):
             _write_csv(out_dir / "phasor_all.csv", phasor_merged)
             self.log.emit(
-                _OK.format(
+                S.LOG_OK.format(
                     f"Merged phasor table: {out_dir / 'phasor_all.csv'}"
                 )
             )
@@ -665,7 +664,7 @@ class _BatchWorker(QObject):
                 out_dir / "decay_all.csv", decay_time, decay_merged
             )
             self.log.emit(
-                _OK.format(
+                S.LOG_OK.format(
                     f"Merged decay table: {out_dir / 'decay_all.csv'} "
                     f"({len(decay_merged)} curves)"
                 )
@@ -674,7 +673,7 @@ class _BatchWorker(QObject):
         summary = (
             f"Done: {n_ok} succeeded, {n_err} failed.  Output → {out_dir}"
         )
-        self.log.emit((_OK if n_err == 0 else _ERR).format(summary))
+        self.log.emit((S.LOG_OK if n_err == 0 else S.LOG_ERR).format(summary))
         self.finished.emit(summary)
 
     def _process_one(
@@ -776,7 +775,9 @@ class _BatchWorker(QObject):
             for lbl, counts in curves.items():
                 if lbl in decay_cols:
                     self.log.emit(
-                        _INFO.format(f"  duplicate decay column {lbl} skipped")
+                        S.LOG_INFO.format(
+                            f"  duplicate decay column {lbl} skipped"
+                        )
                     )
                     continue
                 decay_cols[lbl] = counts
@@ -865,7 +866,7 @@ class _BatchWorker(QObject):
             pfx = f"{stem}_{suffix}{sm_tag}" if suffix else f"{stem}{sm_tag}"
 
             if cfg.get("export_int") and ci is not None:
-                counts = np.rint(ci).astype(np.uint32)
+                counts = ci.astype(np.float32)
                 imsave(
                     out_dir / f"{pfx}_intensity.tif",
                     counts,
@@ -955,7 +956,7 @@ class _BatchWorker(QObject):
                 smooth_k, smoothed = k, True
             elif smooth:
                 self.log.emit(
-                    _ERR.format(
+                    S.LOG_ERR.format(
                         "  ! smoothing skipped — needs photon_count as weights"
                     )
                 )
@@ -971,7 +972,8 @@ class _BatchWorker(QObject):
                         from skimage.io import imread
 
                         lbl_arr = imread(str(lbl_path)).astype(np.int32)
-                        # ("mask1.tif" vs "sub/mask1.tif").
+                        # The relative path keeps same-named masks in
+                        # sub-folders apart ("mask1.tif" vs "sub/mask1.tif").
                         lbl_name = (
                             lbl_path.relative_to(lbl_dir).as_posix()
                             if lbl_dir is not None
@@ -1206,15 +1208,20 @@ def _write_decay_csv(
 
 class BatchPanel(QWidget):
     """
-    Tab 3 — Batch analysis.
+    Batch tab - batch analysis.
 
-    All .ptu files in a chosen directory are reconstructed with a shared
-    ScanConfig + calibration factor.  Enabled export sections run for every
-    file; each section supports multiple aggregation passes (one CSV/TIFF set
-    per pass per file).
+    The .ptu files of a directory (or a hand-picked subset) are reconstructed
+    with a shared ScanConfig + calibration factor, writing any combination of
+    FLIM RGB PNGs, intensity / lifetime TIFFs, phasor CSVs (per object or per
+    pixel) and decay CSVs. Each export section takes several aggregation
+    passes (one CSV/TIFF set per pass per file).
 
-    Scan config + calibration are saved/loaded as JSON.
-    Processing runs in a QThread; UI stays responsive.
+    Labels (optional): integer TIFFs in a separate folder matched by PTU name
+    prefix (0 = background). Several label files per PTU are merged into one
+    per-file table, with ``labels_file`` as a column.
+
+    Output goes to ``<ptu_dir>/batch_<timestamp>/``. Files are processed one
+    by one in a QThread, Stop aborts between files.
     """
 
     def __init__(self, state: FlopaState, viewer, parent=None):
@@ -1243,7 +1250,6 @@ class BatchPanel(QWidget):
         scroll.setWidget(inner)
         root.addWidget(scroll, stretch=1)
 
-        # ── 1. Directories ─────────────────────────────────────────────
         dir_box = QGroupBox("Directories")
         apply_style(dir_box, S.GROUP_PRIMARY)
         dir_box.setStyleSheet(S.GROUP_PRIMARY)
@@ -1272,6 +1278,7 @@ class BatchPanel(QWidget):
         lbl_row.setSpacing(6)
         lb = QPushButton("…")
         lb.setFixedWidth(28)
+        lb.setToolTip("Choose the folder with label TIFFs")
         lb.clicked.connect(self._browse_lbl)
         lbl_row.addWidget(lb)
         self._lbl_edit = QLineEdit()
@@ -1285,18 +1292,19 @@ class BatchPanel(QWidget):
         # lbl_row.addStretch()
         dg.addLayout(lbl_row, 1, 1)
         self._recursive_chk = QCheckBox("Include sub-folders")
+        self._recursive_chk.setToolTip(
+            "Also search sub-folders for label TIFFs"
+        )
         self._recursive_chk.toggled.connect(self._update_input_label)
         dg.addWidget(self._recursive_chk, 2, 1)
         ilay.addWidget(dir_box)
 
-        # ── 2. Scan config + calibration ───────────────────────────────
         cfg_box = QGroupBox("Scan configuration && Calibration")
         apply_style(cfg_box, S.GROUP_PRIMARY)
         cfg_vlay = QVBoxLayout(cfg_box)
         cfg_vlay.setSpacing(10)
         cfg_vlay.setContentsMargins(6, 4, 6, 6)
 
-        # ── fields ──────────────────────────────────────────────────
         cg = QGridLayout()
         cg.setSpacing(3)
         cg.setContentsMargins(0, 2, 0, 2)
@@ -1434,7 +1442,6 @@ class BatchPanel(QWidget):
 
         cfg_vlay.addLayout(cg)
 
-        # ── action buttons, in a row under the fields ────────────────
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
 
@@ -1463,6 +1470,12 @@ class BatchPanel(QWidget):
 
         self._load_cfg_btn = QPushButton("Load cfg...")
         self._save_cfg_btn = QPushButton("Save cfg...")
+        self._load_cfg_btn.setToolTip(
+            "Load scan config + calibration factor from a JSON file"
+        )
+        self._save_cfg_btn.setToolTip(
+            "Save scan config + calibration factor to a JSON file"
+        )
         for b in (self._load_cfg_btn, self._save_cfg_btn):
             btn_row.addWidget(b)
 
@@ -1470,14 +1483,12 @@ class BatchPanel(QWidget):
         cfg_vlay.addLayout(btn_row)
         ilay.addWidget(cfg_box)
 
-        # ── 3. Export sections ─────────────────────────────────────────
         self._images_sec = _ImagesSection()
         self._phasor_sec = _PhasorSection()
         self._decay_sec = _DecaySection()
         for sec in (self._images_sec, self._phasor_sec, self._decay_sec):
             ilay.addWidget(sec)
 
-        # ── 4. Output options ──────────────────────────────────────────
         out_box = QGroupBox("Output options")
         apply_style(out_box, S.GROUP_PRIMARY)
         out_box.setStyleSheet(S.GROUP_PRIMARY)
@@ -1487,6 +1498,13 @@ class BatchPanel(QWidget):
         self._per_file_chk = QCheckBox("Per file table")
         self._single_tbl_chk = QCheckBox("Single merged table")
         self._per_file_chk.setChecked(True)
+        self._per_file_chk.setToolTip(
+            "Write <file>_phasor.csv and <file>_decay.csv for every .ptu"
+        )
+        self._single_tbl_chk.setToolTip(
+            "Write phasor_all.csv (rows of every file stacked) and\n"
+            "decay_all.csv (one column per file × curve)"
+        )
         tr.addWidget(self._per_file_chk)
         tr.addWidget(self._single_tbl_chk)
         tr.addStretch()
@@ -1500,7 +1518,6 @@ class BatchPanel(QWidget):
 
         ilay.addStretch()
 
-        # ── 5. Run controls ────────────────────────────────────────────
         run_box = QGroupBox()
         apply_style(run_box, S.GROUP_PLAIN)
         run_row = QHBoxLayout(run_box)
@@ -1514,6 +1531,10 @@ class BatchPanel(QWidget):
         self._stop_btn = QPushButton("Stop")
         self._stop_btn.setEnabled(False)
         self._stop_btn.setStyleSheet(S.BTN_STOP)
+        self._run_btn.setToolTip(
+            "Process every selected .ptu into batch_<timestamp>/"
+        )
+        self._stop_btn.setToolTip("Stop after the current file finishes")
         run_row.addWidget(self._run_btn, 1)
         run_row.addSpacing(10)
         run_row.addWidget(self._stop_btn, 1)
@@ -1562,8 +1583,6 @@ class BatchPanel(QWidget):
         )
         for sec in (self._images_sec, self._phasor_sec, self._decay_sec):
             sec.set_dims(f, s, d)
-
-    # ── directory pickers ────────────────────────────────────────────────
 
     def _browse_ptu(self):
         """Pick a folder — every .ptu inside it is processed."""
@@ -1623,8 +1642,6 @@ class BatchPanel(QWidget):
         d = QFileDialog.getExistingDirectory(self, "Select Labels folder")
         if d:
             self._lbl_edit.setText(d)
-
-    # ── Config JSON ──────────────────────────────────────────────────────
 
     def _accum_list(self, n_seqs: int, *, strict: bool) -> list[int]:
         """Parse Accum/seq into one int per sequence.
@@ -1767,8 +1784,6 @@ class BatchPanel(QWidget):
         except Exception as e:
             self._log_line(f"Save error: {e}", error=True)
 
-    # ── run ──────────────────────────────────────────────────────────────
-
     def _cal_complex(self) -> complex:
         """Parse the calibration factor field."""
         txt = self._cal_factor.text().strip().replace(" ", "")
@@ -1858,8 +1873,6 @@ class BatchPanel(QWidget):
         self._stop_btn.setEnabled(False)
         self._progress.setRange(0, 1)
         self._progress.setValue(1)
-
-    # ── load-from-current helpers ────────────────────────────────────────
 
     def _update_copy_enabled(self):
         """The ↓ buttons copy the File tab's fields — useless before a load."""
@@ -1961,4 +1974,4 @@ class BatchPanel(QWidget):
         self._log_line(f"Calibration copied: factor {factor}")
 
     def _log_line(self, msg: str, *, error: bool = False):
-        self._log.appendHtml((_ERR if error else _INFO).format(msg))
+        self._log.appendHtml((S.LOG_ERR if error else S.LOG_INFO).format(msg))

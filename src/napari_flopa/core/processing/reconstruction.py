@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import numpy as np
 import xarray as xr
 from tttrkit.ptuio.decoder import T3OverflowCorrector
@@ -18,7 +20,7 @@ def reconstruct_ptu_to_dataset(
     outputs: list | None = None,
     tcspc_channels_override: int | None = None,
     logger: ProgressLogger | None = None,
-    progress_callback=None,
+    progress_callback: Callable[[int, int], None] | None = None,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     roi_mask: np.ndarray | None = None,
 ) -> xr.Dataset:
@@ -36,6 +38,8 @@ def reconstruct_ptu_to_dataset(
             after each chunk (total_chunks is 0 if the record count is unknown).
         chunk_size: TTTR records read per iteration. Affects memory use and
             progress granularity only, not the reconstructed data.
+        roi_mask: Optional 2D ``(lines, pixels)`` mask; photons outside it
+            are discarded in every frame, sequence and detector.
 
     Returns:
         xr.Dataset with dimensions (frame, sequence, line, pixel, channel).

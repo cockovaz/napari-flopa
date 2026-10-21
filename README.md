@@ -14,7 +14,7 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
 
 - **File**
   - read a `.ptu`, display its header, reconstruct it into an xarray dataset (photon count, mean arrival time, phasor, TCSPC histogram)
-  - supports multi-frame, multi-sequence (with line acumulation) and multi-detector data
+  - supports multi-frame, multi-sequence (with line accumulation) and multi-detector data
   - bidirectional scans with an **Alignment wizard** for the line-marker delays
   - scan config with value provenance, saved/loaded as JSON
   - marker statistics
@@ -106,7 +106,7 @@ In the **File** tab, click **Load Demo** for the bundled demo dataset, or **Read
     > Note: the coloured dot beside each field says where its value came from - file metadata, a default, an estimate, or your own edit.
 
 3. **Set the scan geometry**
-Frames, lines, pixels, sequences and accumulations must match how the image was actually acquired, because the raw file is a stream of photon and marker events with no image shape of its own. The header contains some information, fill in the rest. **Demo dataset** is loaded woth correct configuration set up.
+Frames, lines, pixels, sequences and accumulations must match how the image was actually acquired, because the raw file is a stream of photon and marker events with no image shape of its own. The header contains some information, fill in the rest. **Demo dataset** is loaded with the correct configuration set up.
 **Marker Stats** inspects the marker events and suggests dimensions. For bidirectional scans, the **Alignment wizard** estimates the line-marker delays.
 
 4. **Reconstruct**
@@ -118,7 +118,7 @@ Frames, lines, pixels, sequences and accumulations must match how the image was 
 5. **Look at the result**
 The **FLIM View** dock opens at the bottom, with a
 histogram for Intensity and one for Lifetime. Each has two sliders: the **cyan** one sets the display contrast, the **red** one a threshold range. **→ Generate Int./Lt.
-Mask** turns that range into a napari Labels layer. Once a calibration is enabled in the Phasor tab, **Calibrated** shows the lifetime with the IRF delay subtracted (negative values are wraped around a period).
+Mask** turns that range into a napari Labels layer. Once a calibration is enabled in the Phasor tab, **Calibrated** shows the lifetime with the IRF delay subtracted (negative values are wrapped around by one period).
 Intensity, lifetime and the FLIM RGB composite can be exported from here.
 
 6. **Analyze**

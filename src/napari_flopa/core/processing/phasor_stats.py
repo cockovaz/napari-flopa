@@ -1,18 +1,23 @@
+from collections.abc import Sequence
+
 import numpy as np
+from numpy.typing import ArrayLike
 
 #: Phasor plot extent shared with the Analyzer axes, so KDE grids cover it.
 PLOT_XLIM = (-0.05, 1.05)
 PLOT_YLIM = (-0.05, 0.80)
 
 
-def _finite(g, s):
+def _finite(g: ArrayLike, s: ArrayLike) -> tuple[np.ndarray, np.ndarray]:
     g = np.asarray(g, dtype=float)
     s = np.asarray(s, dtype=float)
     ok = np.isfinite(g) & np.isfinite(s)
     return g[ok], s[ok]
 
 
-def covariance_ellipse(g, s, n_sigma: float = 2.0):
+def covariance_ellipse(
+    g: ArrayLike, s: ArrayLike, n_sigma: float = 2.0
+) -> tuple[float, float, float, float, float] | None:
     """``(cx, cy, width, height, angle_deg)`` of the n-σ covariance ellipse.
 
     Width and height are full axis lengths (2·n·√eigenvalue), the form
@@ -36,7 +41,9 @@ def covariance_ellipse(g, s, n_sigma: float = 2.0):
     return float(g.mean()), float(s.mean()), width, height, angle
 
 
-def kde_grid(g, s, n: int = 200):
+def kde_grid(
+    g: ArrayLike, s: ArrayLike, n: int = 200
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
     """Gaussian density of the points on an *n*×*n* grid over the plot extent.
 
     A binned KDE: a fine 2-D histogram smoothed with a Gaussian of Scott's-
@@ -67,7 +74,9 @@ def kde_grid(g, s, n: int = 200):
     return X, Y, Z
 
 
-def contour_levels(Z, fractions=(0.25, 0.5, 0.75)) -> list[float]:
+def contour_levels(
+    Z: ArrayLike, fractions: Sequence[float] = (0.25, 0.5, 0.75)
+) -> list[float]:
     """Density thresholds whose regions enclose *fractions* of the mass.
 
     Highest-density levels, so a 50 % contour means the same thing for every

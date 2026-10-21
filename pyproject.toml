@@ -72,8 +72,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml"]
-# Ship the small bundled demo. A local override (demo_params.local.json) is
-# git-ignored and excluded so it is never packaged.
+# Ship the small bundled demo.
 "napari_flopa" = ["demo_data/demo_params.json", "demo_data/*.ptu"]
 
 [tool.setuptools_scm]

@@ -31,7 +31,7 @@ TAG_PARAMS: list[TagParam] = [
 PARAMS_BY_NAME: dict[str, TagParam] = {p.name: p for p in TAG_PARAMS}
 
 
-def read_tag(header_tags: dict, name: str):
+def read_tag(header_tags: dict, name: str) -> Any:
     """Return a single param's value from *header_tags* (value only)."""
     p = PARAMS_BY_NAME[name]
     if p.tag in header_tags:

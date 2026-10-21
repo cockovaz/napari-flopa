@@ -9,7 +9,7 @@ class ProgressLogger:
         self.mode = mode
         self.messages = []
 
-    def log(self, message: str):
+    def log(self, message: str) -> None:
         self.messages.append(message)
         if self.mode == "print":
             print(message)

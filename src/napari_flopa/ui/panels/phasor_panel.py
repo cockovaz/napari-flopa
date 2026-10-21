@@ -1,31 +1,3 @@
-"""
-Phasor analysis panel — modelled on IMCF-Biocev/FLOPA.
-
-Color / plot rules (matching old FLOPA behaviour):
-  Per pixel, no mask   → sub-modes: Scatter (white) | Intensity Weighted (alpha) | Density
-  Per pixel, mask      → forced "Labels" mode; colors from napari layer .get_color()
-  Per pixel, mask + "As filter"
-                       → mask treated as binary: only its pixels are plotted, as
-                         one population, so the sub-modes apply again
-  Per object, no mask  → single centroid (white); no background scatter
-  Per object, mask     → one centroid per label; colors from napari layer; no background scatter
-  Cmap selector        → enabled only for Density (no mask)
-
-Calibration:
-  • Factor stored as complex number; applied as phasor_complex * factor
-  • "Calculate" button → CalibrationDialog: enter τ_ref (ns) + measured G, S → computes factor
-  • "Revert"           → the factor that came with the loaded config (1+0j if none)
-  • "1+0j"             → no calibration
-
-Stale indicator (●):  turns red on ANY change to view selection OR plot settings after last plot.
-
-Export:
-  • Plot  → PNG / SVG / PDF
-  • Table → CSV (pandas): dataset_name, label_id, g, s, photon_count_sum, area_pixels
-            (populated after every plot, not only per-object; holds every valid
-             point even when the scatter was subsampled for display)
-"""
-
 import contextlib
 import traceback
 from pathlib import Path
@@ -91,7 +63,25 @@ _MAX_PX = 300_000
 
 
 class PhasorPanel(QWidget):
-    """Phasor tab — phasor analysis."""
+    """Phasor tab - phasor analysis
+
+    Plot rules::
+
+        Per pixel, no mask   → Scatter (white) | Intensity Weighted | Density
+        Per pixel, mask      → "Labels" mode, colours from the napari layer
+        Per pixel, mask + "As filter"
+                             → mask used as binary filter, sub-modes apply again
+        Per object, no mask  → single centroid (white)
+        Per object, mask     → one centroid per label, napari layer colours
+
+    The calibration factor is complex and applied as ``(g + i·s) · factor``;
+    "Revert" restores the factor that came with the loaded config (1+0j if
+    none).
+
+    Table export: dataset_name, label_id, g, s, photon_count_sum,
+    area_pixels - holding every valid point even when the scatter
+    was subsampled for display.
+    """
 
     # Pixel plot sub-modes (only relevant for per-pixel, no mask)
     PM_SCATTER = 0
@@ -137,20 +127,18 @@ class PhasorPanel(QWidget):
             lambda _: self._refresh_mask_layers()
         )
 
-    # ------------------------------------------------------------------ #
-    # UI                                                                   #
-    # ------------------------------------------------------------------ #
-
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
         root.setSpacing(4)
 
-        # ── Toolbar ────────────────────────────────────────────────────
         tb = QHBoxLayout()
         self._plot_btn = QPushButton("Plot")
         self._plot_btn.setStyleSheet(S.BTN_RUN)
         self._plot_btn.setEnabled(False)
+        self._plot_btn.setToolTip(
+            "Plot the phasor of the slice shown in FLIM View and fill the table"
+        )
         tb.addWidget(self._plot_btn)
 
         self._stale = QLabel("●")
@@ -174,6 +162,9 @@ class PhasorPanel(QWidget):
         self._roi_done_btn = QPushButton("✓ Done")
         self._roi_done_btn.setVisible(False)
         self._roi_done_btn.setStyleSheet(S.BTN_SUCCESS)
+        self._roi_done_btn.setToolTip(
+            "Finish ROI selection, the next selection starts a new Labels layer"
+        )
         tb.addWidget(self._roi_done_btn)
 
         self._roi_btn.toggled.connect(self._on_roi_toggled)
@@ -194,8 +185,13 @@ class PhasorPanel(QWidget):
         self._export_combo = QComboBox()
         self._export_combo.addItem("Save plot…", "plot")
         self._export_combo.addItem("Save table…", "table")
+        self._export_combo.setToolTip(
+            "Plot: PNG / SVG / PDF of the figure\n"
+            "Table: CSV of every plotted point (g, s, photons, area per label)"
+        )
         tb.addWidget(self._export_combo)
         self._save_btn = QPushButton("Save")
+        self._save_btn.setToolTip("Save the plot or table chosen on the left")
         self._save_btn.clicked.connect(self._on_export)
         tb.addWidget(self._save_btn)
 
@@ -214,6 +210,10 @@ class PhasorPanel(QWidget):
         self._per_object_radio = QRadioButton("Per Object")
         self._per_pixel_radio = QRadioButton("Per Pixel")
         self._per_object_radio.setChecked(True)
+        self._per_object_radio.setToolTip(
+            "One photon-weighted mean point per label (or the whole image)"
+        )
+        self._per_pixel_radio.setToolTip("One point per pixel")
         mode_row.addWidget(self._per_object_radio)
         mode_row.addWidget(self._per_pixel_radio)
         mode_row.addStretch()
@@ -259,6 +259,7 @@ class PhasorPanel(QWidget):
             ["hot", "inferno", "plasma", "viridis", "magma", "rainbow"]
         )
         self._cmap_combo.setMaximumWidth(85)
+        self._cmap_combo.setToolTip("Colormap of the Density plot")
         px_row.addWidget(self._cmap_combo)
         px_row.addStretch()
         mode_outer.addLayout(px_row)
@@ -270,7 +271,6 @@ class PhasorPanel(QWidget):
         ]
         root.addWidget(mode_box)
 
-        # ── Mask ───────────────────────────────────────────────────────
         mask_box = QGroupBox("Mask")
         apply_style(mask_box, S.GROUP_PRIMARY)
         mask_lay = QHBoxLayout(mask_box)
@@ -280,6 +280,9 @@ class PhasorPanel(QWidget):
         self._mask_combo = QComboBox()
         self._mask_combo.addItem("None")
         self._mask_combo.setMinimumWidth(100)
+        self._mask_combo.setToolTip(
+            "napari Labels layer: each label is plotted in its layer colour"
+        )
         # Give the combo the row's spare width (stretch factor 1) instead of an
         # addStretch() spacer, so it expands from the label to the end and shows
         # long layer names — no fixed width.
@@ -303,11 +306,15 @@ class PhasorPanel(QWidget):
         apply_style(smooth_box, S.GROUP_CHECKABLE)
         smooth_box.setCheckable(True)
         smooth_box.setChecked(False)
+        smooth_box.setToolTip(
+            "Photon-weighted smoothing of G and S before plotting"
+        )
         smooth_lay = QFormLayout(smooth_box)
         self._smooth_spin = QSpinBox()
         self._smooth_spin.setRange(3, 19)
         self._smooth_spin.setSingleStep(2)  # odd kernel sizes only
         self._smooth_spin.setValue(3)
+        self._smooth_spin.setToolTip("Smoothing kernel size in px")
         kernel_row = QHBoxLayout()
         kernel_row.setContentsMargins(0, 0, 0, 0)
         kernel_row.addWidget(self._smooth_spin)
@@ -316,11 +323,14 @@ class PhasorPanel(QWidget):
         self._smooth_group = smooth_box
         root.addWidget(smooth_box)
 
-        # ── Calibration ────────────────────────────────────────────────
         cal_box = QGroupBox("Calibration")
         apply_style(cal_box, S.GROUP_CHECKABLE)
         cal_box.setCheckable(True)
         cal_box.setChecked(False)
+        cal_box.setToolTip(
+            "Apply the calibration factor to the plot\n"
+            "Enables Calibrated lifetime in FLIM View"
+        )
         cal_lay = QHBoxLayout(cal_box)
         cal_lay.setSpacing(4)
         cal_lay.setContentsMargins(6, 4, 6, 4)
@@ -370,7 +380,6 @@ class PhasorPanel(QWidget):
         self._cal_group = cal_box
         root.addWidget(cal_box)
 
-        # ── Canvas + table splitter ────────────────────────────────────
         splitter = QSplitter(Qt.Vertical)
 
         cw = QWidget()
@@ -413,7 +422,6 @@ class PhasorPanel(QWidget):
 
         root.addWidget(splitter, stretch=1)
 
-        # ── Status ─────────────────────────────────────────────────────
         self._status = StatusLabel(
             "Load and reconstruct a PTU file with 'All' output to enable phasor."
         )
@@ -424,7 +432,6 @@ class PhasorPanel(QWidget):
         self._ax.set_facecolor(MPL.AXES_BG)
         self._draw_empty()
 
-        # ── Signal wiring ──────────────────────────────────────────────
         self._plot_btn.clicked.connect(self._on_compute_clicked)
 
         for w in [
@@ -461,10 +468,6 @@ class PhasorPanel(QWidget):
         self._mask_filter_check.toggled.connect(self._update_control_states)
 
         self._update_control_states()
-
-    # ------------------------------------------------------------------ #
-    # State management                                                     #
-    # ------------------------------------------------------------------ #
 
     def _update_control_states(self):
         """Enable/disable controls based on current mode + mask selection."""
@@ -523,10 +526,6 @@ class PhasorPanel(QWidget):
             "hexbin": self._hexbin_check.isChecked(),
         }
 
-    # ------------------------------------------------------------------ #
-    # Dataset / view signals                                               #
-    # ------------------------------------------------------------------ #
-
     @Slot()
     def _on_dataset_changed(self):
         ds = self.state.dataset
@@ -548,10 +547,6 @@ class PhasorPanel(QWidget):
         self._current_view = settings
         self._mark_stale()
 
-    # ------------------------------------------------------------------ #
-    # Mask layers                                                          #
-    # ------------------------------------------------------------------ #
-
     def _refresh_mask_layers(self):
         cur = self._mask_combo.currentText()
         self._mask_combo.blockSignals(True)
@@ -564,10 +559,6 @@ class PhasorPanel(QWidget):
         self._mask_combo.setCurrentIndex(max(0, idx))
         self._mask_combo.blockSignals(False)
         self._update_control_states()
-
-    # ------------------------------------------------------------------ #
-    # Calibration                                                          #
-    # ------------------------------------------------------------------ #
 
     def _f_rep_hz(self) -> float:
         """Repetition rate the loaded dataset was reconstructed with, in Hz.
@@ -656,10 +647,6 @@ class PhasorPanel(QWidget):
         sign = "+" if c.imag >= 0 else "-"
         return f"{c.real:.4f} {sign} {abs(c.imag):.4f}j"
 
-    # ------------------------------------------------------------------ #
-    # Main compute / plot                                                  #
-    # ------------------------------------------------------------------ #
-
     def _on_compute_clicked(self):
         ds = self.state.dataset
         if ds is None or "phasor_g" not in ds:
@@ -702,7 +689,6 @@ class PhasorPanel(QWidget):
             else None
         )
 
-        # ── Smoothing ───────────────────────────────────────────────────
         if self._smooth_group.isChecked() and photon_count is not None:
             k = self._smooth_spin.value()
             if (
@@ -719,7 +705,6 @@ class PhasorPanel(QWidget):
             phasor_g = phasor_c_smooth.real
             phasor_s = phasor_c_smooth.imag
 
-        # ── Calibration ─────────────────────────────────────────────────
         if self._cal_group.isChecked() and self._calib_factor != (1.0 + 0j):
             phasor_g, phasor_s = apply_calibration(
                 phasor_g, phasor_s, self._calib_factor
@@ -729,7 +714,6 @@ class PhasorPanel(QWidget):
 
         shape_2d = phasor_g.shape
 
-        # ── Mask ────────────────────────────────────────────────────────
         mask_name = self._mask_combo.currentText()
         mask_active = mask_name != "None"
         label_2d = None
@@ -757,7 +741,6 @@ class PhasorPanel(QWidget):
         mask_as_filter = mask_active and self._mask_as_filter()
         color_by_label = mask_active and not mask_as_filter
 
-        # ── Build final g/s arrays ──────────────────────────────────────
         (
             g_out,
             s_out,
@@ -905,8 +888,8 @@ class PhasorPanel(QWidget):
             "dataset_name": dataset_name,
         }
 
-        # ── Store for CSV export — every valid point, including the ones
-        #    the plot dropped when subsampling ─────────────────────────────
+        # The CSV export gets every valid point, including the ones the plot
+        # dropped when subsampling.
         if per_object:
             self._export_data = self._final_plot_data
         else:
@@ -928,7 +911,6 @@ class PhasorPanel(QWidget):
                 "dataset_name": dataset_name,
             }
 
-        # ── Draw ────────────────────────────────────────────────────────
         if per_object:
             self._roi_pixel_yx = None
         sync_hz = self._f_rep_hz()
@@ -947,7 +929,6 @@ class PhasorPanel(QWidget):
             lt_arr=np.array(lt_out).ravel(),
         )
 
-        # ── Table ────────────────────────────────────────────────────────
         if per_object:
             self._fill_table_per_object(
                 np.array(g_out),
@@ -997,10 +978,6 @@ class PhasorPanel(QWidget):
             msg += f" {n_out:,} outside the plot area (G/S beyond the axes)."
             warn = True
         (self._status.warn if warn else self._status.info)(msg)
-
-    # ------------------------------------------------------------------ #
-    # Drawing                                                              #
-    # ------------------------------------------------------------------ #
 
     def _draw_phasor(
         self,
@@ -1202,10 +1179,6 @@ class PhasorPanel(QWidget):
         self._finalise_axes(ax)
         self._canvas.draw_idle()
 
-    # ------------------------------------------------------------------ #
-    # Table                                                                #
-    # ------------------------------------------------------------------ #
-
     def _fill_table_per_object(self, g, s, lt, photons, labels, colors):
         self._table.setRowCount(len(g))
         for r in range(len(g)):
@@ -1320,10 +1293,6 @@ class PhasorPanel(QWidget):
             item.setTextAlignment(Qt.AlignCenter)
             self._table.setItem(r, 1 + c, item)
 
-    # ------------------------------------------------------------------ #
-    # Export                                                               #
-    # ------------------------------------------------------------------ #
-
     def _on_export(self):
         fmt = self._export_combo.currentData()
         if fmt == "plot":
@@ -1377,8 +1346,6 @@ class PhasorPanel(QWidget):
             )
         except Exception as e:
             self._status.error(f"Save error: {e}")
-
-    # ── ROI Selection ──────────────────────────────────────────────────────
 
     def hideEvent(self, event):
         """Cancel ROI selection when this panel is hidden (e.g. tab switch)."""
@@ -1635,9 +1602,6 @@ class PhasorPanel(QWidget):
         self._roi_labels_layer.data = self._roi_label_data.copy()
 
 
-# ── CalibrationDialog ─────────────────────────────────────────────────────
-
-
 class CalibrationDialog(QDialog):
     """Enter reference lifetime + measured G, S → computes calibration factor."""
 
@@ -1679,9 +1643,6 @@ class CalibrationDialog(QDialog):
         }
 
 
-# ── CustomFactorDialog ────────────────────────────────────────────────────
-
-
 class CustomFactorDialog(QDialog):
     """Enter a calibration factor directly as real + imaginary parts."""
 
@@ -1713,9 +1674,6 @@ class CustomFactorDialog(QDialog):
 
     def get_values(self) -> tuple:
         return (self._real.value(), self._imag.value())
-
-
-# ── Module-level helpers ──────────────────────────────────────────────────
 
 
 def _parse_settings(ds, settings: dict):

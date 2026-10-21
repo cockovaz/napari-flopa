@@ -1,12 +1,3 @@
-"""
-Fast histogram + dual range slider widget.
-
-The histogram canvas shows two overlaid range indicators:
-  - View range : cyan  dashed lines  (top slider, for display contrast)
-  - Mask range : red   dashed lines  (bottom slider, for mask creation)
-
-"""
-
 import numpy as np
 from matplotlib import colormaps
 from qtpy.QtCore import QRect, Qt, Signal
@@ -95,7 +86,7 @@ class _HistogramCanvas(QWidget):
 
         painter.fillRect(0, 0, w, h, QColor(30, 30, 30))
 
-        # ── Y-axis labels (drawn first so they sit in the gutter) ──────────
+        # Y-axis labels first, so they sit in the gutter.
         ax_color = QColor(150, 150, 150, 160)
         painter.setPen(ax_color)
         font = painter.font()
@@ -141,7 +132,7 @@ class _HistogramCanvas(QWidget):
             painter.end()
             return
 
-        # ── Histogram bars (x mapped onto [pad_l, w - pad_r]) ─────────────
+        # Histogram bars, x mapped onto [pad_l, w - pad_r].
         pad_t = 6  # top buffer so the tallest bar never touches the ceiling
         bar_w = w - pad_l - pad_r
         bar_area_h = h - pad_b - pad_t  # usable vertical space for bars
@@ -223,6 +214,8 @@ class HistogramSlider(QWidget):
     Top slider   (cyan handles) — view range for display contrast
     Bottom slider (red handles) — mask range for mask creation
 
+    Both ranges are drawn on the histogram as dashed lines in their colour.
+
     All four handle values are shown as editable QLineEdit fields.
 
     Signals:
@@ -245,7 +238,6 @@ class HistogramSlider(QWidget):
         layout.setContentsMargins(0, 1, 0, 1)
         layout.setSpacing(0)
 
-        # ── Histogram canvas ──────────────────────────────────────────────
         self._canvas = _HistogramCanvas(canvas_height=canvas_height)
         canvas_row = QHBoxLayout()
         canvas_row.setContentsMargins(
@@ -255,7 +247,6 @@ class HistogramSlider(QWidget):
         layout.addLayout(canvas_row)
         layout.addSpacing(1)
 
-        # ── View slider row (cyan) ────────────────────────────────────────
         self._lo_edit = self._make_edit()
         self._hi_edit = self._make_edit()
 
@@ -276,7 +267,6 @@ class HistogramSlider(QWidget):
         layout.addLayout(view_row)
         layout.addSpacing(1)
 
-        # ── Mask slider row (red) ─────────────────────────────────────────
         self._mask_lo_edit = self._make_edit()
         self._mask_hi_edit = self._make_edit()
 
@@ -296,8 +286,6 @@ class HistogramSlider(QWidget):
         mask_row.addWidget(self._mask_hi_edit)
         layout.addLayout(mask_row)
 
-        # ── Connect signals ───────────────────────────────────────────────
-
         self._slider.valueChanged.connect(self._on_view_moved)
         self._slider.sliderReleased.connect(self._on_view_released)
         self._mask_slider.valueChanged.connect(self._on_mask_moved)
@@ -314,10 +302,6 @@ class HistogramSlider(QWidget):
         self._mask_hi_edit.editingFinished.connect(
             lambda: self._apply_edit(self._mask_hi_edit, "mask_hi")
         )
-
-    # ------------------------------------------------------------------ #
-    # Public API                                                           #
-    # ------------------------------------------------------------------ #
 
     def update_data(self, data: np.ndarray):
         """Full reset: histogram + slider positions set to [p2, p98]."""
@@ -461,10 +445,6 @@ class HistogramSlider(QWidget):
         return (
             (int(lo), int(hi)) if self.integer_mode else (float(lo), float(hi))
         )
-
-    # ------------------------------------------------------------------ #
-    # Internal helpers                                                     #
-    # ------------------------------------------------------------------ #
 
     def _make_edit(self) -> QLineEdit:
         e = QLineEdit("0")

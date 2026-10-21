@@ -1,11 +1,5 @@
-"""
-Intensity trace reconstruction: photon counts binned over time.
-
-Unlike image reconstruction this ignores scan geometry entirely — it bins every
-photon of a time window into fixed-width bins per detector, and collects the
-marker times that fall inside the same window. Used by the Trace tab to inspect
-what a measurement actually looked like over time.
-"""
+from collections.abc import Callable
+from os import PathLike
 
 import xarray as xr
 from tttrkit.ptuio.decoder import T3OverflowCorrector
@@ -17,7 +11,7 @@ from napari_flopa.core.processing.reconstruction import DEFAULT_CHUNK_SIZE
 
 
 def reconstruct_trace(
-    ptu_path,
+    ptu_path: str | PathLike,
     *,
     start_time: float,
     stop_time: float,
@@ -25,13 +19,18 @@ def reconstruct_trace(
     bin_width_s: float,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     logger: ProgressLogger | None = None,
-    progress_callback=None,
+    progress_callback: Callable[[int], None] | None = None,
 ) -> xr.Dataset:
     """Bin photons into a time trace over ``[start_time, stop_time]`` seconds.
 
+    Unlike image reconstruction this ignores scan geometry: every photon of
+    the window goes into fixed-width bins per detector, together with the
+    marker times inside the same window.
+
     Args:
         ptu_path: Path to the .ptu file.
-        start_time, stop_time: Window in seconds; only this part is read.
+        start_time: Window start in seconds.
+        stop_time: Window end in seconds, reading stops past it.
         max_detector: Highest detector index to bin.
         bin_width_s: Time bin width in **seconds**.
         chunk_size: TTTR records per iteration — throughput only.

@@ -1,32 +1,3 @@
-"""
-TCSPC decay curve panel.
-
-Dataset variable used: tcspc_histogram  dims: (frame, channel, tcspc_channel).
-The sequence dimension is not stored in the TCSPC histogram; the Sequences
-aggregation checkbox is accepted but is a no-op unless future reconstructions
-add that dimension.
-
-Default state (no aggregation): plots one curve per (frame × channel) combination,
-auto-coloured from a 60-entry palette built from matplotlib tab20/tab20b/tab20c.
-
-Aggregation behaviour:
-  Frames only    → one curve per detector channel
-  Detectors only → one curve per frame
-  Both           → single summed curve
-  Sequences      → no-op (no sequence dim in tcspc_histogram)
-
-Per-detector toggle buttons (D0, D1, …) show/hide all curves for that detector;
-disabled when "Detectors" is aggregated.  All / None buttons are always active.
-
-Matplotlib legend is capped at _MAX_LEGEND (8) entries.
-The scrollable curve list uses rows of QHBoxLayouts for tight top-left alignment.
-
-Export (selector + Save, same pattern as the Phasor tab):
-  • Plot  → PNG / SVG / PDF
-  • Table → CSV: time_ns + one column per curve (every curve, hidden ones
-            included), with shift and normalisation applied as plotted
-"""
-
 import csv
 import itertools
 import traceback
@@ -92,10 +63,19 @@ class DecayPanel(QWidget):
     """
     Decay tab — TCSPC decay curves.
 
-    Reads tcspc_histogram from FlopaState.dataset and plots one curve per free
-    dimension combination after optional aggregation.  Receives view settings
-    from FlimViewPanel via on_view_changed(dict) and marks itself stale when
-    settings differ from the last plot.
+    Reads ``tcspc_histogram`` ``(frame, sequence, channel, tcspc_time)`` from
+    FlopaState.dataset, sums the checked Aggregate dims (Frames / Sequences /
+    Detectors) and plots one curve per combination of the remaining ones,
+    labelled e.g. ``F0 S1 D0`` (all three checked gives a single "Sum" curve).
+    Receives view settings from FlimViewPanel via on_view_changed(dict) and
+    marks itself stale when settings differ from the last plot.
+
+    Per-detector buttons (D0, D1, …) show/hide that detector's curves and are
+    disabled while Detectors is aggregated. The matplotlib legend is capped
+    at ``_MAX_LEGEND`` entries.
+
+    Table export: ``time_ns`` + one column per curve (hidden ones included),
+    with shift and normalisation applied as plotted.
     """
 
     def __init__(self, state: FlopaState, viewer, parent=None):
@@ -114,16 +94,11 @@ class DecayPanel(QWidget):
         self._build_ui()
         self.state.dataset_changed.connect(self._on_dataset_changed)
 
-    # ------------------------------------------------------------------ #
-    # UI                                                                   #
-    # ------------------------------------------------------------------ #
-
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
         root.setSpacing(4)
 
-        # ── Top toolbar ────────────────────────────────────────────────
         tb = QHBoxLayout()
         tb.setSpacing(4)
 
@@ -169,11 +144,11 @@ class DecayPanel(QWidget):
         tb.addWidget(self._export_combo)
         self._save_btn = QPushButton("Save")
         self._save_btn.setEnabled(False)
+        self._save_btn.setToolTip("Save the plot or table chosen on the left")
         tb.addWidget(self._save_btn)
 
         root.addLayout(tb)
 
-        # ── Settings row ───────────────────────────────────────────────
         sr = QHBoxLayout()
         sr.setSpacing(6)
 
@@ -185,7 +160,10 @@ class DecayPanel(QWidget):
         self._agg_frames = QCheckBox("Frames")
         self._agg_seqs = QCheckBox("Sequences")
         self._agg_chans = QCheckBox("Detectors")
-        # Default: nothing aggregated → all frame×channel (×sequence if present) curves
+        self._agg_frames.setToolTip("Sum the curves over all frames")
+        self._agg_seqs.setToolTip("Sum the curves over all sequences")
+        self._agg_chans.setToolTip("Sum the curves over all detectors")
+        # Default: nothing aggregated → one curve per frame × sequence × detector
         self._agg_frames.setChecked(False)
         self._agg_seqs.setChecked(False)
         self._agg_chans.setChecked(False)
@@ -207,7 +185,6 @@ class DecayPanel(QWidget):
         # sr.addStretch()
         root.addLayout(sr)
 
-        # ── Display options row (below Aggregate) ──────────────────────────────
         sr2 = QHBoxLayout()
         sr2.setSpacing(6)
 
@@ -227,7 +204,6 @@ class DecayPanel(QWidget):
 
         root.addLayout(sr2)
         root.addStretch()
-        # ── Matplotlib canvas ──────────────────────────────────────────
         # Small default size (keeps the initial dock narrow); the Expanding
         # size policy + widgetResizable scroll area stretch it to fill the tab.
         self._fig = Figure(figsize=(4.5, 4.5), tight_layout=True)
@@ -243,7 +219,6 @@ class DecayPanel(QWidget):
         self._draw_empty()
         self._canvas.setVisible(False)  # hidden until the first plot
 
-        # ── Per-detector toggle buttons ────────────────────────────────
         self._det_row_widget = QWidget()
         det_row = QHBoxLayout(self._det_row_widget)
         det_row.setContentsMargins(0, 0, 0, 0)
@@ -261,9 +236,11 @@ class DecayPanel(QWidget):
 
         self._show_all_btn = QPushButton("All")
         self._show_all_btn.setFixedWidth(36)
+        self._show_all_btn.setToolTip("Show every curve")
         self._show_all_btn.clicked.connect(lambda: self._set_all_visible(True))
         self._hide_all_btn = QPushButton("None")
         self._hide_all_btn.setFixedWidth(40)
+        self._hide_all_btn.setToolTip("Hide every curve")
         self._hide_all_btn.clicked.connect(
             lambda: self._set_all_visible(False)
         )
@@ -288,13 +265,11 @@ class DecayPanel(QWidget):
         self._legend_scroll.setWidget(self._legend_inner)
         root.addWidget(self._legend_scroll)
 
-        # ── Status ─────────────────────────────────────────────────────
         self._status = StatusLabel(
             "Load and reconstruct a PTU file to enable decay plotting."
         )
         root.addWidget(self._status)
 
-        # ── Wiring ─────────────────────────────────────────────────────
         self._plot_btn.clicked.connect(self._on_plot)
         self._from_view_btn.clicked.connect(self._on_from_view)
         self._default_btn.clicked.connect(self._on_default)
@@ -308,10 +283,6 @@ class DecayPanel(QWidget):
             chk.toggled.connect(self._mark_stale)
         # Also disable/enable det buttons when Detectors agg changes
         self._agg_chans.toggled.connect(self._update_det_btn_state)
-
-    # ------------------------------------------------------------------ #
-    # Slots                                                                #
-    # ------------------------------------------------------------------ #
 
     @Slot()
     def _on_dataset_changed(self):
@@ -354,10 +325,6 @@ class DecayPanel(QWidget):
         super().showEvent(event)
         self._fig.tight_layout()
         self._canvas.draw_idle()
-
-    # ------------------------------------------------------------------ #
-    # Plot / From View / Default actions                                   #
-    # ------------------------------------------------------------------ #
 
     def _on_plot(self):
         """Extract all curves with current aggregation settings and refresh the plot."""
@@ -452,10 +419,6 @@ class DecayPanel(QWidget):
         self._rebuild_legend()
         self._redraw()
 
-    # ------------------------------------------------------------------ #
-    # Data extraction                                                      #
-    # ------------------------------------------------------------------ #
-
     def _extract_all_curves(self) -> list:
         """
         Build a list of curve dicts from tcspc_histogram given current aggregation.
@@ -538,10 +501,6 @@ class DecayPanel(QWidget):
             traceback.print_exc()
             self._status.error(f"Error extracting curves: {e}")
             return []
-
-    # ------------------------------------------------------------------ #
-    # Drawing                                                              #
-    # ------------------------------------------------------------------ #
 
     def _redraw(self):
         """
@@ -669,10 +628,6 @@ class DecayPanel(QWidget):
         )
         self._canvas.draw_idle()
 
-    # ------------------------------------------------------------------ #
-    # Per-detector buttons                                                 #
-    # ------------------------------------------------------------------ #
-
     def _rebuild_det_buttons(self):
         """
         Recreate per-detector toggle buttons (D0, D1, …) from current curves.
@@ -700,6 +655,10 @@ class DecayPanel(QWidget):
             btn.setChecked(True)
             btn.setFixedWidth(32)
             btn.setEnabled(not disabled)
+            btn.setToolTip(
+                f"Show / hide all curves of detector {ch}\n"
+                "(disabled while Detectors is aggregated)"
+            )
             btn.setStyleSheet(
                 S.BTN_DET_ON if not disabled else S.BTN_DET_DISABLED
             )
@@ -729,10 +688,6 @@ class DecayPanel(QWidget):
                 c["visible"] = visible
         self._rebuild_legend()
         self._redraw()
-
-    # ------------------------------------------------------------------ #
-    # Scrollable per-curve legend                                          #
-    # ------------------------------------------------------------------ #
 
     def _rebuild_legend(self):
         """
@@ -809,10 +764,6 @@ class DecayPanel(QWidget):
             btn.blockSignals(False)
         self._rebuild_legend()
         self._redraw()
-
-    # ------------------------------------------------------------------ #
-    # Export                                                               #
-    # ------------------------------------------------------------------ #
 
     def _on_export(self):
         """Dispatch on the export selector (plot | table)."""
@@ -891,9 +842,6 @@ class DecayPanel(QWidget):
         except Exception as e:
             traceback.print_exc()
             self._status.error(f"CSV error: {e}")
-
-
-# ── Legend entry widget ───────────────────────────────────────────────────
 
 
 class _CurveLegendEntry(QWidget):

@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 import numpy as np
 import xarray as xr
 from numpy.typing import NDArray
@@ -72,7 +74,16 @@ def smooth_count(
     return np.asarray(total / norm, dtype=np.float32)
 
 
-def aggregate_dataset(ds: xr.Dataset, dims) -> xr.Dataset:
+def aggregate_dataset(ds: xr.Dataset, dims: str | Sequence[str]) -> xr.Dataset:
+    """Collapse *dims* to size 1, keeping them in the result.
+
+    ``photon_count`` and ``tcspc_histogram`` are summed; ``mean_arrival_time``
+    and the phasor are photon-weighted means over valid pixels (NaN where no
+    photons). Other variables are dropped; attrs are not copied.
+
+    Raises:
+        ValueError: If a dim is not in *ds*.
+    """
     if isinstance(dims, str):
         dims = [dims]
     if not dims:
@@ -101,9 +112,8 @@ def aggregate_dataset(ds: xr.Dataset, dims) -> xr.Dataset:
             )
 
     if "tcspc_histogram" in ds:
-        # tcspc_histogram is a global decay (frame, channel, tcspc_channel) and
-        # does not carry the spatial dims (sequence/line/pixel) the other
-        # variables do — only reduce over the dims it actually has.
+        # tcspc_histogram (frame, sequence, channel, tcspc_time) has no
+        # line/pixel dims - reduce over the dims it actually has.
         hist = ds["tcspc_histogram"]
         hist_dims = [d for d in dims if d in hist.dims]
         out["tcspc_histogram"] = (

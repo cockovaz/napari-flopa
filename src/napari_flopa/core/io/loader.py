@@ -61,7 +61,7 @@ def format_ptu_header(
 
 
 def read_ptu_file(
-    path, header: bool = True, logger: ProgressLogger = None
+    path: str, header: bool = True, logger: ProgressLogger | None = None
 ) -> dict:
     """
     Reads a PTU file and creates a standardized dictionary of instrument constants.
@@ -93,7 +93,7 @@ def read_ptu_file(
             provenance.METADATA if present else provenance.DEFAULT
         )
 
-    # ── Derived constants (computed from the tag params above) ──────────────
+    # Derived constants, computed from the tag params above.
     rep_src = constants_source["repetition_rate"]
     res_src = constants_source["tcspc_resolution"]
     tcspc_resolution = constants["tcspc_resolution"]

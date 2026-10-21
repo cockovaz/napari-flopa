@@ -1,6 +1,8 @@
 import importlib.util
+from typing import Any
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 #: Above this the hierarchical linkage matrix (O(N²)) gets too large.
 MAX_HIERARCHICAL_POINTS = 20_000
@@ -102,7 +104,9 @@ def _cluster_finite(xy: np.ndarray, method: str, params: dict) -> np.ndarray:
     raise ValueError(f"Unknown clustering method: {method}")
 
 
-def cluster_points(g, s, method: str, **params) -> np.ndarray:
+def cluster_points(
+    g: ArrayLike, s: ArrayLike, method: str, **params: Any
+) -> np.ndarray:
     """Cluster phasor points; returns an int label per point.
 
     ``-1`` marks noise (density methods) and points with non-finite G/S,

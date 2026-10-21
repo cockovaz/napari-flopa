@@ -1,39 +1,10 @@
-"""
-Scan settings: one description of how a .ptu is reconstructed.
-
-``ScanSettings`` owns every value that describes a reconstruction — the ones
-tttrkit's ``ScanConfig`` takes, plus the plugin's own (TCSPC bins, calibration
-factor, source filename) and where each value came from. Everything else is
-derived from it:
-
-    widgets ─► ScanSettings ─┬─► to_scan_config()  → tttrkit ScanConfig
-                             ├─► to_json_dict()    → the .json config file
-                             └─► ds.attrs["scan_config"]
-
-That keeps tttrkit's vocabulary in exactly one method. Its own
-``ScanConfig.to_dict()`` is deliberately not used for serialisation: it renames
-the marker keys and drops ``max_detector`` and both marker delays.
-
-JSON schema (every key optional when reading)::
-
-    {
-      "ptu_filename": "scan.ptu",       # recorded for reference only
-      "scan": {
-        "frames", "lines", "pixels", "sequences",
-        "accumulations": [1, 3, ...],   # one int per sequence
-        "max_detector", "tcspc_bins",
-        "bidirectional", "harmonic_scan", "laser_duty",
-        "line_start_marker_delay", "line_stop_marker_delay",
-        "line_duration",                # omitted when tttrkit should infer it
-        "frame_start_marker", "line_start_marker", "line_stop_marker"
-      },
-      "calibration": {"factor": "1+0j"},
-      "provenance": {"frames": "metadata", ...}   # omitted when empty
-    }
-"""
-
 import json
 from dataclasses import dataclass, field, fields
+from os import PathLike
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from tttrkit.ptuio.reconstructor import ScanConfig
 
 #: Marker delays and the line duration are stored in seconds — tttrkit takes
 #: them as sync counts. The UI enters delays in µs and durations in ms.
@@ -45,16 +16,43 @@ DEFAULT_LASER_DUTY = 0.6
 
 @dataclass
 class ScanSettings:
-    """Everything needed to reconstruct a file, in the plugin's own vocabulary."""
+    """Everything needed to reconstruct a file, in the plugin's own vocabulary.
 
-    # ── geometry ────────────────────────────────────────────────────────
+    Holds the values tttrkit's ``ScanConfig`` takes, plus the plugin's own
+    (TCSPC bins, calibration factor, source filename) and where each value
+    came from. Everything else is derived from it:
+
+        widgets ─► ScanSettings ─┬─► to_scan_config()  → tttrkit ScanConfig
+                                 ├─► to_json_dict()    → the .json config file
+                                 └─► ds.attrs["scan_config"]
+
+    tttrkit's own ``ScanConfig.to_dict()`` is not used for serialisation: it
+    renames the marker keys and drops ``max_detector`` and both marker delays.
+
+    JSON schema (every key optional when reading)::
+
+        {
+          "ptu_filename": "scan.ptu",       # recorded for reference only
+          "scan": {
+            "frames", "lines", "pixels", "sequences",
+            "accumulations": [1, 3, ...],   # one int per sequence
+            "max_detector", "tcspc_bins",
+            "bidirectional", "harmonic_scan", "laser_duty",
+            "line_start_marker_delay", "line_stop_marker_delay",
+            "line_duration",                # omitted when tttrkit should infer it
+            "frame_start_marker", "line_start_marker", "line_stop_marker"
+          },
+          "calibration": {"factor": "1+0j"},
+          "provenance": {"frames": "metadata", ...}   # omitted when empty
+        }
+    """
+
     frames: int = 1
     lines: int = 512
     pixels: int = 512
     accumulations: tuple[int, ...] = (1,)
     max_detector: int = 4
 
-    # ── scan modes ──────────────────────────────────────────────────────
     bidirectional: bool = False
     harmonic_scan: bool = False
     laser_duty: float = DEFAULT_LASER_DUTY
@@ -63,12 +61,12 @@ class ScanSettings:
     #: None lets tttrkit measure it from the markers of the first chunk.
     line_duration: float | None = None
 
-    # ── marker bits (one of 1, 2, 4, 8) ─────────────────────────────────
+    # Marker bits: one of 1, 2, 4, 8.
     frame_start_marker: int = 4
     line_start_marker: int = 1
     line_stop_marker: int = 2
 
-    # ── plugin extras, not part of tttrkit's ScanConfig ─────────────────
+    # Plugin extras, not part of tttrkit's ScanConfig.
     tcspc_bins: int | None = None
     calib_factor: str = "1+0j"
     ptu_filename: str | None = None
@@ -86,7 +84,7 @@ class ScanSettings:
         """Line start/stop delays as applied — independent of scan mode."""
         return self.line_start_marker_delay, self.line_stop_marker_delay
 
-    def to_scan_config(self, sync_rate: float):
+    def to_scan_config(self, sync_rate: float) -> "ScanConfig":
         """Build the tttrkit ``ScanConfig`` — the only place its names appear.
 
         *sync_rate* is the laser repetition rate in Hz: tttrkit takes the
@@ -194,7 +192,7 @@ class ScanSettings:
         out.sources = dict(cfg.get("provenance") or {})
         return out
 
-    def replace(self, **changes) -> "ScanSettings":
+    def replace(self, **changes: Any) -> "ScanSettings":
         """Copy with *changes* applied — rejects unknown field names."""
         known = {f.name for f in fields(self)}
         unknown = set(changes) - known
@@ -215,18 +213,18 @@ def nsync_to_seconds(delay_nsync: float, sync_rate: float) -> float:
     return float(delay_nsync) / float(sync_rate)
 
 
-def scan_config_from_dict(cfg: dict, sync_rate: float):
+def scan_config_from_dict(cfg: dict, sync_rate: float) -> "ScanConfig":
     """Convenience: config dict → tttrkit ``ScanConfig``."""
     return ScanSettings.from_json_dict(cfg).to_scan_config(sync_rate)
 
 
-def save_config(path, cfg: dict) -> None:
+def save_config(path: str | PathLike, cfg: dict) -> None:
     """Write *cfg* to *path* as indented JSON."""
     with open(path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
 
 
-def load_config(path) -> dict:
+def load_config(path: str | PathLike) -> dict:
     """Read and return the JSON config at *path*."""
     with open(path, encoding="utf-8") as f:
         return json.load(f)

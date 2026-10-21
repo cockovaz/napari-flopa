@@ -1,19 +1,3 @@
-"""
-Single-line panel status label with three levels.
-
-Every panel that carries a status line uses this instead of styling a bare
-QLabel, so the colours and the "! " warning marker stay identical everywhere::
-
-    self._status = StatusLabel("Load and reconstruct a PTU file.")
-    ...
-    self._status.info(f"Plotted {n:,} pixels.")
-    self._status.warn(f"Only {n:,} of {total:,} pixels drawn.")   # amber, "! "
-    self._status.error(f"Save error: {e}")                        # red
-
-Each call re-applies its level's stylesheet, so a message never inherits the
-previous one's colour.
-"""
-
 from qtpy.QtWidgets import QLabel
 
 from napari_flopa.ui.style import S
@@ -23,7 +7,17 @@ WARN_PREFIX = "! "
 
 
 class StatusLabel(QLabel):
-    """Word-wrapped status line; ``info`` / ``warn`` / ``error`` set the text."""
+    """Word-wrapped status line; ``info`` / ``warn`` / ``error`` set the text.
+
+    Every panel uses this instead of styling a bare QLabel, so the colours
+    and the "! " warning marker stay identical everywhere. Each call
+    re-applies its level's stylesheet, so a message never inherits the
+    previous one's colour::
+
+        self._status.info(f"Plotted {n:,} pixels.")
+        self._status.warn(f"Only {n:,} of {total:,} pixels drawn.")  # amber
+        self._status.error(f"Save error: {e}")                       # red
+    """
 
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)

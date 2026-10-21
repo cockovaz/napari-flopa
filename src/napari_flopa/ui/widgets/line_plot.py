@@ -1,16 +1,3 @@
-"""
-Dependency-free line plot for dense traces with a draggable time selector.
-
-QPainter rather than matplotlib on purpose: a trace can hold hundreds of
-thousands of bins and the interaction (click to place a selector, drag to pick a
-range) is custom. The analytical tabs stay on matplotlib, which brings axes,
-log scales, colormaps and export that this widget deliberately does not.
-
-Signals:
-    selector_changed(float)              — selector moved to this time
-    selection_range_changed(float, float) — a drag finished over this range
-"""
-
 import numpy as np
 from qtpy.QtCore import Qt, Signal
 from qtpy.QtGui import QColor, QPainter, QPen
@@ -47,11 +34,19 @@ def _nice_ticks(v_min: float, v_max: float, target: int = 6):
 
 
 class LinePlotWidget(QWidget):
-    """Time trace plot: one line per detector plus marker overlays."""
+    """Time trace plot: one line per detector plus marker overlays.
+
+    QPainter. Click to place a selector, drag to pick a range.
+
+    Signals:
+        selector_changed(float) — selector moves to this time
+        selection_range_changed(float, float) — a drag finishes over this range
+        selection_cleared() — a plain click discards the shaded range
+    """
 
     selector_changed = Signal(float)
     selection_range_changed = Signal(float, float)
-    selection_cleared = Signal()  # a plain click discarded the shaded range
+    selection_cleared = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)

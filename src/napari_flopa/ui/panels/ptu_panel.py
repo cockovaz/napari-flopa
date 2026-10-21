@@ -120,10 +120,6 @@ class PtuPanel(QWidget):
             .get("acquisition_time"),
         }
 
-    # ------------------------------------------------------------------ #
-    # Parameter provenance                                                 #
-    # ------------------------------------------------------------------ #
-
     def _set_param_source(self, name: str, source: str):
         """Record a parameter's source and recolour its dot."""
         self._param_source[name] = source
@@ -137,15 +133,10 @@ class PtuPanel(QWidget):
         if not self._autofill:
             self._set_param_source(name, provenance.USER)
 
-    # ------------------------------------------------------------------ #
-    # UI construction                                                      #
-    # ------------------------------------------------------------------ #
-
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(2, 2, 2, 2)
 
-        # --- File loading ---
         file_group = QGroupBox("Load Data")
         apply_style(file_group, S.GROUP_PRIMARY)
         file_layout = QVBoxLayout(file_group)
@@ -160,6 +151,9 @@ class PtuPanel(QWidget):
         )
         btn_row = QHBoxLayout()
         self.select_ptu_btn = QPushButton("Read PTU...")
+        self.select_ptu_btn.setToolTip(
+            "Open a .ptu file: reads its header and fills in the scan parameters"
+        )
         self.select_ptu_btn.clicked.connect(self._select_ptu_file)
         self.load_demo_btn = QPushButton("Load Demo")
         self.load_demo_btn.setToolTip(
@@ -173,7 +167,6 @@ class PtuPanel(QWidget):
         file_layout.addLayout(btn_row)
         main_layout.addWidget(file_group)
 
-        # --- Header info (summary only, full header via button) ---
         self.header_group = QGroupBox("Header Info")
         apply_style(self.header_group, S.GROUP_PRIMARY)
         header_layout = QVBoxLayout(self.header_group)
@@ -199,12 +192,10 @@ class PtuPanel(QWidget):
         main_layout.addWidget(self.header_group)
         self.header_group.setVisible(False)
 
-        # --- Scan configuration ---
         self.config_group = self._build_config_group()
         main_layout.addWidget(self.config_group)
         self.config_group.setVisible(False)
 
-        # --- Reconstruction ---
         self.recon_group = QGroupBox("Reconstruction")
         apply_style(self.recon_group, S.GROUP_PRIMARY)
         recon_layout = QVBoxLayout(self.recon_group)
@@ -255,6 +246,9 @@ class PtuPanel(QWidget):
 
         self.reconstruct_btn = QPushButton("Run")
         self.reconstruct_btn.setStyleSheet(S.BTN_RUN)
+        self.reconstruct_btn.setToolTip(
+            "Reconstruct the image with these parameters and open FLIM View"
+        )
         self.reconstruct_btn.clicked.connect(self._run_reconstruction)
         output_row.addWidget(self.reconstruct_btn)
         recon_layout.addLayout(output_row)
@@ -287,7 +281,6 @@ class PtuPanel(QWidget):
         main_layout.addWidget(self.recon_group)
         self.recon_group.setVisible(False)
 
-        # --- Info / log ---
         self.info_group = QGroupBox("Log")
         apply_style(self.info_group, S.GROUP_PRIMARY)
         info_layout = QVBoxLayout(self.info_group)
@@ -350,6 +343,9 @@ class PtuPanel(QWidget):
         self.tcspc_bins_spin = QSpinBox()
         self.tcspc_bins_spin.setRange(1, 65536)
         self.tcspc_bins_spin.setValue(4096)
+        self.tcspc_bins_spin.setToolTip(
+            "Number of TCSPC time bins per laser period to reconstruct"
+        )
         form.addRow(
             "TCSPC Bins:", _spin_row("tcspc_bins", self.tcspc_bins_spin)
         )
@@ -357,6 +353,9 @@ class PtuPanel(QWidget):
         self.max_detector_spin = QSpinBox()
         self.max_detector_spin.setRange(1, 128)
         self.max_detector_spin.setValue(2)
+        self.max_detector_spin.setToolTip(
+            "Number of detector channels to reconstruct"
+        )
         form.addRow(
             "Max detectors:", _spin_row("max_detector", self.max_detector_spin)
         )
@@ -398,8 +397,6 @@ class PtuPanel(QWidget):
         accu_row.addWidget(self.accu_scroll)
         main_layout.addLayout(accu_row)
 
-        # --- Line start/stop marker delays (always enabled, independent of
-        # bidirectional/harmonic scan status) ---
         main_layout.addWidget(QLabel("Line markers delay (µs)"))
 
         delay_row = QHBoxLayout()
@@ -444,7 +441,6 @@ class PtuPanel(QWidget):
         duration_row.addStretch()
         main_layout.addLayout(duration_row)
 
-        # --- Bidirectional (nested, checkable subsection) ---
         # GROUP_NESTED sets no background-color, so the box is transparent and
         # inherits the Scan Configuration tint — its content area matches the
         # surrounding box exactly.
@@ -452,6 +448,9 @@ class PtuPanel(QWidget):
         apply_style(self.bidir_group, S.GROUP_CHECKABLE)
         self.bidir_group.setCheckable(True)
         self.bidir_group.setChecked(False)
+        self.bidir_group.setToolTip(
+            "Lines are scanned in both directions, every second line is reversed"
+        )
         bidir_layout = QVBoxLayout(self.bidir_group)
         bidir_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -487,11 +486,13 @@ class PtuPanel(QWidget):
         )
         self.bidir_phase_spin.valueChanged.connect(self._sync_stop_from_shift)
 
-        # --- Harmonic scan ---
         self.harmonic_group = QGroupBox("Harmonic Scan")
         apply_style(self.harmonic_group, S.GROUP_CHECKABLE)
         self.harmonic_group.setCheckable(True)
         self.harmonic_group.setChecked(False)
+        self.harmonic_group.setToolTip(
+            "Enable harmonic (resonant) scan handling"
+        )
         harmonic_layout = QVBoxLayout(self.harmonic_group)
         harmonic_layout.setContentsMargins(0, 0, 0, 0)
         harmonic_layout.setSpacing(3)
@@ -527,10 +528,6 @@ class PtuPanel(QWidget):
 
         self._update_accumulation_widgets()
         return group
-
-    # ------------------------------------------------------------------ #
-    # Helpers                                                              #
-    # ------------------------------------------------------------------ #
 
     def _log_start(self):
         """Begin accumulating a new log block."""

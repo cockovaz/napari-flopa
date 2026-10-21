@@ -84,6 +84,15 @@ _MAX_OVERLAY_GROUPS = 30
 _OV_SAME_AS_COLOR = "Same as color"
 _OV_ALL_POINTS = "All points"
 _CMAPS = ("tab10", "Set1", "viridis", "plasma", "inferno", "hot", "rainbow")
+_CLUSTER_PARAM_TIPS = {
+    "n_clusters": "Number of clusters to find",
+    "linkage": "How the distance between two clusters is measured",
+    "n_components": "Number of Gaussian components",
+    "covariance_type": "Shape freedom of each Gaussian (full = any ellipse)",
+    "eps": "Neighbourhood radius in G,S units",
+    "min_samples": "Points within eps needed to start a cluster",
+    "min_cluster_size": "Smallest group that counts as a cluster",
+}
 
 
 def _categorical_colors(unique: list[str], cmap_name: str) -> dict:
@@ -131,24 +140,24 @@ class PhasorAnalyzerPanel(QWidget):
         self._build_ui()
         self.state.dataset_changed.connect(self._sync_frep_from_state)
 
-    # ------------------------------------------------------------------ #
-    # UI                                                                   #
-    # ------------------------------------------------------------------ #
-
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
         root.setSpacing(4)
 
-        # ── Toolbar ────────────────────────────────────────────────────
         tb = QHBoxLayout()
         self._load_btn = QPushButton("Load CSV")
+        self._load_btn.setToolTip(
+            "Load a phasor table (CSV with g and s columns),\n"
+            "e.g. from the Phasor or Batch tab"
+        )
         self._load_btn.clicked.connect(self._on_load_csv)
         tb.addWidget(self._load_btn)
 
         self._plot_btn = QPushButton("Plot")
         self._plot_btn.setStyleSheet(S.BTN_RUN)
         self._plot_btn.setEnabled(False)
+        self._plot_btn.setToolTip("Plot the rows that pass the filter")
         self._plot_btn.clicked.connect(self._on_plot)
         tb.addWidget(self._plot_btn)
 
@@ -175,21 +184,29 @@ class PhasorAnalyzerPanel(QWidget):
         tb.addStretch()
 
         self._tools_btn = QPushButton("Data tools…")
+        self._tools_btn.setToolTip(
+            "Filter rows, derive a group column from names by regex,\n"
+            "or combine two columns"
+        )
         self._tools_btn.clicked.connect(self._on_open_data_tools)
         tb.addWidget(self._tools_btn)
 
         self._export_combo = QComboBox()
         self._export_combo.addItem("Save plot…", "plot")
         self._export_combo.addItem("Save table…", "table")
+        self._export_combo.setToolTip(
+            "Plot: PNG / SVG / PDF of the figure\n"
+            "Table: CSV of the rows that pass the filter, with every column"
+        )
         tb.addWidget(self._export_combo)
         self._save_btn = QPushButton("Save")
+        self._save_btn.setToolTip("Save the plot or table chosen on the left")
         self._save_btn.clicked.connect(self._on_export)
         tb.addWidget(self._save_btn)
         root.addLayout(tb)
 
         root.addSpacing(8)
 
-        # ── Color by ──────────────────────────────────────────────────
         color_row = QHBoxLayout()
         color_lbl = QLabel("Color by:")
         color_row.addWidget(color_lbl)
@@ -224,13 +241,16 @@ class PhasorAnalyzerPanel(QWidget):
         self._cmap_combo = QComboBox()
         self._cmap_combo.addItems(_CMAPS)
         self._cmap_combo.setMaximumWidth(85)
+        self._cmap_combo.setToolTip("Colormap of the Color by column")
         color_row.addWidget(self._cmap_combo)
         self._legend_check = QCheckBox("Legend")
         self._legend_check.setChecked(True)
+        self._legend_check.setToolTip(
+            "Show the category legend beside the plot"
+        )
         color_row.addWidget(self._legend_check)
         root.addLayout(color_row)
 
-        # ── Per-group overlays ─────────────────────────────────────────
         # Same column layout as the Color by row: label, column combo,
         # an empty slot as wide as Categorical + n/N, Cmap, Legend.
         ov_row = QHBoxLayout()
@@ -308,7 +328,6 @@ class PhasorAnalyzerPanel(QWidget):
         root.addLayout(ov_row2)
         self._update_overlay_controls()
 
-        # ── f_rep + τ marks ────────────────────────────────────────────
         freq_row = QHBoxLayout()
         freq_row.addWidget(QLabel("f_rep (MHz):"))
         self._frep_spin = QDoubleSpinBox()
@@ -326,12 +345,14 @@ class PhasorAnalyzerPanel(QWidget):
         freq_row.addStretch()
         root.addLayout(freq_row)
 
-        # ── Calibration factor ─────────────────────────────────────────
         factor_row = QHBoxLayout()
         factor_row.setSpacing(4)
         factor_row.addWidget(QLabel("Calibration factor:"))
         self._calib_display = QLineEdit(self._fmt_complex(self._calib_factor))
         self._calib_display.setReadOnly(True)
+        self._calib_display.setToolTip(
+            "Current calibration factor (complex). Applied as (g + i·s) × factor"
+        )
         self._calib_display.setStyleSheet(S.DISPLAY)
         self._calib_display.setMaximumWidth(160)
         factor_row.addWidget(self._calib_display)
@@ -374,11 +395,13 @@ class PhasorAnalyzerPanel(QWidget):
         lt_row.addStretch()
         root.addLayout(lt_row)
 
-        # ── Components ─────────────────────────────────────────────────
         comp_box = QGroupBox("Component fractions")
         apply_style(comp_box, S.GROUP_CHECKABLE)
         comp_box.setCheckable(True)
         comp_box.setChecked(False)
+        comp_box.setToolTip(
+            "Split each point into 2–3 mono-exponential components of known τ"
+        )
         comp_lay = QVBoxLayout(comp_box)
         comp_lay.setSpacing(3)
         comp_lay.setContentsMargins(6, 4, 6, 4)
@@ -391,6 +414,9 @@ class PhasorAnalyzerPanel(QWidget):
             sp.setDecimals(3)
             sp.setSingleStep(0.1)
             sp.setValue(0.0)
+            sp.setToolTip(
+                f"Lifetime of component {i + 1} in ns (0 = not used)"
+            )
             sp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             tau_row.addWidget(QLabel(f"τ{i + 1}:"))
             tau_row.addWidget(sp, stretch=1)
@@ -413,7 +439,6 @@ class PhasorAnalyzerPanel(QWidget):
         self._comp_group = comp_box
         root.addWidget(comp_box)
 
-        # ── Clustering ─────────────────────────────────────────────────
         cl_box = QGroupBox("Clustering")
         apply_style(cl_box, S.GROUP_PRIMARY)
         cl_lay = QVBoxLayout(cl_box)
@@ -438,6 +463,12 @@ class PhasorAnalyzerPanel(QWidget):
                 Qt.ToolTipRole,
             )
         self._cl_method.setCurrentIndex(max(0, first_ok))
+        self._cl_method.setToolTip(
+            "K-means / Hierarchical: a fixed number of clusters (scipy)\n"
+            "Gaussian mixture: elliptical clusters\n"
+            "DBSCAN / HDBSCAN: density-based, sparse points become noise (-1)\n"
+            "The last three need scikit-learn."
+        )
         self._cl_method.currentTextChanged.connect(
             self._rebuild_cluster_params
         )
@@ -458,7 +489,6 @@ class PhasorAnalyzerPanel(QWidget):
 
         root.addWidget(cl_box)
 
-        # ── Canvas + table splitter ────────────────────────────────────
         splitter = QSplitter(Qt.Vertical)
 
         cw = QWidget()
@@ -501,7 +531,6 @@ class PhasorAnalyzerPanel(QWidget):
 
         root.addWidget(splitter, stretch=1)
 
-        # ── Status ─────────────────────────────────────────────────────
         self._status = StatusLabel(
             "Load a CSV file with phasor G and S columns."
         )
@@ -512,7 +541,6 @@ class PhasorAnalyzerPanel(QWidget):
         self._ax.set_facecolor(MPL.AXES_BG)
         self._draw_empty()
 
-        # ── Live-update wiring ─────────────────────────────────────────
         # Suggest Categorical before the replot that the same change triggers.
         self._color_combo.currentTextChanged.connect(self._suggest_categorical)
         self._color_combo.currentTextChanged.connect(self._on_setting_changed)
@@ -551,10 +579,6 @@ class PhasorAnalyzerPanel(QWidget):
 
         self._table.itemSelectionChanged.connect(self._on_table_selection)
 
-    # ------------------------------------------------------------------ #
-    # Live-update                                                          #
-    # ------------------------------------------------------------------ #
-
     def _on_setting_changed(self, *_):
         self._update_unique_label()
         if self._plotted_once and self._df is not None:
@@ -592,10 +616,6 @@ class PhasorAnalyzerPanel(QWidget):
             chk.setChecked(whole and vals.nunique() <= 12)
             chk.setEnabled(True)
         chk.blockSignals(False)
-
-    # ------------------------------------------------------------------ #
-    # CSV loading                                                          #
-    # ------------------------------------------------------------------ #
 
     def _on_load_csv(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -658,10 +678,6 @@ class PhasorAnalyzerPanel(QWidget):
         self._ov_group_combo.blockSignals(False)
         self._update_overlay_controls()
         self._update_unique_label()
-
-    # ------------------------------------------------------------------ #
-    # Row filter                                                           #
-    # ------------------------------------------------------------------ #
 
     def _filter_mask(self) -> np.ndarray | None:
         """Rows passing the filter, or None when no filter is active."""
@@ -741,10 +757,6 @@ class PhasorAnalyzerPanel(QWidget):
                 f"Table shows first {n_rows:,} of {len(rows):,} rows."
             )
 
-    # ------------------------------------------------------------------ #
-    # Table ↔ plot selection                                               #
-    # ------------------------------------------------------------------ #
-
     def _on_table_selection(self):
         if self._plot_g is None or self._valid_mask is None:
             return
@@ -784,10 +796,6 @@ class PhasorAnalyzerPanel(QWidget):
 
             self._highlight_artist = None
             self._canvas.draw_idle()
-
-    # ------------------------------------------------------------------ #
-    # Plotting                                                             #
-    # ------------------------------------------------------------------ #
 
     def _on_plot(self):
         if self._df is None:
@@ -1250,10 +1258,6 @@ class PhasorAnalyzerPanel(QWidget):
         lay.addStretch()
         self._legend_scroll.setVisible(True)
 
-    # ------------------------------------------------------------------ #
-    # Calibration                                                          #
-    # ------------------------------------------------------------------ #
-
     def _on_apply_cal_toggled(self, checked):
         if checked:
             self._apply_calibration()
@@ -1372,10 +1376,6 @@ class PhasorAnalyzerPanel(QWidget):
         sign = "+" if c.imag >= 0 else "-"
         return f"{c.real:.4f} {sign} {abs(c.imag):.4f}j"
 
-    # ------------------------------------------------------------------ #
-    # Component fractions                                                  #
-    # ------------------------------------------------------------------ #
-
     def _on_compute_fractions(self):
         if self._df is None:
             self._status.info("Load a CSV first.")
@@ -1446,6 +1446,7 @@ class PhasorAnalyzerPanel(QWidget):
                 w = QSpinBox()
                 w.setRange(rest[0], rest[1])
                 w.setValue(default)
+            w.setToolTip(_CLUSTER_PARAM_TIPS.get(name, ""))
             self._cl_params_lay.addWidget(w)
             self._cl_param_widgets[name] = w
 
@@ -1513,20 +1514,12 @@ class PhasorAnalyzerPanel(QWidget):
                 self._on_plot()
         self._status.info(msg + ".")
 
-    # ------------------------------------------------------------------ #
-    # Data tools dialog                                                    #
-    # ------------------------------------------------------------------ #
-
     def _on_open_data_tools(self):
         if self._df is None:
             self._status.info("Load a CSV first.")
             return
         dlg = _DataToolsDialog(self, parent=self)
         dlg.exec_()
-
-    # ------------------------------------------------------------------ #
-    # Export                                                               #
-    # ------------------------------------------------------------------ #
 
     def _on_export(self):
         fmt = self._export_combo.currentData()
@@ -1576,9 +1569,6 @@ class PhasorAnalyzerPanel(QWidget):
             self._status.error(f"Save error: {e}")
 
 
-# ── Data Tools dialog ────────────────────────────────────────────────────
-
-
 class _DataToolsDialog(QDialog):
     """Modal dialog for group-from-name extraction and column combining."""
 
@@ -1592,7 +1582,6 @@ class _DataToolsDialog(QDialog):
     def _build_ui(self):
         root = QVBoxLayout(self)
 
-        # ── Filter rows ────────────────────────────────────────────────
         flt_box = QGroupBox("Filter rows")
         apply_style(flt_box, S.GROUP_PRIMARY)
         flt_box.setObjectName("plain")
@@ -1637,9 +1626,11 @@ class _DataToolsDialog(QDialog):
         )
         e_row.addWidget(self._flt_expr, 1)
         flt_apply = QPushButton("Apply")
+        flt_apply.setToolTip("Plot, table and export use only matching rows")
         flt_apply.clicked.connect(self._on_filter_apply)
         e_row.addWidget(flt_apply)
         flt_clear = QPushButton("Clear")
+        flt_clear.setToolTip("Remove the filter")
         flt_clear.clicked.connect(self._on_filter_clear)
         e_row.addWidget(flt_clear)
         flt_lay.addLayout(e_row)
@@ -1656,7 +1647,6 @@ class _DataToolsDialog(QDialog):
         self._flt_timer.timeout.connect(self._update_filter_preview)
         self._flt_expr.textChanged.connect(lambda *_: self._flt_timer.start())
 
-        # ── Group from name ────────────────────────────────────────────
         grp_box = QGroupBox("Group from name")
         apply_style(grp_box, S.GROUP_PRIMARY)
         grp_box.setObjectName("plain")
@@ -1668,6 +1658,9 @@ class _DataToolsDialog(QDialog):
         row1.addWidget(QLabel("Source:"))
         self._grp_source_combo = QComboBox()
         self._grp_source_combo.setMinimumWidth(80)
+        self._grp_source_combo.setToolTip(
+            "Text column to read group names from"
+        )
         row1.addWidget(self._grp_source_combo, 1)
         row1.addWidget(QLabel("Pattern:"))
         self._grp_pattern_edit = QLineEdit()
@@ -1685,9 +1678,15 @@ class _DataToolsDialog(QDialog):
         self._grp_name_edit.setPlaceholderText("column name")
         row2.addWidget(self._grp_name_edit, 1)
         preview_btn = QPushButton("Preview")
+        preview_btn.setToolTip(
+            "Show what the pattern extracts from the first rows"
+        )
         preview_btn.clicked.connect(self._on_group_preview)
         row2.addWidget(preview_btn)
         apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip(
+            "Add the new column (empty where the pattern does not match)"
+        )
         apply_btn.clicked.connect(self._on_group_apply)
         row2.addWidget(apply_btn)
         grp_lay.addLayout(row2)
@@ -1698,7 +1697,6 @@ class _DataToolsDialog(QDialog):
         grp_lay.addWidget(self._grp_preview_label)
         root.addWidget(grp_box)
 
-        # ── Combine columns ────────────────────────────────────────────
         comb_box = QGroupBox("Combine columns")
         apply_style(comb_box, S.GROUP_PRIMARY)
         comb_box.setObjectName("plain")
@@ -1718,12 +1716,14 @@ class _DataToolsDialog(QDialog):
         self._comb_name_edit.setPlaceholderText("new column")
         comb_row.addWidget(self._comb_name_edit, 1)
         comb_apply = QPushButton("Apply")
+        comb_apply.setToolTip(
+            "Add a column joining both values as text: <col1>_<col2>"
+        )
         comb_apply.clicked.connect(self._on_combine_apply)
         comb_row.addWidget(comb_apply)
         comb_lay.addLayout(comb_row)
         root.addWidget(comb_box)
 
-        # ── Close ──────────────────────────────────────────────────────
         close_row = QHBoxLayout()
         close_row.addStretch()
         close_btn = QPushButton("Close")

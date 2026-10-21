@@ -175,6 +175,9 @@ class TracePanel(QWidget):
         display = QHBoxLayout()
         display.setSpacing(6)
         self._sum_check = QCheckBox("Sum channels")
+        self._sum_check.setToolTip(
+            "Plot the sum of the checked detectors as one line"
+        )
         self._sum_check.toggled.connect(self._redraw)
         display.addWidget(self._sum_check)
         self._channel_row = QHBoxLayout()
@@ -377,6 +380,7 @@ class TracePanel(QWidget):
         for channel_id in dataset["photon_count"].coords["channel"].values:
             chk = QCheckBox(f"D{int(channel_id)}")
             chk.setChecked(True)
+            chk.setToolTip(f"Show detector {int(channel_id)}")
             chk.toggled.connect(self._redraw)
             self._channel_checks[int(channel_id)] = chk
             self._channel_row.addWidget(chk)

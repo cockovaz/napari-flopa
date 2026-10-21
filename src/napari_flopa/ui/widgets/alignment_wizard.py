@@ -105,6 +105,22 @@ class AlignmentWizard(QDialog):
         self._steps_spin.setSingleStep(2)
         self._steps_spin.setValue(11)
 
+        self._pixels_spin.setToolTip(
+            "Pixels per line of the probe reconstruction"
+        )
+        self._chunk_spin.setToolTip(
+            "Records read for the probe; more = more complete lines, slower"
+        )
+        self._skip_spin.setToolTip(
+            "Chunks skipped first, e.g. to avoid an empty or unstable start"
+        )
+        self._max_shift_spin.setToolTip(
+            "Optimize searches shifts within ± this range around the current delays"
+        )
+        self._steps_spin.setToolTip(
+            "Number of shifts tested between −max and +max"
+        )
+
         form = QFormLayout()
         form.setContentsMargins(6, 2, 6, 4)
         form.setSpacing(4)
