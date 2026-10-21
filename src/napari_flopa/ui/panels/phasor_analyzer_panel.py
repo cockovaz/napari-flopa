@@ -222,12 +222,9 @@ class PhasorAnalyzerPanel(QWidget):
         type_lay = QHBoxLayout(type_slot)
         type_lay.setContentsMargins(0, 0, 0, 0)
         type_lay.setSpacing(4)
-        self._categorical_check = QCheckBox("Categorical")
+        self._categorical_check = QCheckBox("Cat")
         self._categorical_check.setToolTip(
             "Colour by distinct values (legend) instead of a colour scale.\n"
-            "Suggested from the column when it is picked: whole numbers with "
-            "≤ 12 values are categorical,\nother numbers continuous. Text "
-            "columns are always categorical."
         )
         self._categorical_check.setEnabled(False)
         type_lay.addWidget(self._categorical_check)

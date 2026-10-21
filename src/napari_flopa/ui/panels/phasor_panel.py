@@ -1,10 +1,8 @@
-import contextlib
 import traceback
 from pathlib import Path
 
 import numpy as np
 from matplotlib.figure import Figure
-from matplotlib.path import Path as MplPath
 from qtpy.QtCore import Qt, Slot
 from qtpy.QtGui import QBrush, QColor
 from qtpy.QtWidgets import (
@@ -55,6 +53,10 @@ from napari_flopa.ui.widgets.phasor_axes import (
     draw_semicircle,
     finalise_phasor_axes,
 )
+from napari_flopa.ui.widgets.phasor_roi import (
+    PhasorRoiSelector,
+    napari_label_color,
+)
 from napari_flopa.ui.widgets.status_label import StatusLabel
 
 # Scatter subsample cap — display only; the CSV export always holds every
@@ -102,22 +104,11 @@ class PhasorPanel(QWidget):
         # i.e. what "Revert" goes back to; 1+0j when the config carried none.
         self._loaded_calib_factor: complex = 1.0 + 0j
 
-        # ROI selection state
-        self._roi_active = False
-        self._roi_label_id = 0
-        self._roi_lasso_verts = []
-        self._roi_line = None
-        self._roi_bg = None  # blitting background
-        self._roi_labels_layer = None
-        self._roi_label_data = None
-        self._roi_point_labels = None
-        self._roi_mpl_cids = []
-        self._roi_g = None
-        self._roi_s = None
-        self._roi_scatter = None
+        # (ys, xs) of each plotted point in per-pixel mode, for ROI painting
         self._roi_pixel_yx = None
 
         self._build_ui()
+        self._roi = PhasorRoiSelector(viewer, self._canvas, self._roi_context)
         self.state.dataset_changed.connect(self._on_dataset_changed)
         self.state.calib_factor_changed.connect(self._on_state_calib_changed)
         self.viewer.layers.events.inserted.connect(
@@ -804,7 +795,7 @@ class PhasorPanel(QWidget):
                         if lt_2d is not None
                         else float("nan")
                     )
-                    rgba = _get_napari_color(mask_layer, int(lbl))
+                    rgba = napari_label_color(mask_layer, int(lbl))
                     colors_out.append(rgba)
 
         else:  # per pixel
@@ -870,7 +861,7 @@ class PhasorPanel(QWidget):
                 # per plotted point, so skip it entirely in filter mode
                 colors_out = np.array(
                     [
-                        _get_napari_color(mask_layer, int(lbl))
+                        napari_label_color(mask_layer, int(lbl))
                         for lbl in lbl_pix
                     ]
                 )  # shape (N, 4)
@@ -1069,7 +1060,7 @@ class PhasorPanel(QWidget):
 
                 handles = []
                 for lbl in unique_lbls:
-                    rgba = _get_napari_color(mask_layer, int(lbl))
+                    rgba = napari_label_color(mask_layer, int(lbl))
                     handles.append(mpatches.Patch(color=rgba, label=f"#{lbl}"))
                 ax.legend(
                     handles=handles,
@@ -1150,10 +1141,8 @@ class PhasorPanel(QWidget):
 
         self._finalise_axes(ax)
 
-        # Store G/S for ROI selection (_roi_pixel_yx set by _do_compute)
-        self._roi_g = np.asarray(g, dtype=np.float32).ravel()
-        self._roi_s = np.asarray(s, dtype=np.float32).ravel()
-        self._roi_scatter = None
+        # _roi_pixel_yx was set by _do_compute for these same points
+        self._roi.set_points(ax, g, s, self._roi_pixel_yx)
 
         self._canvas.draw_idle()
 
@@ -1248,7 +1237,7 @@ class PhasorPanel(QWidget):
             for r, lbl in enumerate(unique):
                 m = labels == lbl
                 rgba = (
-                    _get_napari_color(mask_layer, int(lbl))
+                    napari_label_color(mask_layer, int(lbl))
                     if mask_layer
                     else (0.5, 0.5, 0.5)
                 )
@@ -1353,253 +1342,36 @@ class PhasorPanel(QWidget):
         super().hideEvent(event)
 
     def _cancel_roi_if_active(self):
-        if self._roi_active:
+        if self._roi.active:
             self._on_roi_done()
 
     def _on_roi_toggled(self, checked: bool):
         """Toggle interactive lasso ROI mode on/off."""
-        self._roi_active = checked
         self._roi_btn.setText(
             "⬡ ROI Select" if not checked else "● ROI Active"
         )
         self._roi_done_btn.setVisible(checked)
         if checked:
-            # Connect matplotlib mouse events
-            canvas = self._canvas
-            self._roi_mpl_cids = [
-                canvas.mpl_connect("button_press_event", self._roi_on_press),
-                canvas.mpl_connect("motion_notify_event", self._roi_on_motion),
-                canvas.mpl_connect(
-                    "button_release_event", self._roi_on_release
-                ),
-            ]
+            self._roi.start()
         else:
-            self._roi_disconnect()
-
-    def _roi_disconnect(self):
-        for cid in self._roi_mpl_cids:
-            self._canvas.mpl_disconnect(cid)
-        self._roi_mpl_cids = []
-        self._roi_bg = None
-        if self._roi_line is not None:
-            with contextlib.suppress(Exception):
-                self._roi_line.remove()
-            self._roi_line = None
-        self._roi_lasso_verts = []
-        self._canvas.draw_idle()
+            self._roi.stop()
 
     def _on_roi_done(self):
-        """Finish ROI session: disconnect events, reset for fresh start."""
+        """Finish the ROI session; the next one starts a new Labels layer."""
         self._roi_btn.setChecked(False)
         self._roi_btn.setText("⬡ ROI Select")
         self._roi_done_btn.setVisible(False)
-        self._roi_disconnect()
-        self._roi_active = False
-        # Reset state so next toggle starts fresh
-        self._roi_label_id = 0
-        self._roi_point_labels = None
-        self._roi_labels_layer = None
-        self._roi_label_data = None
+        self._roi.finish()
 
-    def _roi_on_press(self, event):
-        if event.inaxes != self._ax or event.button != 1:
-            return
-        self._roi_lasso_verts = [(event.xdata, event.ydata)]
-        if self._roi_line is not None:
-            with contextlib.suppress(Exception):
-                self._roi_line.remove()
-        (self._roi_line,) = self._ax.plot(
-            [event.xdata],
-            [event.ydata],
-            color="yellow",
-            linewidth=1.0,
-            alpha=0.8,
-            zorder=20,
-            animated=True,
-        )
-        # Capture static background for blitting (excludes animated artists)
-        self._canvas.draw()
-        self._roi_bg = self._canvas.copy_from_bbox(self._ax.bbox)
-
-    def _roi_on_motion(self, event):
-        if not self._roi_lasso_verts or event.inaxes != self._ax:
-            return
-        self._roi_lasso_verts.append((event.xdata, event.ydata))
-        xs = [v[0] for v in self._roi_lasso_verts]
-        ys = [v[1] for v in self._roi_lasso_verts]
-        self._roi_line.set_data(xs, ys)
-        # Blit: restore background, draw only the lasso line, flush
-        self._canvas.restore_region(self._roi_bg)
-        self._ax.draw_artist(self._roi_line)
-        self._canvas.blit(self._ax.bbox)
-
-    def _roi_on_release(self, event):
-        if event.button != 1:
-            return
-        if len(self._roi_lasso_verts) < 3:
-            self._roi_lasso_verts = []
-            self._roi_bg = None
-            return
-        # Close the polygon
-        verts = self._roi_lasso_verts + [self._roi_lasso_verts[0]]
-        self._roi_lasso_verts = []
-        self._roi_bg = None
-        # Switch line back to non-animated so it persists in the normal render
-        self._roi_line.set_animated(False)
-        xs = [v[0] for v in verts]
-        ys = [v[1] for v in verts]
-        self._roi_line.set_data(xs, ys)
-
-        # Test which plotted points are inside the polygon
-        if (
-            not hasattr(self, "_roi_g")
-            or self._roi_g is None
-            or len(self._roi_g) == 0
-        ):
-            return
-
-        poly = MplPath(verts)
-        pts = np.column_stack([self._roi_g, self._roi_s])
-        inside = poly.contains_points(pts)
-
-        if not inside.any():
-            return
-
-        self._roi_label_id += 1
-        lbl = self._roi_label_id
-
-        # Initialise point labels array
-        if self._roi_point_labels is None:
-            self._roi_point_labels = np.zeros(len(self._roi_g), dtype=np.int32)
-        # Overwrite any previous assignment for points inside
-        self._roi_point_labels[inside] = lbl
-
-        # Update napari Labels layer first (so colors are available for scatter)
-        self._roi_update_labels_layer(inside, lbl)
-
-        # Update scatter colors on plot
-        self._roi_update_scatter_colors()
-
-    def _roi_update_scatter_colors(self):
-        """Recolor all scatter points: assigned → napari label color, unassigned → gray."""
-        if self._roi_point_labels is None or self._roi_labels_layer is None:
-            return
-        ax = self._ax
-        # Remove existing ROI scatter if present
-        if hasattr(self, "_roi_scatter") and self._roi_scatter is not None:
-            with contextlib.suppress(Exception):
-                self._roi_scatter.remove()
-        n = len(self._roi_g)
-        colors = np.zeros((n, 4), dtype=np.float32)
-        colors[:, :3] = 0.35  # gray for unassigned
-        colors[:, 3] = 0.5
-        for lbl_id in range(1, self._roi_label_id + 1):
-            mask = self._roi_point_labels == lbl_id
-            if mask.any():
-                rgba = _get_napari_color(self._roi_labels_layer, lbl_id)
-                colors[mask] = rgba
-                colors[mask, 3] = 0.85
-        # Determine marker size based on mode
-        per_obj = self._per_object_radio.isChecked()
-        ms = 50 if per_obj else 3
-        self._roi_scatter = ax.scatter(
-            self._roi_g,
-            self._roi_s,
-            c=colors,
-            s=ms,
-            edgecolors="none" if not per_obj else "white",
-            linewidths=0 if not per_obj else 0.5,
-            zorder=15,
-        )
-        self._canvas.draw_idle()
-
-    def _roi_update_labels_layer(self, inside_mask: np.ndarray, lbl: int):
-        """
-        Paint pixels for the selected phasor points into the Labels layer.
-
-        For per-object mode: inside_mask selects phasor centroids → look up their
-        object IDs in self._final_plot_data['labels'] → paint those objects' pixels.
-        For per-pixel mode: inside_mask selects individual pixels stored in
-        self._roi_pixel_yx → paint those pixels directly.
-        """
-        ds = self.state.dataset
-        if ds is None:
-            return
-
-        # Get image shape from dataset
-        shape_2d = None
-        for var in ("photon_count", "phasor_g", "mean_arrival_time"):
-            if var in ds:
-                arr = ds[var]
-                # squeeze out non-spatial dims to get (lines, pixels)
-                vals = arr.values
-                # find last 2 dims
-                if vals.ndim >= 2:
-                    shape_2d = vals.shape[-2:]
-                break
-        if shape_2d is None:
-            return
-
-        # Create or reuse labels layer
-        if (
-            self._roi_labels_layer is None
-            or self._roi_labels_layer not in self.viewer.layers
-        ):
-            self._roi_label_data = np.zeros(shape_2d, dtype=np.int32)
-            try:
-                self._roi_labels_layer = self.viewer.add_labels(
-                    self._roi_label_data.copy(), name="Phasor ROI Labels"
-                )
-            except Exception:
-                return
-
-        per_obj = self._per_object_radio.isChecked()
+    def _roi_context(self) -> dict:
+        """Panel state the ROI selector reads when a lasso closes."""
         fd = self._final_plot_data
-
-        if per_obj and fd is not None:
-            # labels array holds object IDs (from the mask layer used for plotting)
-            obj_labels = fd.get("labels")
-            if obj_labels is None:
-                return
-            obj_labels_arr = np.asarray(obj_labels).ravel()
-            selected_obj_ids = obj_labels_arr[inside_mask]
-
-            # We need the label_2d map — get it from the current mask layer
-            mask_name = self._mask_combo.currentText()
-            if mask_name == "None" or mask_name not in self.viewer.layers:
-                # No mask → whole image, paint everything with lbl
-                self._roi_label_data[:] = lbl
-            else:
-                mask_layer = self.viewer.layers[mask_name]
-                ldata = np.asarray(mask_layer.data)
-                if ldata.ndim > 2:
-                    ldata = ldata.reshape(
-                        -1, ldata.shape[-2], ldata.shape[-1]
-                    )[0]
-                if ldata.shape != shape_2d:
-                    return
-                label_2d = ldata.astype(np.int32)
-                for oid in selected_obj_ids:
-                    if np.isfinite(oid):
-                        self._roi_label_data[label_2d == int(oid)] = lbl
-        else:
-            # Per-pixel: use stored pixel indices
-            if (
-                hasattr(self, "_roi_pixel_yx")
-                and self._roi_pixel_yx is not None
-            ):
-                ys, xs = self._roi_pixel_yx
-                in_ys = ys[inside_mask]
-                in_xs = xs[inside_mask]
-                valid = (
-                    (in_ys >= 0)
-                    & (in_ys < shape_2d[0])
-                    & (in_xs >= 0)
-                    & (in_xs < shape_2d[1])
-                )
-                self._roi_label_data[in_ys[valid], in_xs[valid]] = lbl
-
-        self._roi_labels_layer.data = self._roi_label_data.copy()
+        return {
+            "per_object": self._per_object_radio.isChecked(),
+            "object_labels": fd.get("labels") if fd is not None else None,
+            "mask_layer_name": self._mask_combo.currentText(),
+            "dataset": self.state.dataset,
+        }
 
 
 class CalibrationDialog(QDialog):
@@ -1685,12 +1457,3 @@ def _parse_settings(ds, settings: dict):
         elif dim in ds.sizes:
             sel[dim] = settings.get(dim, 0)
     return sel, dims_to_sum
-
-
-def _get_napari_color(layer, label_id: int) -> tuple:
-    """Return (R, G, B, A) float 0-1 for label_id from a napari Labels layer."""
-    try:
-        rgba = layer.get_color(label_id)
-        return (float(rgba[0]), float(rgba[1]), float(rgba[2]), float(rgba[3]))
-    except Exception:
-        return (0.5, 0.5, 0.5, 0.8)

@@ -318,7 +318,7 @@ class FlimViewPanel(QWidget):
         int_contrast.addWidget(self.int_minmax_btn)
         int_ctrl.addLayout(int_contrast)
 
-        self.int_mask_btn = QPushButton("→ Generate Int. Mask")
+        self.int_mask_btn = QPushButton("→ Intensity mask")
         # self.int_mask_btn.setStyleSheet(S.BTN_DANGER)
         self.int_mask_btn.setToolTip(
             "Create a new Labels layer from pixels inside the red intensity range."
@@ -412,14 +412,14 @@ class FlimViewPanel(QWidget):
         lt_contrast.addWidget(self.lt_minmax_btn)
         lt_ctrl.addLayout(lt_contrast)
 
-        self.lt_mask_btn = QPushButton("→ Generate Lt. Mask")
+        self.lt_mask_btn = QPushButton("→ Lifetime mask")
         # self.lt_mask_btn.setStyleSheet(S.BTN_DANGER)
         self.lt_mask_btn.setToolTip(
             "Create a new Labels layer from pixels inside the red lifetime range."
         )
         self.lt_mask_btn.setEnabled(False)
 
-        self.combined_mask_btn = QPushButton("Combined mask")
+        self.combined_mask_btn = QPushButton("→ Combined mask")
         self.combined_mask_btn.setToolTip(
             "Create a new Labels layer from pixels inside both red slider "
             "ranges: the intensity threshold AND the lifetime threshold."
