@@ -199,10 +199,27 @@ class PhasorAnalyzerPanel(QWidget):
             QSizePolicy.Expanding, QSizePolicy.Fixed
         )
         color_row.addWidget(self._color_combo, 1)
+        # Categorical + n/N share one fixed-width slot that the Overlays row
+        # mirrors with an empty widget, so Cmap/Legend line up on both rows.
+        type_slot = QWidget()
+        type_lay = QHBoxLayout(type_slot)
+        type_lay.setContentsMargins(0, 0, 0, 0)
+        type_lay.setSpacing(4)
+        self._categorical_check = QCheckBox("Categorical")
+        self._categorical_check.setToolTip(
+            "Colour by distinct values (legend) instead of a colour scale.\n"
+            "Suggested from the column when it is picked: whole numbers with "
+            "≤ 12 values are categorical,\nother numbers continuous. Text "
+            "columns are always categorical."
+        )
+        self._categorical_check.setEnabled(False)
+        type_lay.addWidget(self._categorical_check)
         self._unique_label = QLabel("")
         self._unique_label.setStyleSheet(S.HINT)
         self._unique_label.setFixedWidth(60)
-        color_row.addWidget(self._unique_label)
+        type_lay.addWidget(self._unique_label)
+        type_slot.setFixedWidth(type_slot.sizeHint().width())
+        color_row.addWidget(type_slot)
         color_row.addWidget(QLabel("Cmap:"))
         self._cmap_combo = QComboBox()
         self._cmap_combo.addItems(_CMAPS)
@@ -215,7 +232,7 @@ class PhasorAnalyzerPanel(QWidget):
 
         # ── Per-group overlays ─────────────────────────────────────────
         # Same column layout as the Color by row: label, column combo,
-        # a 60 px slot, Cmap, Legend.
+        # an empty slot as wide as Categorical + n/N, Cmap, Legend.
         ov_row = QHBoxLayout()
         ov_lbl = QLabel("Overlays:")
         ov_lbl.setToolTip(
@@ -237,7 +254,9 @@ class PhasorAnalyzerPanel(QWidget):
             QSizePolicy.Expanding, QSizePolicy.Fixed
         )
         ov_row.addWidget(self._ov_group_combo, 1)
-        ov_row.addSpacing(60 + ov_row.spacing())
+        ov_slot = QWidget()
+        ov_slot.setFixedWidth(type_slot.width())
+        ov_row.addWidget(ov_slot)
         ov_row.addWidget(QLabel("Cmap:"))
         self._ov_cmap_combo = QComboBox()
         self._ov_cmap_combo.addItems(_CMAPS)
@@ -494,7 +513,10 @@ class PhasorAnalyzerPanel(QWidget):
         self._draw_empty()
 
         # ── Live-update wiring ─────────────────────────────────────────
+        # Suggest Categorical before the replot that the same change triggers.
+        self._color_combo.currentTextChanged.connect(self._suggest_categorical)
         self._color_combo.currentTextChanged.connect(self._on_setting_changed)
+        self._categorical_check.toggled.connect(self._on_setting_changed)
         self._cmap_combo.currentTextChanged.connect(self._on_setting_changed)
         self._lifetimes_check.toggled.connect(self._on_setting_changed)
         self._legend_check.toggled.connect(self._on_setting_changed)
@@ -546,6 +568,30 @@ class PhasorAnalyzerPanel(QWidget):
         n_unique = self._df[col].nunique()
         n_rows = len(self._df)
         self._unique_label.setText(f"{n_unique}/{n_rows}")
+
+    def _suggest_categorical(self, *_):
+        """Preset Categorical for a newly picked Color by column.
+
+        Text is always categorical (box locked). Numbers are suggested as
+        categorical only when they are whole numbers with ≤ 12 values (labels,
+        cluster ids, flags); fractions and other floats default to a colour
+        scale even when few distinct values remain. The user can override.
+        """
+        col = self._color_combo.currentText()
+        chk = self._categorical_check
+        chk.blockSignals(True)
+        if self._df is None or col not in self._df.columns:
+            chk.setChecked(False)
+            chk.setEnabled(False)
+        elif not pd.api.types.is_numeric_dtype(self._df[col]):
+            chk.setChecked(True)
+            chk.setEnabled(False)
+        else:
+            vals = pd.to_numeric(self._df[col], errors="coerce").dropna()
+            whole = bool(np.all(np.mod(vals.to_numpy(dtype=float), 1) == 0))
+            chk.setChecked(whole and vals.nunique() <= 12)
+            chk.setEnabled(True)
+        chk.blockSignals(False)
 
     # ------------------------------------------------------------------ #
     # CSV loading                                                          #
@@ -809,13 +855,9 @@ class PhasorAnalyzerPanel(QWidget):
             color_data = df[color_col].values[valid]
             cmap_name = self._cmap_combo.currentText()
 
-            col_series = pd.Series(color_data)
-            if pd.api.types.is_numeric_dtype(col_series):
-                n_unique = col_series.dropna().nunique()
-                is_categorical = n_unique <= 12
-            else:
-                is_categorical = True
-
+            is_categorical = self._categorical_check.isChecked() or (
+                not pd.api.types.is_numeric_dtype(df[color_col])
+            )
             if is_categorical:
                 self._plot_categorical(
                     ax, g_v, s_v, color_data, cmap_name, pt_size
@@ -894,6 +936,24 @@ class PhasorAnalyzerPanel(QWidget):
         if not finite.any():
             self._plot_white(ax, g, s, pt_size)
             return
+        if not finite.all():
+            # Points without a value (e.g. fractions outside the segment) stay
+            # visible as a grey layer under the colour scale.
+            gn, sn = g[~finite], s[~finite]
+            if len(gn) > _MAX_SCATTER:
+                idx = np.random.default_rng(0).choice(
+                    len(gn), _MAX_SCATTER, replace=False
+                )
+                gn, sn = gn[idx], sn[idx]
+            ax.scatter(
+                gn,
+                sn,
+                c="#808080",
+                s=pt_size,
+                alpha=0.35,
+                linewidths=0,
+                zorder=0,
+            )
 
         gf, sf, vf = g[finite], s[finite], vals[finite]
         if len(gf) > _MAX_SCATTER:
@@ -1330,39 +1390,38 @@ class PhasorAnalyzerPanel(QWidget):
 
         f_rep_hz = self._frep_spin.value() * 1e6
 
+        # 5 decimals: enough for a fraction, and no float noise in the table.
+        def _r(a):
+            return np.round(a, 5)
+
+        tau_txt = ", ".join(f"τ{'₁₂₃'[i]}={t:g}" for i, t in enumerate(taus))
         if len(taus) == 2:
             f1, f2, residual = component_fractions_2(
                 g, s, taus[0], taus[1], f_rep_hz
             )
-            df["f1"] = f1
-            df["f2"] = f2
-            df["residual"] = residual
+            df["f1"], df["f2"], df["residual"] = _r(f1), _r(f2), _r(residual)
             if "f3" in df.columns:
                 df.drop(columns=["f3"], inplace=True)
-            valid = np.isfinite(f1).sum()
-            self._status.info(
-                f"2-component fractions — {valid}/{len(f1)} valid "
-                f"(τ₁={taus[0]:g}, τ₂={taus[1]:g} ns)."
-            )
+            where = "on the τ₁–τ₂ segment"
         else:
             f1, f2, f3 = component_fractions_3(
                 g, s, taus[0], taus[1], taus[2], f_rep_hz
             )
-            df["f1"] = f1
-            df["f2"] = f2
-            df["f3"] = f3
+            df["f1"], df["f2"], df["f3"] = _r(f1), _r(f2), _r(f3)
             if "residual" in df.columns:
                 df.drop(columns=["residual"], inplace=True)
-            valid = np.isfinite(f1).sum()
-            self._status.info(
-                f"3-component fractions — {valid}/{len(f1)} inside triangle "
-                f"(τ₁={taus[0]:g}, τ₂={taus[1]:g}, τ₃={taus[2]:g} ns)."
-            )
+            where = "inside the triangle"
 
         self._refresh_column_combos()
         self._fill_table()
         if self._plotted_once:
             self._on_plot()
+        # After the replot, so its "Plotted N points" doesn't hide this.
+        n_ok = int(np.isfinite(f1).sum())
+        self._status.info(
+            f"{len(taus)}-component fractions — {n_ok:,}/{len(f1):,} {where} "
+            f"({tau_txt} ns); the others are NaN."
+        )
 
     def _rebuild_cluster_params(self, *_):
         while self._cl_params_lay.count():
