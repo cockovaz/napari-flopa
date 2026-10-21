@@ -10,13 +10,59 @@
 
 A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifetime Imaging Microscopy) data from `.ptu` files.
 
-## Features
+## Feature panels
 
-- **Process PTU** — reconstruct `.ptu` files into xarray datasets (photon count, mean arrival time, phasor, TCSPC histogram); supports multi-frame, multi-sequence and multi-detector data
-- **FLIM View** — interactive display with histogram contrast sliders for intensity and lifetime; FLIM RGB composite; export to TIFF
-- **Phasor** — phasor plot with calibration, smoothing, per-object or per-pixel scatter, monoexponential lifetime semi-circle overlay
-- **Decay** — TCSPC decay plot with aggregation, normalisation and log scale
-- **Batch** — process a folder of `.ptu` files (opt. with masks) with a shared scan config and export images, phasor tables and decay tables; config saved/loaded as json
+- **File**
+  - read a `.ptu`, display its header, reconstruct it into an xarray dataset (photon count, mean arrival time, phasor, TCSPC histogram)
+  - supports multi-frame, multi-sequence (with line acumulation) and multi-detector data
+  - bidirectional scans with an **Alignment wizard** for the line-marker delays
+  - scan config with value provenance, saved/loaded as JSON
+  - marker statistics
+  - optional ROI mask to reconstruct only part of the field
+  - **Drag and drop** — a `.ptu` or scan-config `.json` dropped onto napari opens in the File tab
+
+  <img src="docs/images/file_config.png" alt="File tab: header and scan configuration" width="720">
+
+- **Trace**
+  - photon-count time trace per detector over a chosen time window and bin width, with line/frame marker overlays
+- **FLIM View** (bottom dock)
+  - intensity and lifetime display with histogram contrast sliders (Auto-once, Auto-live, Min-Max), smoothing
+  - frame/sequence/detector selection or summing
+  - lifetime *Calibrated* by the IRF delay from the phasor calibration
+  - intensity, lifetime and combined masks as Labels layers
+  - FLIM RGB composite
+  - export to TIFF/PNG
+
+  <img src="docs/images/rgb_flim.png" alt="FLIM View: calibrated lifetime over intensity" width="720">
+
+- **Phasor**
+  - per-object or per-pixel phasor plot as scatter, intensity-weighted scatter or density (square or hex bins), smoothing
+  - colour by a Labels layer or use it as a filter
+  - calibration from a reference lifetime or a custom factor
+
+  <p>
+    <img src="docs/images/object_phasor.png" alt="Phasor per object, coloured by Labels" width="420">
+    <img src="docs/images/masked_phasor.png" alt="Phasor per pixel, density, filtered by a mask" width="420">
+  </p>
+
+- **Decay**
+  - TCSPC decay curves with frame/sequence/detector aggregation, per-detector toggles, normalisation and log scale
+- **Batch**
+  - process a folder (or selected files, opt. with sub-folders and label masks) with a shared scan config and calibration
+  - export of images (FLIM RGB, intensity, lifetime), phasor tables per object or per pixel and decay tables (raw or normalised), per file or merged
+
+  <img src="docs/images/batch.png" alt="Batch tab: scan configuration and export passes" width="720">
+
+- **Analyzer**
+  - explore phasor CSV tables (from Phasor or Batch)
+  - colour by any column
+  - per-group density contours, mean/median and covariance ellipses
+  - calibration
+  - compute phase and modulation lifetimes
+  - compute 2- and 3-component fractions
+  - clustering (K-means, hierarchical; Gaussian mixture, DBSCAN, HDBSCAN with scikit-learn)
+  - row filtering, regex grouping and column combining in **Data tools**
+
 
 ## Requirements
 
@@ -37,6 +83,10 @@ pip install "napari-flopa[all]"     # plugin + napari + Qt
 
 Use the plain (non-`[all]`) form when you already have napari installed.
 
+Optional: `pip install "napari-flopa[cluster]"` adds scikit-learn for the
+Analyzer's Gaussian mixture, DBSCAN and HDBSCAN clustering (K-means and
+hierarchical clustering work without it).
+
 **From source**
 
 ```bash
@@ -45,41 +95,39 @@ cd napari-flopa
 pip install -e ".[all]"      # editable install, napari + Qt included
 ```
 
-The `napari_flopa.core` package (I/O, reconstruction, image and phasor maths) imports
-no GUI libraries, so it can be used from a plain script or notebook without napari.
 
 ## Getting started
 
-**1. Open the plugin.** Start napari and choose **Plugins → FLOPA → FLIM Analysis**.
+1. **Open the plugin**
+Start napari and choose **Plugins → FLOPA → FLIM Analysis**.
 
-**2. Load a file.** In the **File** tab, click **Load Demo** for the bundled demo
-dataset, or **Read PTU…** for your own. The header is parsed and the scan parameters
-are filled in; the coloured dot beside each field says where its value came from —
-file metadata, a default, an estimate, or your own edit.
+2. **Load a file**
+In the **File** tab, click **Load Demo** for the bundled demo dataset, or **Read PTU…** for your own — or drop a `.ptu` onto the napari window.
+    > Note: the coloured dot beside each field says where its value came from - file metadata, a default, an estimate, or your own edit.
 
-**3. Set the scan geometry.** Frames, lines, pixels, sequences and accumulations must match how the image
-was actually acquired, because the raw file is a stream of photon and marker events
-with no image shape of its own. The header supplies what it knows; fill in the rest.
-**Analyze Markers** inspects the marker events and suggests dimensions.
+3. **Set the scan geometry**
+Frames, lines, pixels, sequences and accumulations must match how the image was actually acquired, because the raw file is a stream of photon and marker events with no image shape of its own. The header contains some information, fill in the rest. **Demo dataset** is loaded woth correct configuration set up.
+**Marker Stats** inspects the marker events and suggests dimensions. For bidirectional scans, the **Alignment wizard** estimates the line-marker delays.
 
-**4. Reconstruct.** Pick what to compute under **Output**:
-
-- *Intensity* — photon-count image only, the fastest
+4. **Reconstruct**
+  Pick what to compute under **Output**.   Optionally pick an **ROI Mask** (a Labels layer or a mask file) to keep only the photons inside it.
+  - *Intensity* — photon-count image only, the fastest
 - *Int. + τ* — adds the mean arrival time (lifetime) image
-- *All* — adds phasor coordinates and the TCSPC decay (enables the
-  **Phasor** and **Decay** tabs)
+- *All* — adds phasor coordinates per pixel and the global TCSPC decay (enables the **Phasor** and **Decay** tabs)
 
-**5. Look at the result.** The **FLIM View** dock opens at the bottom, with a
-histogram for Intensity and one for Lifetime. Each has two sliders: the **cyan** one
-sets the display contrast, the **red** one a threshold range. **→ Generate Int./Lt.
-Mask** turns that range into a napari Labels layer. Intensity, lifetime and the FLIM RGB composite can be exported from here.
+5. **Look at the result**
+The **FLIM View** dock opens at the bottom, with a
+histogram for Intensity and one for Lifetime. Each has two sliders: the **cyan** one sets the display contrast, the **red** one a threshold range. **→ Generate Int./Lt.
+Mask** turns that range into a napari Labels layer. Once a calibration is enabled in the Phasor tab, **Calibrated** shows the lifetime with the IRF delay subtracted (negative values are wraped around a period).
+Intensity, lifetime and the FLIM RGB composite can be exported from here.
 
-**6. Analyse.** **Phasor** plots g/s per object or per pixel — apply a calibration
-factor, pick a Labels layer to colour by object or to restrict the plot to a region.
-**Decay** plots the TCSPC curves, with **From View** to follow the frame/detector
-currently shown in FLIM View.
+6. **Analyze**
+  - **Phasor** plots g/s per object or per pixel — apply a calibration factor, pick a Labels layer to colour by object or to restrict the plot to a region.
+  - **Decay** plots the global TCSPC curves per slice. **FLIM View** shows only decay of slice configuration currently shown in FLIM View.
 
-**7. Reuse the settings.** Use **Batch** tab to run a whole folder of `.ptu` files with identical settings.
+7. **Reuse the settings**
+Use the **Batch** tab to run a whole folder of `.ptu` files with identical settings. Or export multiple slices of a single file. Each export pass picks frames, sequences and detectors as an index, `*` (all, one output per value) or `a` (aggregate).
+
 
 ## Data model
 

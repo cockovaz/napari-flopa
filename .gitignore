@@ -89,10 +89,12 @@ data/
 # without touching the tracked demo. See src/napari_flopa/core/demo.py.
 demo_params.local.json
 
-# AI Code settings
+# AI Code settings (includes the local docs skills in .claude/skills/)
 .claude/
 claude.md
 agents.md
+
+.agents/
 
 # Personal / local notes
 notes.txt
