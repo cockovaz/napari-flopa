@@ -129,13 +129,13 @@ def irf_delay_ns(
     return float(-np.angle(factor) / omega_per_channel * res_ns)
 
 
-def correct_lifetime(
+def calibrate_mean_arrival_time(
     lt_ns: ArrayLike,
     delay_ns: float,
     period_ns: float,
     counts: ArrayLike | None = None,
 ) -> np.ndarray:
-    """Subtract *delay_ns* from a lifetime image, wrapping into [0, period).
+    """Subtract the IRF *delay_ns* from mean arrival times, wrapping into [0, period).
 
     Values that would go negative wrap by one laser period, the circular
     shift the Decay tab applies to curves. Pixels with zero *counts* stay 0.
@@ -146,10 +146,12 @@ def correct_lifetime(
     return out
 
 
-def lifetime_correction(
+def irf_delay_from_calibration(
     ds: xr.Dataset, factor: complex
 ) -> tuple[float, float] | None:
-    """``(delay_ns, period_ns)`` for correcting *ds*'s lifetime, or None.
+    """IRF ``(delay_ns, period_ns)`` from a calibration *factor* for *ds*, or None.
+
+    Feed the pair to :func:`calibrate_mean_arrival_time`.
 
     None when there is nothing to correct: identity factor, or a dataset
     without the reconstruction ``omega`` or repetition rate.

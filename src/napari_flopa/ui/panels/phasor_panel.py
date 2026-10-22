@@ -43,7 +43,9 @@ except ImportError:
 
 from napari_flopa.core.processing.phasor import (
     apply_calibration,
+    calibrate_mean_arrival_time,
     calibration_factor,
+    irf_delay_from_calibration,
 )
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
@@ -389,12 +391,13 @@ class PhasorPanel(QWidget):
         splitter.addWidget(cw)
         cw.setVisible(False)  # revealed on the first successful plot
 
-        self._table = QTableWidget(0, 7)
+        self._table = QTableWidget(0, 8)
         self._table.setHorizontalHeaderLabels(
             [
                 "Color",
                 "Label",
                 "Pixels",
+                "Valid px",
                 "Mean G",
                 "Mean S",
                 "Mean τ (ns)",
@@ -611,6 +614,10 @@ class PhasorPanel(QWidget):
         self._update_revert_tooltip()
         self._calib_factor = factor
         self._calib_display.setText(self._fmt_complex(factor))
+        # A factor from the loaded config switches calibration on, which also
+        # enables "Calibrated" lifetime in FLIM View without a phasor plot.
+        if factor != 1 + 0j:
+            self._cal_group.setChecked(True)
         self._mark_stale()
 
     def _revert_calib(self):
@@ -679,6 +686,21 @@ class PhasorPanel(QWidget):
             if "mean_arrival_time" in sliced
             else None
         )
+        # IRF-delay correction of τ, active together with the phasor
+        # calibration. Means are taken on the raw lifetime and corrected
+        # once, so pixels wrapped by a period cannot skew an object's mean.
+        lt_corr = (
+            irf_delay_from_calibration(ds, self._calib_factor)
+            if self._cal_group.isChecked() and lt_2d is not None
+            else None
+        )
+
+        def _cal_tau(value: float) -> float:
+            if lt_corr is None or not np.isfinite(value):
+                return value
+            return float(
+                calibrate_mean_arrival_time(np.asarray(value), *lt_corr)
+            )
 
         if self._smooth_group.isChecked() and photon_count is not None:
             k = self._smooth_spin.value()
@@ -738,9 +760,10 @@ class PhasorPanel(QWidget):
             labels_out,
             photons_out,
             areas_out,
+            valid_out,
             colors_out,
             lt_out,
-        ) = ([], [], [], [], [], [], [])
+        ) = ([], [], [], [], [], [], [], [])
 
         if per_object:
             from tttrkit.analysis.phasor import average_phasor
@@ -764,10 +787,11 @@ class PhasorPanel(QWidget):
                 s_out.append(float(avg.imag))
                 labels_out.append(np.nan)
                 photons_out.append(float(pc_arr[valid].sum()))
-                areas_out.append(int(valid.sum()))
+                areas_out.append(int(phasor_g.size))
+                valid_out.append(int(valid.sum()))
                 colors_out.append((1.0, 1.0, 1.0, 0.9))  # white
                 lt_out.append(
-                    float(average_phasor(lt_2d, pc_arr, mask=valid))
+                    _cal_tau(float(average_phasor(lt_2d, pc_arr, mask=valid)))
                     if lt_2d is not None
                     else float("nan")
                 )
@@ -790,8 +814,11 @@ class PhasorPanel(QWidget):
                     labels_out.append(int(lbl))
                     photons_out.append(float(pc_arr[valid].sum()))
                     areas_out.append(int(m.sum()))
+                    valid_out.append(int(valid.sum()))
                     lt_out.append(
-                        float(average_phasor(lt_2d, pc_arr, mask=valid))
+                        _cal_tau(
+                            float(average_phasor(lt_2d, pc_arr, mask=valid))
+                        )
                         if lt_2d is not None
                         else float("nan")
                     )
@@ -816,7 +843,12 @@ class PhasorPanel(QWidget):
                 if photon_count is not None
                 else None
             )
-            lt_pix = lt_2d[valid] if lt_2d is not None else None
+            lt_raw = lt_2d[valid] if lt_2d is not None else None
+            lt_pix = (
+                calibrate_mean_arrival_time(lt_raw, *lt_corr)
+                if lt_raw is not None and lt_corr is not None
+                else lt_raw
+            )
             lbl_pix = (
                 label_2d[valid]
                 if (mask_active and label_2d is not None)
@@ -829,6 +861,16 @@ class PhasorPanel(QWidget):
             pc_full = pc_pix
             lt_full = lt_pix
             lbl_full = lbl_pix
+            # Size of each label (or the whole masked / unmasked image) for
+            # the summary table; independent of which pixels hold photons.
+            if mask_active and label_2d is not None:
+                ids, counts = np.unique(label_2d, return_counts=True)
+                area_by_label = dict(
+                    zip(ids.tolist(), counts.tolist(), strict=True)
+                )
+                area_all = int((label_2d > 0).sum())
+            else:
+                area_by_label, area_all = {}, int(phasor_g.size)
 
             # sub-sample if too large (for plotting only)
             if len(g_pix) > _MAX_PX:
@@ -852,6 +894,7 @@ class PhasorPanel(QWidget):
                 lbl_pix if lbl_pix is not None else np.full(len(g_pix), np.nan)
             )
             areas_out = np.full(len(g_pix), np.nan)
+            valid_out = np.full(len(g_pix), np.nan)
             lt_out = (
                 lt_pix if lt_pix is not None else np.full(len(g_pix), np.nan)
             )
@@ -876,6 +919,8 @@ class PhasorPanel(QWidget):
             "photon_counts": np.array(photons_out, dtype=np.float32).ravel(),
             "labels": np.array(labels_out).ravel(),
             "areas": np.array(areas_out).ravel(),
+            "valid": np.array(valid_out).ravel(),
+            "lifetimes": np.array(lt_out, dtype=np.float32).ravel(),
             "dataset_name": dataset_name,
         }
 
@@ -899,6 +944,12 @@ class PhasorPanel(QWidget):
                     else np.full(n_full, np.nan)
                 ),
                 "areas": np.full(n_full, np.nan),
+                "valid": np.full(n_full, np.nan),
+                "lifetimes": (
+                    np.asarray(lt_full, dtype=np.float32).ravel()
+                    if lt_full is not None
+                    else np.full(n_full, np.nan)
+                ),
                 "dataset_name": dataset_name,
             }
 
@@ -927,18 +978,23 @@ class PhasorPanel(QWidget):
                 np.array(lt_out),
                 np.array(photons_out),
                 np.array(labels_out),
+                np.array(areas_out),
+                np.array(valid_out),
                 colors_out,
             )
         else:
             self._fill_table_summary(
                 g_full,
                 s_full,
-                lt_full,
+                lt_raw,
                 pc_full,
                 # Filter mode → no labels, so the table summarises the masked
                 # pixels as the single population the plot shows.
                 None if mask_as_filter else lbl_full,
                 mask_layer,
+                area_by_label,
+                area_all,
+                _cal_tau,
             )
         self._table.setVisible(True)
 
@@ -1168,7 +1224,9 @@ class PhasorPanel(QWidget):
         self._finalise_axes(ax)
         self._canvas.draw_idle()
 
-    def _fill_table_per_object(self, g, s, lt, photons, labels, colors):
+    def _fill_table_per_object(
+        self, g, s, lt, photons, labels, areas, valid, colors
+    ):
         self._table.setRowCount(len(g))
         for r in range(len(g)):
             rgba = colors[r] if isinstance(colors, list) else (1, 1, 1)
@@ -1176,7 +1234,8 @@ class PhasorPanel(QWidget):
                 r,
                 rgba,
                 str(int(labels[r])) if np.isfinite(labels[r]) else "all",
-                int(photons[r]) if np.isfinite(photons[r]) else 0,
+                int(areas[r]),
+                int(valid[r]),
                 g[r],
                 s[r],
                 (
@@ -1189,9 +1248,24 @@ class PhasorPanel(QWidget):
         self._table.resizeColumnsToContents()
         self._table.setColumnWidth(0, 24)
 
-    def _fill_table_summary(self, g, s, lt, photons, labels, mask_layer):
+    def _fill_table_summary(
+        self,
+        g,
+        s,
+        lt,
+        photons,
+        labels,
+        mask_layer,
+        area_by_label,
+        area_all,
+        cal_tau,
+    ):
         """For per-pixel mode: one row per unique label (or one row for whole image).
-        Receives full (non-subsampled) arrays for accurate statistics."""
+
+        Receives the full (non-subsampled) valid pixels and the *raw* lifetime;
+        *cal_tau* corrects each averaged τ. Pixels = label size
+        (*area_by_label* / *area_all*), Valid px = pixels that entered the mean.
+        """
         if g is None or len(g) == 0:
             self._table.setRowCount(0)
             return
@@ -1214,7 +1288,9 @@ class PhasorPanel(QWidget):
         def _row_stats(m):
             avg = average_phasor(phasor_c, w, mask=m)
             lt_val = (
-                float(average_phasor(np.asarray(lt, float), w, mask=m))
+                cal_tau(
+                    float(average_phasor(np.asarray(lt, float), w, mask=m))
+                )
                 if lt is not None
                 else float("nan")
             )
@@ -1230,7 +1306,15 @@ class PhasorPanel(QWidget):
             self._table.setRowCount(1)
             g_val, s_val, lt_val, total = _row_stats(None)
             self._set_table_row(
-                0, (1.0, 1.0, 1.0), "All", len(g), g_val, s_val, lt_val, total
+                0,
+                (1.0, 1.0, 1.0),
+                "All",
+                area_all,
+                len(g),
+                g_val,
+                s_val,
+                lt_val,
+                total,
             )
         else:
             self._table.setRowCount(len(unique))
@@ -1246,6 +1330,7 @@ class PhasorPanel(QWidget):
                     r,
                     rgba,
                     str(lbl),
+                    int(area_by_label.get(int(lbl), m.sum())),
                     int(m.sum()),
                     g_val,
                     s_val,
@@ -1256,7 +1341,16 @@ class PhasorPanel(QWidget):
         self._table.setColumnWidth(0, 24)
 
     def _set_table_row(
-        self, r, rgba, label_str, pixels, mean_g, mean_s, mean_lt, total_int
+        self,
+        r,
+        rgba,
+        label_str,
+        pixels,
+        valid_px,
+        mean_g,
+        mean_s,
+        mean_lt,
+        total_int,
     ):
         swatch = QTableWidgetItem()
         swatch.setBackground(
@@ -1272,6 +1366,7 @@ class PhasorPanel(QWidget):
             [
                 label_str,
                 str(pixels),
+                str(valid_px),
                 f"{mean_g:.4f}",
                 f"{mean_s:.4f}",
                 f"{mean_lt:.3f}",
@@ -1328,6 +1423,8 @@ class PhasorPanel(QWidget):
                     "s": d["s_coords"],
                     "photon_count_sum": d["photon_counts"],
                     "area_pixels": d["areas"],
+                    "n_valid_pixels": d["valid"],
+                    "mean_arrival_time_ns": d["lifetimes"],
                 }
             ).to_csv(path, index=False)
             self._status.info(

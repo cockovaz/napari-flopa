@@ -36,6 +36,7 @@ from tttrkit.analysis.phasor import average_phasor
 
 from napari_flopa.core.io.config import (
     DEFAULT_LASER_DUTY,
+    MS,
     US,
     ScanSettings,
     load_config,
@@ -48,7 +49,11 @@ from napari_flopa.core.processing.image_utils import (
     flim_export_info,
     flim_rgb,
 )
-from napari_flopa.core.processing.phasor import apply_calibration
+from napari_flopa.core.processing.phasor import (
+    apply_calibration,
+    calibrate_mean_arrival_time,
+    irf_delay_from_calibration,
+)
 from napari_flopa.core.processing.reconstruction import (
     DEFAULT_CHUNK_SIZE,
     MIN_CHUNK_SIZE,
@@ -498,10 +503,12 @@ class _PhasorSection(_ExportSection):
         self._obj_radio.setChecked(True)
         self._obj_radio.setToolTip(
             "One row per label (whole image without labels): photon-weighted\n"
-            "mean G, S, total photon_count and area_pixels"
+            "mean G, S and mean_arrival_time_ns (IRF-corrected when the\n"
+            "calibration factor ≠ 1), photon_count, area_pixels (label size)\n"
+            "and n_valid_pixels (pixels with photons)"
         )
         self._px_radio.setToolTip(
-            "One row per valid pixel (G, S, photon_count)"
+            "One row per valid pixel (G, S, photon_count, mean_arrival_time_ns)"
         )
         for r in (self._obj_radio, self._px_radio):
             self._grp.addButton(r)
@@ -758,7 +765,7 @@ class _BatchWorker(QObject):
             self._export_images(ds, cfg, stem, out_dir, cal)
 
         for cfg in p.get("phasor_configs", []):
-            rows = self._extract_phasor(ds, cfg, stem, lbl_paths, lbl_dir)
+            rows = self._extract_phasor(ds, cfg, stem, lbl_paths, lbl_dir, cal)
             phasor_file_rows.extend(rows)
 
         if p.get("per_file_table") and phasor_file_rows:
@@ -802,10 +809,6 @@ class _BatchWorker(QObject):
             smooth_count,
             smooth_weighted,
         )
-        from napari_flopa.core.processing.phasor import (
-            correct_lifetime,
-            lifetime_correction,
-        )
 
         try:
             from skimage.io import imsave
@@ -827,7 +830,7 @@ class _BatchWorker(QObject):
             lt_lut = colormap_to_lut(cfg.get("cmap", "rainbow"))
 
         lt_corr = (
-            lifetime_correction(ds, cal)
+            irf_delay_from_calibration(ds, cal)
             if cfg.get("lt_corrected", True)
             else None
         )
@@ -860,7 +863,9 @@ class _BatchWorker(QObject):
 
             cl_ns = cl.astype(np.float32) * res_ns if cl is not None else None
             if lt_corr is not None and cl_ns is not None:
-                cl_ns = correct_lifetime(cl_ns, *lt_corr, counts=raw_ci)
+                cl_ns = calibrate_mean_arrival_time(
+                    cl_ns, *lt_corr, counts=raw_ci
+                )
                 sm_tag += "_cal"
 
             pfx = f"{stem}_{suffix}{sm_tag}" if suffix else f"{stem}{sm_tag}"
@@ -917,9 +922,20 @@ class _BatchWorker(QObject):
     # phasor extraction
 
     def _extract_phasor(
-        self, ds, cfg: dict, stem: str, lbl_paths: list, lbl_dir=None
+        self,
+        ds,
+        cfg: dict,
+        stem: str,
+        lbl_paths: list,
+        lbl_dir=None,
+        cal: complex = 1 + 0j,
     ) -> list[dict]:
-        """Extract phasor summary rows for one aggregation config."""
+        """Extract phasor summary rows for one aggregation config.
+
+        ``mean_arrival_time_ns`` follows the G/S calibration: with a factor
+        other than 1 the IRF delay is subtracted. Object means are taken on
+        the raw lifetime and corrected once, as in the Phasor tab.
+        """
         if "phasor_g" not in ds or "phasor_s" not in ds:
             return []
         from napari_flopa.core.processing.image_utils import aggregate_dataset
@@ -932,6 +948,17 @@ class _BatchWorker(QObject):
         smooth = cfg.get("smooth", False)
         smooth_k = cfg.get("smooth_kernel", 3)
 
+        ip = ds.attrs.get("instrument_params", {})
+        res_ns = float(ip.get("tcspc_resolution_ns", 1.0))
+        lt_corr = irf_delay_from_calibration(ds, cal)
+
+        def _cal_tau(value: float) -> float:
+            if lt_corr is None or not np.isfinite(value):
+                return value
+            return float(
+                calibrate_mean_arrival_time(np.asarray(value), *lt_corr)
+            )
+
         for combo, agg_label in free_combos:
             sliced = ds.isel(**combo) if combo else ds
             agg = aggregate_dataset(sliced, sum_dims) if sum_dims else sliced
@@ -941,6 +968,12 @@ class _BatchWorker(QObject):
             pc2d = (
                 agg["photon_count"].values.squeeze()
                 if "photon_count" in agg
+                else None
+            )
+            lt2d = (
+                agg["mean_arrival_time"].values.squeeze().astype(np.float64)
+                * res_ns
+                if "mean_arrival_time" in agg
                 else None
             )
 
@@ -1011,7 +1044,16 @@ class _BatchWorker(QObject):
                         continue
 
                     if per_pixel:
-                        for gi, si, pci in zip(g_m, s_m, pc_m, strict=True):
+                        lt_m = (
+                            lt2d[valid]
+                            if lt2d is not None
+                            else np.full(g_m.size, np.nan)
+                        )
+                        if lt_corr is not None:
+                            lt_m = calibrate_mean_arrival_time(lt_m, *lt_corr)
+                        for gi, si, pci, lti in zip(
+                            g_m, s_m, pc_m, lt_m, strict=True
+                        ):
                             rows.append(
                                 dict(
                                     ptu_file=stem,
@@ -1021,13 +1063,24 @@ class _BatchWorker(QObject):
                                     g=float(gi),
                                     s=float(si),
                                     photon_count=float(pci),
+                                    mean_arrival_time_ns=float(lti),
                                 )
                             )
                     else:
+                        weights = (
+                            pc2d if pc2d is not None else np.ones(g2d.shape)
+                        )
                         avg = average_phasor(
-                            g2d + 1j * s2d,
-                            pc2d if pc2d is not None else np.ones(g2d.shape),
-                            mask=mask,
+                            g2d + 1j * s2d, weights, mask=mask
+                        )
+                        tau = (
+                            _cal_tau(
+                                float(
+                                    average_phasor(lt2d, weights, mask=valid)
+                                )
+                            )
+                            if lt2d is not None
+                            else float("nan")
                         )
                         rows.append(
                             dict(
@@ -1037,8 +1090,10 @@ class _BatchWorker(QObject):
                                 label_id=int(lid),
                                 g=float(avg.real),
                                 s=float(avg.imag),
+                                mean_arrival_time_ns=tau,
                                 photon_count=float(pc_m.sum()),
-                                area_pixels=int(valid.sum()),
+                                area_pixels=int(mask.sum()),
+                                n_valid_pixels=int(valid.sum()),
                             )
                         )
         return rows
@@ -1292,8 +1347,11 @@ class BatchPanel(QWidget):
         # lbl_row.addStretch()
         dg.addLayout(lbl_row, 1, 1)
         self._recursive_chk = QCheckBox("Include sub-folders")
+        # Also applies to picked files: their label TIFFs can sit in
+        # sub-folders of the labels folder.
         self._recursive_chk.setToolTip(
-            "Also search sub-folders for label TIFFs"
+            "Also search sub-folders for label TIFFs, and for .ptu files\n"
+            "when a whole folder is the input"
         )
         self._recursive_chk.toggled.connect(self._update_input_label)
         dg.addWidget(self._recursive_chk, 2, 1)
@@ -1437,8 +1495,18 @@ class BatchPanel(QWidget):
         cg.addWidget(QLabel("Calibration:"), 2, 2)
         cg.addWidget(self._cal_factor, 2, 3, 1, 3)
 
+        self._c_line_duration = QLineEdit()
+        self._c_line_duration.setPlaceholderText("auto")
+        self._c_line_duration.setValidator(QDoubleValidator(0.0, 10_000.0, 4))
+        self._c_line_duration.setToolTip(
+            "How long one scan line lasts, in ms. Left empty (auto) it is "
+            "measured from the markers during reconstruction."
+        )
+
         cg.addWidget(QLabel("Chunk size:"), 5, 0)
         cg.addWidget(self._c_chunk, 5, 1, 1, 3)
+        cg.addWidget(QLabel("Line dur. (ms):"), 5, 4)
+        cg.addWidget(self._c_line_duration, 5, 5)
 
         cfg_vlay.addLayout(cg)
 
@@ -1456,7 +1524,7 @@ class BatchPanel(QWidget):
 
         self._load_scan_btn = QPushButton("↓ Scan cfg")
         self._load_scan_btn.setToolTip(
-            "Copy the scan config currently set in the File tab"
+            "Copy the scan config and chunk size currently set in the File tab"
         )
         self._load_cal_btn = QPushButton("↓ Calibration")
         self._load_cal_btn.setToolTip(
@@ -1635,7 +1703,6 @@ class BatchPanel(QWidget):
         else:
             self._input_lbl.setText("Nothing selected")
             self._input_lbl.setToolTip("")
-        self._recursive_chk.setEnabled(not self._selected_files)
         self._update_populate_enabled()
 
     def _browse_lbl(self):
@@ -1685,6 +1752,7 @@ class BatchPanel(QWidget):
                 return default
 
         n_seqs = _num(self._c_seqs, int, 1)
+        line_ms = _num(self._c_line_duration, float, 0.0)
         return ScanSettings(
             frames=_num(self._c_frames, int, 1),
             lines=_num(self._c_lines, int, 256),
@@ -1700,6 +1768,7 @@ class BatchPanel(QWidget):
             line_stop_marker_delay=(
                 _num(self._c_line_stop_delay, float, 0.0) * US
             ),
+            line_duration=line_ms * MS if line_ms > 0 else None,
             tcspc_bins=_num(self._c_tcspc, int, 4096),
             calib_factor=self._cal_factor.text().strip() or "1+0j",
         )
@@ -1755,6 +1824,11 @@ class BatchPanel(QWidget):
         ):
             if key in s:
                 edit.setText(f"{float(s[key]) / US:.3f}")
+        # Absent means auto, so a config without it clears the field.
+        line_s = s.get("line_duration")
+        self._c_line_duration.setText(
+            f"{float(line_s) / MS:.4f}" if line_s else ""
+        )
 
         c = cfg.get("calibration") or {}
         if c.get("factor"):
@@ -1961,16 +2035,19 @@ class BatchPanel(QWidget):
             )
             return
         self._apply_dict({"scan": cfg.get("scan", {})})
-        self._log_line("Scan config copied from the File tab.")
+        # With an auto line duration, tttrkit measures it from the first
+        # chunk, so the chunk size has to match for identical results.
+        chunk = self.state.file_runtime().get("chunk_size")
+        if chunk:
+            self._c_chunk.setValue(int(chunk))
+        self._log_line("Scan config and chunk size copied from the File tab.")
 
     def _on_load_calibration(self):
         """Copy the calibration factor set in the Phasor tab."""
-        factor = self.state.calib_factor
-        self._cal_factor.setText(
-            f"{factor.real:.6g}+{factor.imag:.6g}j"
-            if factor.imag >= 0
-            else f"{factor.real:.6g}{factor.imag:.6g}j"
-        )
+        factor = complex(self.state.calib_factor)
+        # Full precision (repr), so Batch uses exactly the Phasor tab factor.
+        sign = "+" if factor.imag >= 0 else "-"
+        self._cal_factor.setText(f"{factor.real!r}{sign}{abs(factor.imag)!r}j")
         self._log_line(f"Calibration copied: factor {factor}")
 
     def _log_line(self, msg: str, *, error: bool = False):

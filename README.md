@@ -25,6 +25,10 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
 
 - **Trace**
   - photon-count time trace per detector over a chosen time window and bin width, with line/frame marker overlays
+
+  <img src="docs/images/trace.png" alt="File tab: header and scan configuration" width="720">
+
+
 - **FLIM View** (bottom dock)
   - intensity and lifetime display with histogram contrast sliders (Auto-once, Auto-live, Min-Max), smoothing
   - frame/sequence/detector selection or summing
@@ -51,7 +55,7 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
   - process a folder (or selected files, opt. with sub-folders and label masks) with a shared scan config and calibration
   - export of images (FLIM RGB, intensity, lifetime), phasor tables per object or per pixel and decay tables (raw or normalised), per file or merged
 
-  <img src="docs/images/batch.png" alt="Batch tab: scan configuration and export passes" width="720">
+  <img src="docs/images/batch_panel.png" alt="Batch tab: scan configuration and export passes" width="720">
 
 - **Analyzer**
   - explore phasor CSV tables (from Phasor or Batch)

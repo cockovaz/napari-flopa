@@ -32,8 +32,8 @@ from napari_flopa.core.processing.image_utils import (
     smooth_weighted,
 )
 from napari_flopa.core.processing.phasor import (
-    correct_lifetime,
-    lifetime_correction,
+    calibrate_mean_arrival_time,
+    irf_delay_from_calibration,
 )
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import S, apply_style
@@ -775,7 +775,7 @@ class FlimViewPanel(QWidget):
                     counts = (
                         np.atleast_2d(raw_int) if raw_int is not None else None
                     )
-                    self._current_lifetime = correct_lifetime(
+                    self._current_lifetime = calibrate_mean_arrival_time(
                         self._current_lifetime, *corr, counts=counts
                     )
                 # Contrast survives every change alike — frame, sequence,
@@ -785,17 +785,21 @@ class FlimViewPanel(QWidget):
                 # The mask threshold is never carried over: a level tuned on
                 # one view means nothing on the next.
                 first = _first_slice[0]
+                # Empty pixels hold lifetime 0 (wrapped calibration aside);
+                # they are not data, so the lifetime histogram and its
+                # auto-contrast ignore them. The layer keeps them as they are.
+                lt_hist = self._current_lifetime
+                if lt_hist is not None and raw_int is not None:
+                    lt_hist = np.where(
+                        np.atleast_2d(raw_int) > 0, lt_hist, np.nan
+                    )
                 for data, slider, live in (
                     (
                         self._current_intensity,
                         self.intensity_slider,
                         self.int_live_btn,
                     ),
-                    (
-                        self._current_lifetime,
-                        self.lifetime_slider,
-                        self.lt_live_btn,
-                    ),
+                    (lt_hist, self.lifetime_slider, self.lt_live_btn),
                 ):
                     if data is None:
                         continue
@@ -968,7 +972,9 @@ class FlimViewPanel(QWidget):
         """``(delay, period)`` the calibration allows, ignoring the checkbox."""
         if self.dataset is None or not self.state.calib_enabled:
             return None
-        return lifetime_correction(self.dataset, self.state.calib_factor)
+        return irf_delay_from_calibration(
+            self.dataset, self.state.calib_factor
+        )
 
     def _active_lt_correction(self) -> tuple[float, float] | None:
         if self.lt_corrected is None or not self.lt_corrected.isChecked():
