@@ -235,11 +235,9 @@ class DecayPanel(QWidget):
         det_row.addWidget(sep)
 
         self._show_all_btn = QPushButton("All")
-        self._show_all_btn.setFixedWidth(36)
         self._show_all_btn.setToolTip("Show every curve")
         self._show_all_btn.clicked.connect(lambda: self._set_all_visible(True))
         self._hide_all_btn = QPushButton("None")
-        self._hide_all_btn.setFixedWidth(40)
         self._hide_all_btn.setToolTip("Hide every curve")
         self._hide_all_btn.clicked.connect(
             lambda: self._set_all_visible(False)
@@ -653,7 +651,6 @@ class DecayPanel(QWidget):
             btn = QPushButton(f"D{ch}")
             btn.setCheckable(True)
             btn.setChecked(True)
-            btn.setFixedWidth(32)
             btn.setEnabled(not disabled)
             btn.setToolTip(
                 f"Show / hide all curves of detector {ch}\n"

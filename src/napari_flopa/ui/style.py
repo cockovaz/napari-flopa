@@ -130,23 +130,21 @@ class S:  # "Style" — Qt stylesheet strings
 
     BTN_STOP = f"QPushButton {{ color: {C.DANGER_TEXT}; min-width: 50px;}}"
 
-    BTN_SMALL = "font-size: 10px;"
-
     BTN_DET_ON = (
         f"QPushButton {{ background: {C.ACCENT_BG}; color: {C.ACCENT}; "
         f"border: 1px solid {C.ACCENT_DIM}; border-radius: 3px; "
-        f"padding: 1px 6px; font-size: 10px; }}"
+        f"padding: 1px 6px; }}"
         f"QPushButton:hover {{ background: {C.ACCENT_BG_HOV}; }}"
     )
     BTN_DET_OFF = (
         f"QPushButton {{ background: {C.BG_MID}; color: {C.TEXT_DARK}; "
         f"border: 1px solid {C.BORDER}; border-radius: 3px; "
-        f"padding: 1px 6px; font-size: 10px; }}"
+        f"padding: 1px 6px; }}"
     )
     BTN_DET_DISABLED = (
         f"QPushButton {{ background: {C.BG_DEEP}; color: {C.TEXT_DARK}; "
         f"border: 1px solid {C.BORDER_SOFT}; border-radius: 3px; "
-        f"padding: 1px 6px; font-size: 10px; }}"
+        f"padding: 1px 6px; }}"
     )
 
     LINE_EDIT = (

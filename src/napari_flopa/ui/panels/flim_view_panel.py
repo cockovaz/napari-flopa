@@ -302,7 +302,6 @@ class FlimViewPanel(QWidget):
         int_contrast.addWidget(self.int_contrast_lbl)
         self.int_auto_btn = QPushButton("Auto-once")
         self.int_auto_btn.setToolTip("Set contrast to [p2, p98] now")
-        self.int_auto_btn.setStyleSheet(S.BTN_SMALL)
         int_contrast.addWidget(self.int_auto_btn)
         self.int_live_btn = QPushButton("Auto-live")
         self.int_live_btn.setCheckable(True)
@@ -314,7 +313,6 @@ class FlimViewPanel(QWidget):
         int_contrast.addWidget(self.int_live_btn)
         self.int_minmax_btn = QPushButton("Min-Max")
         self.int_minmax_btn.setToolTip("Set contrast to full data range")
-        self.int_minmax_btn.setStyleSheet(S.BTN_SMALL)
         int_contrast.addWidget(self.int_minmax_btn)
         int_ctrl.addLayout(int_contrast)
 
@@ -396,7 +394,6 @@ class FlimViewPanel(QWidget):
         lt_contrast.addWidget(self.lt_text)
         self.lt_auto_btn = QPushButton("Auto-once")
         self.lt_auto_btn.setToolTip("Set contrast to [p2, p98] now")
-        self.lt_auto_btn.setStyleSheet(S.BTN_SMALL)
         lt_contrast.addWidget(self.lt_auto_btn)
         self.lt_live_btn = QPushButton("Auto-live")
         self.lt_live_btn.setCheckable(True)
@@ -408,7 +405,6 @@ class FlimViewPanel(QWidget):
         lt_contrast.addWidget(self.lt_live_btn)
         self.lt_minmax_btn = QPushButton("Min-Max")
         self.lt_minmax_btn.setToolTip("Set contrast to full data range")
-        self.lt_minmax_btn.setStyleSheet(S.BTN_SMALL)
         lt_contrast.addWidget(self.lt_minmax_btn)
         lt_ctrl.addLayout(lt_contrast)
 

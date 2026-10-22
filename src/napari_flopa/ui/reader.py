@@ -56,8 +56,20 @@ def _target_widget(paths: list[Path]):
     if viewer is None:
         show_warning("No napari viewer available to load into.")
         return None
-    # Returns the running widget when the plugin is already open, and opens
-    # it first when it is not.
+    from napari_flopa.ui.main_widget import FlimWidget
+
+    # The Plugins menu registers the dock as "FLIM Analysis (FLOPA)" and
+    # add_plugin_dock_widget looks for "FLIM Analysis (napari-flopa)", so
+    # match an open widget by class rather than by dock name.
+    docked = getattr(viewer.window, "dock_widgets", {})
+    for widget in docked.values():
+        if isinstance(widget, FlimWidget):
+            dock = widget.parent()
+            if dock is not None:
+                # A second click on the menu item only hides the dock.
+                dock.setVisible(True)
+                dock.raise_()
+            return widget
     _dock, widget = viewer.window.add_plugin_dock_widget("napari-flopa")
     return widget
 

@@ -17,6 +17,7 @@ from qtpy.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFileDialog,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -176,8 +177,6 @@ class PhasorAnalyzerPanel(QWidget):
         tb.addWidget(self._filter_lbl)
         self._filter_clear_btn = QPushButton("✕")
         self._filter_clear_btn.setToolTip("Clear the row filter")
-        self._filter_clear_btn.setStyleSheet(S.BTN_SMALL)
-        self._filter_clear_btn.setFixedWidth(22)
         self._filter_clear_btn.setVisible(False)
         self._filter_clear_btn.clicked.connect(lambda: self.set_filter(""))
         tb.addWidget(self._filter_clear_btn)
@@ -208,24 +207,25 @@ class PhasorAnalyzerPanel(QWidget):
 
         root.addSpacing(8)
 
-        color_row = QHBoxLayout()
+        # Color by, Overlays and the overlay options share one grid, so the
+        # label column and the Cmap / Legend columns line up at any font size.
+        ov_grid = QGridLayout()
+        ov_grid.setColumnStretch(1, 1)
         color_lbl = QLabel("Color by:")
-        color_row.addWidget(color_lbl)
+        ov_grid.addWidget(color_lbl, 0, 0)
         self._color_combo = QComboBox()
         self._color_combo.addItem("None")
         self._color_combo.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Fixed
         )
-        color_row.addWidget(self._color_combo, 1)
-        # Categorical + n/N share one fixed-width slot that the Overlays row
-        # mirrors with an empty widget, so Cmap/Legend line up on both rows.
+        ov_grid.addWidget(self._color_combo, 0, 1)
         type_slot = QWidget()
         type_lay = QHBoxLayout(type_slot)
         type_lay.setContentsMargins(0, 0, 0, 0)
         type_lay.setSpacing(4)
         self._categorical_check = QCheckBox("Cat")
         self._categorical_check.setToolTip(
-            "Colour by distinct values (legend) instead of a colour scale.\n"
+            "Colour by distinct values (categories) instead of a colour scale.\n"
         )
         self._categorical_check.setEnabled(False)
         type_lay.addWidget(self._categorical_check)
@@ -233,34 +233,26 @@ class PhasorAnalyzerPanel(QWidget):
         self._unique_label.setStyleSheet(S.HINT)
         self._unique_label.setFixedWidth(60)
         type_lay.addWidget(self._unique_label)
-        type_slot.setFixedWidth(type_slot.sizeHint().width())
-        color_row.addWidget(type_slot)
-        color_row.addWidget(QLabel("Cmap:"))
+        ov_grid.addWidget(type_slot, 0, 2)
+        ov_grid.addWidget(QLabel("Cmap:"), 0, 3)
         self._cmap_combo = QComboBox()
         self._cmap_combo.addItems(_CMAPS)
         self._cmap_combo.setMaximumWidth(85)
         self._cmap_combo.setToolTip("Colormap of the Color by column")
-        color_row.addWidget(self._cmap_combo)
+        ov_grid.addWidget(self._cmap_combo, 0, 4)
         self._legend_check = QCheckBox("Legend")
         self._legend_check.setChecked(True)
         self._legend_check.setToolTip(
             "Show the category legend beside the plot"
         )
-        color_row.addWidget(self._legend_check)
-        root.addLayout(color_row)
+        ov_grid.addWidget(self._legend_check, 0, 5)
 
-        # Same column layout as the Color by row: label, column combo,
-        # an empty slot as wide as Categorical + n/N, Cmap, Legend.
-        ov_row = QHBoxLayout()
         ov_lbl = QLabel("Overlays:")
         ov_lbl.setToolTip(
             "Contours, centroids and ellipses drawn per group of the column "
             "picked next to this label."
         )
-        label_w = max(ov_lbl.sizeHint().width(), color_lbl.sizeHint().width())
-        for lbl in (color_lbl, ov_lbl):
-            lbl.setFixedWidth(label_w)
-        ov_row.addWidget(ov_lbl)
+        ov_grid.addWidget(ov_lbl, 1, 0)
         self._ov_group_combo = QComboBox()
         self._ov_group_combo.addItems([_OV_SAME_AS_COLOR, _OV_ALL_POINTS])
         self._ov_group_combo.setToolTip(
@@ -271,11 +263,8 @@ class PhasorAnalyzerPanel(QWidget):
         self._ov_group_combo.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Fixed
         )
-        ov_row.addWidget(self._ov_group_combo, 1)
-        ov_slot = QWidget()
-        ov_slot.setFixedWidth(type_slot.width())
-        ov_row.addWidget(ov_slot)
-        ov_row.addWidget(QLabel("Cmap:"))
+        ov_grid.addWidget(self._ov_group_combo, 1, 1)
+        ov_grid.addWidget(QLabel("Cmap:"), 1, 3)
         self._ov_cmap_combo = QComboBox()
         self._ov_cmap_combo.addItems(_CMAPS)
         self._ov_cmap_combo.setMaximumWidth(85)
@@ -283,19 +272,17 @@ class PhasorAnalyzerPanel(QWidget):
             "Colours of the overlay groups when they come from a column other "
             "than Color by"
         )
-        ov_row.addWidget(self._ov_cmap_combo)
+        ov_grid.addWidget(self._ov_cmap_combo, 1, 4)
         self._ov_legend_check = QCheckBox("Legend")
         self._ov_legend_check.setChecked(True)
         self._ov_legend_check.setToolTip(
             "Name the overlay groups in the plot (only when they come from a "
             "column other than Color by)"
         )
-        ov_row.addWidget(self._ov_legend_check)
-        root.addLayout(ov_row)
+        ov_grid.addWidget(self._ov_legend_check, 1, 5)
 
         ov_row2 = QHBoxLayout()
         ov_row2.setSpacing(4)
-        ov_row2.addSpacing(label_w + ov_row.spacing())
         self._ov_contour = QCheckBox("Contours")
         self._ov_contour.setToolTip(
             "Density contours enclosing 25 / 50 / 75 % of each group's points\n"
@@ -342,11 +329,12 @@ class PhasorAnalyzerPanel(QWidget):
         ):
             ov_row2.addWidget(w)
         ov_row2.addStretch()
-        root.addLayout(ov_row2)
+        ov_grid.addLayout(ov_row2, 2, 1, 1, 5)
+        root.addLayout(ov_grid)
         self._update_overlay_controls()
 
         freq_row = QHBoxLayout()
-        freq_row.addWidget(QLabel("f_rep (MHz):"))
+        freq_row.addWidget(QLabel("Rep. rate (f) [MHz]:"))
         self._frep_spin = QDoubleSpinBox()
         self._frep_spin.setRange(0.1, 1000.0)
         self._frep_spin.setDecimals(3)

@@ -144,10 +144,7 @@ class _SpecRow(QWidget):
         lay.addStretch()
         if removable:
             rm = QPushButton("×")
-            rm.setFixedSize(18, 18)
-            rm.setStyleSheet(
-                "QPushButton { color: #888; border: none; font-size: 11px; }"
-            )
+            rm.setStyleSheet("QPushButton { color: #888; border: none; }")
             rm.setToolTip("Remove this pass")
             rm.clicked.connect(lambda: self.remove_requested.emit(self))
             lay.addWidget(rm)
@@ -269,10 +266,9 @@ class _ExportSection(QGroupBox):
         lay.addWidget(self._rows_widget)
 
         add_btn = QPushButton("+")
-        add_btn.setFixedWidth(28)
         add_btn.setToolTip("Add another export pass")
         add_btn.clicked.connect(lambda: self._add_row(removable=True))
-        lay.addWidget(add_btn)
+        lay.addWidget(add_btn, alignment=Qt.AlignLeft)
 
         self._add_row(removable=False)  # default first row (not removable)
 
@@ -448,7 +444,6 @@ class _ImagesSection(_ExportSection):
         sp.setRange(3, 19)
         sp.setSingleStep(2)
         sp.setValue(3)
-        sp.setFixedWidth(46)
         sp.setStyleSheet("font-weight: normal;")
         return sp
 
@@ -530,7 +525,6 @@ class _PhasorSection(_ExportSection):
         self._smooth_spin.setRange(3, 19)
         self._smooth_spin.setSingleStep(2)
         self._smooth_spin.setValue(3)
-        self._smooth_spin.setFixedWidth(46)
         self._smooth_spin.setEnabled(False)
         self._smooth_spin.setToolTip("Smoothing kernel size in px (odd)")
         self._smooth_chk.setToolTip(
@@ -1332,7 +1326,6 @@ class BatchPanel(QWidget):
         lbl_row = QHBoxLayout()
         lbl_row.setSpacing(6)
         lb = QPushButton("…")
-        lb.setFixedWidth(28)
         lb.setToolTip("Choose the folder with label TIFFs")
         lb.clicked.connect(self._browse_lbl)
         lbl_row.addWidget(lb)
