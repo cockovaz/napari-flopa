@@ -20,15 +20,8 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
   - marker statistics
   - optional ROI mask to reconstruct only part of the field
   - **Drag and drop** — a `.ptu` or scan-config `.json` dropped onto napari opens in the File tab
-
-  <img src="docs/images/file_config.png" alt="File tab: header and scan configuration" width="720">
-
 - **Trace**
   - photon-count time trace per detector over a chosen time window and bin width, with line/frame marker overlays
-
-  <img src="docs/images/trace.png" alt="File tab: header and scan configuration" width="720">
-
-
 - **FLIM View** (bottom dock)
   - intensity and lifetime display with histogram contrast sliders (Auto-once, Auto-live, Min-Max), smoothing
   - frame/sequence/detector selection or summing
@@ -36,27 +29,15 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
   - intensity, lifetime and combined masks as Labels layers
   - FLIM RGB composite
   - export to TIFF/PNG
-
-  <img src="docs/images/rgb_flim.png" alt="FLIM View: calibrated lifetime over intensity" width="720">
-
 - **Phasor**
   - per-object or per-pixel phasor plot as scatter, intensity-weighted scatter or density (square or hex bins), smoothing
   - colour by a Labels layer or use it as a filter
   - calibration from a reference lifetime or a custom factor
-
-  <p>
-    <img src="docs/images/object_phasor.png" alt="Phasor per object, coloured by Labels" width="420">
-    <img src="docs/images/masked_phasor.png" alt="Phasor per pixel, density, filtered by a mask" width="420">
-  </p>
-
 - **Decay**
   - TCSPC decay curves with frame/sequence/detector aggregation, per-detector toggles, normalisation and log scale
 - **Batch**
   - process a folder (or selected files, opt. with sub-folders and label masks) with a shared scan config and calibration
   - export of images (FLIM RGB, intensity, lifetime), phasor tables per object or per pixel and decay tables (raw or normalised), per file or merged
-
-  <img src="docs/images/batch_panel.png" alt="Batch tab: scan configuration and export passes" width="720">
-
 - **Analyzer**
   - explore phasor CSV tables (from Phasor or Batch)
   - colour by any column
@@ -67,10 +48,27 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
   - clustering (K-means, hierarchical; Gaussian mixture, DBSCAN, HDBSCAN with scikit-learn)
   - row filtering, regex grouping and column combining in **Data tools**
 
-  <p>
-    <img src="docs/images/analyzer2.png" alt="Phasor per object, coloured by Labels" width="420">
-    <img src="docs/images/analyzer1.png" alt="Phasor per pixel, density, filtered by a mask" width="420">
-  </p>
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%" align="center"><a href="docs/images/file_config.png"><img src="docs/images/file_config.png" alt="File: header and scan configuration"></a><br><sub>File: ptu reading, header and scan configuration</sub></td>
+    <td width="50%" align="center"><a href="docs/images/trace.png"><img src="docs/images/trace.png" alt="Trace: photon-count time trace with marker overlays"></a><br><sub>Trace: photon-count time trace with marker overlays</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><a href="docs/images/rgb_flim.png"><img src="docs/images/rgb_flim.png" alt="FLIM View: calibrated lifetime over intensity"></a><br><sub>FLIM View: lifetime over intensity visualization</sub></td>
+    <td width="50%" align="center"><a href="docs/images/batch_panel.png"><img src="docs/images/batch_panel.png" alt="Batch: scan configuration and export passes"></a><br><sub>Batch: batch processing with configurable outputs</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><a href="docs/images/object_phasor.png"><img src="docs/images/object_phasor.png" alt="Phasor per object, coloured by a Labels layer"></a><br><sub>Phasor: per object, coloured by a Labels layer</sub></td>
+    <td width="50%" align="center"><a href="docs/images/masked_phasor.png"><img src="docs/images/masked_phasor.png" alt="Phasor per pixel as density, filtered by a mask"></a><br><sub>Phasor: per pixel (here density color-coded & filtered by a mask)</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><a href="docs/images/analyzer2.png"><img src="docs/images/analyzer2.png" alt="Analyzer: two detectors as groups, with mean, median and 2σ ellipses"></a><br><sub>Analyzer: tabular phasor data visualization</sub></td>
+    <td width="50%" align="center"><a href="docs/images/analyzer1.png"><img src="docs/images/analyzer1.png" alt="Analyzer: 3-component fractions, coloured by f3, mean per label"></a><br><sub>Analyzer: mono-exponential lifetime component fractions</sub></td>
+
+  </tr>
+</table>
 
 ## Requirements
 
@@ -79,29 +77,58 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
 
 ## Installation
 
-Install into the environment where napari runs. Pick one:
+**From PyPI - options**
 
-
-**From PyPI**
-
-```bash
-pip install napari-flopa            # plugin only, for an existing napari install
-pip install "napari-flopa[all]"     # plugin + napari + Qt
-```
-
-Use the plain (non-`[all]`) form when you already have napari installed.
-
-Optional: `pip install "napari-flopa[cluster]"` adds scikit-learn for the
-Analyzer's Gaussian mixture, DBSCAN and HDBSCAN clustering (K-means and
-hierarchical clustering work without it).
+>```bash
+>pip install "napari-flopa[all]"           # plugin + napari + Qt
+> ```
+>```bash
+>pip install napari-flopa                  # plugin only, install into an existing napari
+>```
+>```bash
+>pip install "napari-flopa[cluster]"       # plugin only + scikit-learn
+>```
+> The `cluster` extra adds scikit-learn for the Analyzer's Gaussian mixture, DBSCAN and
+>HDBSCAN clustering (K-means and hierarchical work without it).
 
 **From source**
 
-```bash
-git clone https://github.com/cockovaz/napari-flopa
-cd napari-flopa
-pip install -e ".[all]"      # editable install, napari + Qt included
-```
+>```bash
+>git clone https://github.com/cockovaz/napari-flopa
+>cd napari-flopa
+>pip install -e ".[all]"      # editable install, napari + Qt included
+>```
+
+
+**Full install instructions**
+
+It is recommended to use virtual environment. See examples below.
+
+> conda
+>
+>```bash
+>conda create -n flopa python=3.11
+>conda activate flopa
+>pip install "napari-flopa[all]"
+>```
+
+>uv
+>
+>```bash
+>uv venv --python 3.11 .venv
+>source .venv/bin/activate        # Windows: .venv\Scripts\activate
+>uv pip install "napari-flopa[all]"
+>```
+
+>pixi
+>
+>```bash
+>pixi init flopa
+>cd flopa
+>pixi add python=3.11
+>pixi add --pypi "napari-flopa[all]"
+>```
+
 
 
 ## Getting started
