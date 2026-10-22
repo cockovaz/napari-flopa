@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
 from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import (
@@ -297,12 +298,28 @@ class PhasorAnalyzerPanel(QWidget):
         ov_row2.addSpacing(label_w + ov_row.spacing())
         self._ov_contour = QCheckBox("Contours")
         self._ov_contour.setToolTip(
-            "Density contours enclosing 25 / 50 / 75 % of each group's points"
+            "Density contours enclosing 25 / 50 / 75 % of each group's points\n"
+            "(outer level faintest)"
         )
         self._ov_mean = QCheckBox("Mean")
         self._ov_mean.setToolTip("Group mean, drawn as ✕")
         self._ov_median = QCheckBox("Median")
-        self._ov_median.setToolTip("Group median (per axis), drawn as ✚")
+        self._ov_median.setToolTip("Group median (per axis), drawn as +")
+        self._ov_marker_lw = QDoubleSpinBox()
+        self._ov_marker_lw.setRange(0.3, 4.0)
+        self._ov_marker_lw.setSingleStep(0.1)
+        self._ov_marker_lw.setDecimals(1)
+        self._ov_marker_lw.setValue(1.2)
+        self._ov_marker_lw.setToolTip(
+            "Line width of the mean ✕ / median + markers"
+        )
+        self._ov_marker_lw.setEnabled(False)
+        for chk in (self._ov_mean, self._ov_median):
+            chk.toggled.connect(
+                lambda _: self._ov_marker_lw.setEnabled(
+                    self._ov_mean.isChecked() or self._ov_median.isChecked()
+                )
+            )
         self._ov_ellipse = QCheckBox("Ellipse")
         self._ov_ellipse.setToolTip("Covariance ellipse of each group")
         self._ov_sigma = QComboBox()
@@ -313,10 +330,13 @@ class PhasorAnalyzerPanel(QWidget):
         )
         self._ov_sigma.setEnabled(False)
         self._ov_ellipse.toggled.connect(self._ov_sigma.setEnabled)
+        lw_lbl = QLabel("lw:")
         for w in (
             self._ov_contour,
             self._ov_mean,
             self._ov_median,
+            lw_lbl,
+            self._ov_marker_lw,
             self._ov_ellipse,
             self._ov_sigma,
         ):
@@ -555,6 +575,7 @@ class PhasorAnalyzerPanel(QWidget):
         ):
             w.toggled.connect(self._on_setting_changed)
         self._ov_sigma.currentIndexChanged.connect(self._on_setting_changed)
+        self._ov_marker_lw.valueChanged.connect(self._on_setting_changed)
         self._ov_group_combo.currentTextChanged.connect(
             self._on_setting_changed
         )
@@ -1078,12 +1099,15 @@ class PhasorAnalyzerPanel(QWidget):
                     X, Y, Z = grid
                     levels = contour_levels(Z)
                     if levels:
+                        # Levels ascend in density: outer (75 %) faintest,
+                        # inner (25 %) opaque.
+                        alphas = np.linspace(0.35, 1.0, len(levels))
                         ax.contour(
                             X,
                             Y,
                             Z,
                             levels=levels,
-                            colors=[color],
+                            colors=[to_rgba(color, a) for a in alphas],
                             linewidths=0.9,
                             zorder=10,
                         )
@@ -1103,25 +1127,32 @@ class PhasorAnalyzerPanel(QWidget):
                             zorder=11,
                         )
                     )
+            lw = self._ov_marker_lw.value()
             for on, fn, marker in (
-                (mean, np.mean, "X"),
-                (median, np.median, "P"),
+                (mean, np.mean, "x"),
+                (median, np.median, "+"),
             ):
-                if on:
+                if not on:
+                    continue
+                # Black stroke underneath keeps thin markers visible on
+                # dense scatter.
+                for c, width, z in (
+                    ("black", lw + 1.0, 12),
+                    (color, lw, 12.1),
+                ):
                     ax.scatter(
                         [fn(gg)],
                         [fn(ss)],
                         marker=marker,
-                        s=90,
-                        c=[color],
-                        edgecolors="black",
-                        linewidths=0.8,
-                        zorder=12,
+                        s=80,
+                        c=[c],
+                        linewidths=width,
+                        zorder=z,
                     )
 
         if mean or median:
             key = "   ".join(
-                t for on, t in ((mean, "✕ mean"), (median, "✚ median")) if on
+                t for on, t in ((mean, "✕ mean"), (median, "+ median")) if on
             )
             ax.text(
                 0.98,

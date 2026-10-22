@@ -67,6 +67,10 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
   - clustering (K-means, hierarchical; Gaussian mixture, DBSCAN, HDBSCAN with scikit-learn)
   - row filtering, regex grouping and column combining in **Data tools**
 
+  <p>
+    <img src="docs/images/analyzer2.png" alt="Phasor per object, coloured by Labels" width="420">
+    <img src="docs/images/analyzer1.png" alt="Phasor per pixel, density, filtered by a mask" width="420">
+  </p>
 
 ## Requirements
 
