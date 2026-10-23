@@ -324,9 +324,16 @@ class PhasorPanel(QWidget):
             "Apply the calibration factor to the plot\n"
             "Enables Calibrated lifetime in FLIM View"
         )
-        cal_lay = QHBoxLayout(cal_box)
+        cal_vlay = QVBoxLayout(cal_box)
+        cal_vlay.setSpacing(2)
+        cal_vlay.setContentsMargins(6, 4, 6, 4)
+        self._cal_info = QLabel("")
+        self._cal_info.setStyleSheet(S.HINT)
+        self._cal_info.setWordWrap(True)
+        cal_vlay.addWidget(self._cal_info)
+        cal_lay = QHBoxLayout()
         cal_lay.setSpacing(4)
-        cal_lay.setContentsMargins(6, 4, 6, 4)
+        cal_vlay.addLayout(cal_lay)
 
         cal_lay.addWidget(QLabel("Factor:"))
         self._calib_display = QLineEdit(self._fmt_complex(self._calib_factor))
@@ -530,11 +537,47 @@ class PhasorPanel(QWidget):
         self._final_plot_data = None
         self._export_data = None
         self._plot_area.setVisible(False)  # hide until (re)plotted
+        self._update_cal_info(ds)
         if not has_phasor:
             self._status.info("No phasor data. Reconstruct with 'All' output.")
             self._draw_empty()
         else:
             self._status.info("Phasor data ready. Click 'Plot'.")
+
+    def _update_cal_info(self, ds) -> None:
+        """Show the rate, resolution and omega the phasor was built with."""
+        if ds is None or "omega" not in ds:
+            self._cal_info.setText("")
+            self._cal_info.setToolTip("")
+            return
+        ip = ds.attrs.get("instrument_params", {})
+        rate_mhz = float(ip.get("repetition_rate", 0) or 0) / 1e6
+        omega = float(ds["omega"].values)
+        res_ps = (
+            float(ds["tcspc_resolution"].values) * 1e12
+            if "tcspc_resolution" in ds
+            else float("nan")
+        )
+        text = (
+            f"Dataset: f_rep {rate_mhz:.3f} MHz, resolution {res_ps:.1f} ps, "
+            f"ω {omega:.4e} rad/channel"
+        )
+        tip = "The phasor and the calibration use these values."
+        warn = ""
+        header_ps = float(ip.get("tcspc_resolution_ns", 0) or 0) * 1e3
+        if ip.get("resolution_unit", "ns") != "ns":
+            warn = "Resolution not in the file header, a default is used."
+        elif header_ps and not np.isclose(res_ps, header_ps, rtol=1e-6):
+            warn = (
+                f"Built with {res_ps:.1f} ps but the header says "
+                f"{header_ps:.1f} ps. Reconstruct again."
+            )
+        if warn:
+            text += f"\n{warn}"
+            tip += f"\n{warn}"
+        self._cal_info.setText(text)
+        self._cal_info.setStyleSheet(S.STATUS_WARN if warn else S.HINT)
+        self._cal_info.setToolTip(tip)
 
     @Slot(dict)
     def on_view_changed(self, settings: dict):

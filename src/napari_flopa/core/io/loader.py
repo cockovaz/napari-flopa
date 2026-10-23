@@ -44,7 +44,7 @@ def format_ptu_header(
         f"Resolution Unit:   {constants['resolution_unit']}",
         f"TCSPC Bins:        {constants['tcspc_bins']}{_tag('tcspc_bins')}",
         f"Wrap Around:       {constants['wrap']}{_tag('wrap')}",
-        f"Omega:             {constants['omega']:.4e} rad/s{_tag('omega')}",
+        f"Omega:             {constants['omega']:.4e} rad/channel{_tag('omega')}",
         "",
         "--- Image Header ---",
         f"Pixels X:          {constants.get('pixels_x') or 'N/A'}{_tag('pixels_x')}",

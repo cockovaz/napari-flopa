@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 from matplotlib import colormaps
-from qtpy.QtCore import Qt, QTimer, Signal, Slot
+from qtpy.QtCore import QTimer, Signal, Slot
 from qtpy.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -112,6 +112,16 @@ class FlimViewPanel(QWidget):
         main_layout.addStretch()
 
     @Slot(object)
+    @staticmethod
+    def _kernel_combo() -> QComboBox:
+        """Box / Gaussian choice for a smoothing kernel, off until Smooth."""
+        combo = QComboBox()
+        combo.addItem("Box", "box")
+        # combo.addItem("Gaussian", "gaussian") # exist but check if correct functionality
+        combo.setEnabled(False)
+        combo.setToolTip("Kernel shape \n")
+        return combo
+
     def update_data(self, dataset: xr.Dataset):
         """
         Called after reconstruction completes.  Stores the dataset, clears
@@ -261,19 +271,7 @@ class FlimViewPanel(QWidget):
 
         int_row1 = QHBoxLayout()
         int_row1.setSpacing(3)
-        self.show_intensity = QCheckBox("Show")
-        self.show_intensity.setChecked(True)
-        self.show_intensity.setToolTip(
-            "Show the Intensity layer in the viewer"
-        )
-        self.show_intensity.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        int_row1.addWidget(self.show_intensity)
-        # int_row1.addSpacing(30)
-        int_row1.addStretch()
         self.smooth_int_check = QCheckBox("Smooth")
-        self.smooth_int_check.setLayoutDirection(
-            Qt.LayoutDirection.RightToLeft
-        )
         int_row1.addWidget(self.smooth_int_check)
         self.smooth_int_spin = QSpinBox()
         self.smooth_int_spin.setRange(3, 49)
@@ -281,20 +279,31 @@ class FlimViewPanel(QWidget):
         self.smooth_int_spin.setValue(3)
         self.smooth_int_spin.setEnabled(False)
         self.smooth_int_check.setToolTip(
-            "Box-smooth the displayed intensity (local mean)"
+            "Smooth the displayed intensity (local mean)"
         )
         self.smooth_int_spin.setToolTip("Smoothing kernel size in px")
-        self.smooth_int_check.toggled.connect(self.smooth_int_spin.setEnabled)
         int_row1.addWidget(self.smooth_int_spin)
-        int_ctrl.addLayout(int_row1)
+        self.smooth_int_kernel = self._kernel_combo()
+        int_row1.addWidget(self.smooth_int_kernel)
+        for w in (self.smooth_int_spin, self.smooth_int_kernel):
+            self.smooth_int_check.toggled.connect(w.setEnabled)
+        int_row1.addStretch()
 
         int_row2 = QHBoxLayout()
+        self.show_intensity = QCheckBox("Show")
+        self.show_intensity.setChecked(True)
+        self.show_intensity.setToolTip(
+            "Show the Intensity layer in the viewer"
+        )
+        int_row2.addWidget(self.show_intensity)
         self.int_colormap_lbl = QLabel("Colormap:")
+        int_row2.addStretch()
         int_row2.addWidget(self.int_colormap_lbl)
         self.int_colormap = QComboBox()
         self.int_colormap.addItems(INTENSITY_COLORMAPS)
         int_row2.addWidget(self.int_colormap)
         int_ctrl.addLayout(int_row2)
+        int_ctrl.addLayout(int_row1)
 
         int_contrast = QHBoxLayout()
         int_contrast.setSpacing(2)
@@ -354,17 +363,7 @@ class FlimViewPanel(QWidget):
 
         lt_row1 = QHBoxLayout()
         lt_row1.setSpacing(3)
-        self.show_lifetime = QCheckBox("Show")
-        self.show_lifetime.setChecked(True)
-        self.show_lifetime.setToolTip("Show the Lifetime layer in the viewer")
-        self.show_lifetime.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        lt_row1.addWidget(self.show_lifetime)
-        self.lt_corrected = QCheckBox("Calibrated")
-        self.lt_corrected.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        lt_row1.addWidget(self.lt_corrected)
-        lt_row1.addStretch()
         self.smooth_lt_check = QCheckBox("Smooth")
-        self.smooth_lt_check.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         lt_row1.addWidget(self.smooth_lt_check)
         self.smooth_lt_spin = QSpinBox()
         self.smooth_lt_spin.setRange(3, 49)
@@ -375,18 +374,29 @@ class FlimViewPanel(QWidget):
             "Photon-weighted smoothing of the displayed lifetime"
         )
         self.smooth_lt_spin.setToolTip("Smoothing kernel size in px (odd)")
-        self.smooth_lt_check.toggled.connect(self.smooth_lt_spin.setEnabled)
         lt_row1.addWidget(self.smooth_lt_spin)
-        lt_ctrl.addLayout(lt_row1)
+        self.smooth_lt_kernel = self._kernel_combo()
+        lt_row1.addWidget(self.smooth_lt_kernel)
+        for w in (self.smooth_lt_spin, self.smooth_lt_kernel):
+            self.smooth_lt_check.toggled.connect(w.setEnabled)
+        lt_row1.addStretch()
 
         lt_row2 = QHBoxLayout()
         lt_row2.setSpacing(2)
+        self.show_lifetime = QCheckBox("Show")
+        self.show_lifetime.setChecked(True)
+        self.show_lifetime.setToolTip("Show the Lifetime layer in the viewer")
+        lt_row2.addWidget(self.show_lifetime)
+        self.lt_corrected = QCheckBox("Calibrated")
+        lt_row2.addWidget(self.lt_corrected)
         self.lt_colormap_lbl = QLabel("Colormap:")
+        lt_row2.addStretch()
         lt_row2.addWidget(self.lt_colormap_lbl)
         self.lt_colormap = QComboBox()
         self.lt_colormap.addItems(LIFETIME_COLORMAPS)
         lt_row2.addWidget(self.lt_colormap)
         lt_ctrl.addLayout(lt_row2)
+        lt_ctrl.addLayout(lt_row1)
 
         lt_contrast = QHBoxLayout()
         lt_contrast.setSpacing(2)
@@ -652,7 +662,11 @@ class FlimViewPanel(QWidget):
                 and self.smooth_int_check.isChecked()
             ):
                 k = self.smooth_int_spin.value()
-                s_int = smooth_count(raw_int, size=k)
+                s_int = smooth_count(
+                    raw_int,
+                    size=k,
+                    kernel=self.smooth_int_kernel.currentData(),
+                )
                 # --- smoothing cache disabled (kept for reference) ---
                 # key = ("int", id(raw_int), raw_int.shape, k)
                 # if key not in self._smooth_cache:
@@ -668,7 +682,12 @@ class FlimViewPanel(QWidget):
                 and self.smooth_lt_check.isChecked()
             ):
                 k = self.smooth_lt_spin.value()
-                s_lt, _ = smooth_weighted(raw_lt, raw_int, size=k)
+                s_lt, _ = smooth_weighted(
+                    raw_lt,
+                    raw_int,
+                    size=k,
+                    kernel=self.smooth_lt_kernel.currentData(),
+                )
                 # --- smoothing cache disabled (kept for reference) ---
                 # key = ("lt", id(raw_lt), raw_lt.shape, k)
                 # if key not in self._smooth_cache:
@@ -933,6 +952,7 @@ class FlimViewPanel(QWidget):
 
         self.smooth_int_check.toggled.connect(_queue_slice)
         self.smooth_int_spin.valueChanged.connect(_queue_slice)
+        self.smooth_int_kernel.currentIndexChanged.connect(_queue_slice)
         self.show_intensity.toggled.connect(_visibility_changed)
         self.int_colormap.currentTextChanged.connect(_update_colormaps)
         self.intensity_slider.valueChanged.connect(_fast_display)
@@ -950,6 +970,7 @@ class FlimViewPanel(QWidget):
         if has_lifetime:
             self.smooth_lt_check.toggled.connect(_queue_slice)
             self.smooth_lt_spin.valueChanged.connect(_queue_slice)
+            self.smooth_lt_kernel.currentIndexChanged.connect(_queue_slice)
             self.show_lifetime.toggled.connect(_visibility_changed)
             self.lt_corrected.toggled.connect(self._on_lt_corrected_toggled)
             self.lt_colormap.currentTextChanged.connect(_update_colormaps)

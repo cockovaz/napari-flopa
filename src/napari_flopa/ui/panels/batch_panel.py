@@ -34,6 +34,7 @@ from qtpy.QtWidgets import (
 )
 from tttrkit.analysis.phasor import average_phasor
 
+from napari_flopa.core import provenance
 from napari_flopa.core.io.config import (
     DEFAULT_LASER_DUTY,
     MS,
@@ -697,6 +698,7 @@ class _BatchWorker(QObject):
         outputs = _needed_outputs(p)
 
         ptu_data = read_ptu_file(str(ptu_path))
+        self._warn_header_defaults(ptu_path, ptu_data)
         # Marker delays convert to sync counts, so each file is configured
         # with its own repetition rate rather than one rate for the batch.
         scan_config = p["scan_settings"].to_scan_config(
@@ -788,6 +790,31 @@ class _BatchWorker(QObject):
             )
 
         return phasor_file_rows, decay_time, decay_cols
+
+    def _warn_header_defaults(self, ptu_path: Path, ptu_data: dict) -> None:
+        """Log constants the header lacked, which fell back to a default.
+
+        The file is still processed, but its phasor and lifetime rest on a
+        guessed value, so the log should say so.
+        """
+        src = ptu_data.get("constants_source", {})
+        c = ptu_data["constants"]
+        if src.get("tcspc_resolution") == provenance.DEFAULT:
+            self.log.emit(
+                S.LOG_ERR.format(
+                    f"  ! {ptu_path.name}: TCSPC resolution not in header, "
+                    f"default {c['tcspc_resolution'] * 1e9:g} ns used "
+                    "(phasor/lifetime unreliable)"
+                )
+            )
+        if src.get("repetition_rate") == provenance.DEFAULT:
+            self.log.emit(
+                S.LOG_ERR.format(
+                    f"  ! {ptu_path.name}: repetition rate not in header, "
+                    f"default {c['repetition_rate'] / 1e6:g} MHz used "
+                    "(phasor/lifetime unreliable)"
+                )
+            )
 
     # image export
     def _export_images(

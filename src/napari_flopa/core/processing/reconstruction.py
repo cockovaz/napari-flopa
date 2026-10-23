@@ -68,6 +68,9 @@ def reconstruct_ptu_to_dataset(
         outputs=requested_outputs,
         laser_sync_rate=constants["repetition_rate"],
         tcspc_channels=tcspc_channels,
+        # Without it tttrkit assumes 5 ps, and omega
+        # is wrong for any other resolution.
+        tcspc_resolution=constants["tcspc_resolution"],
     )
 
     corrector = T3OverflowCorrector(wraparound=constants["wrap"])
