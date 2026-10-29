@@ -62,6 +62,7 @@ def reconstruct_ptu_to_dataset(
     else:
         requested_outputs = outputs
 
+    line_duration_given = scan_config.line_duration
     recon = ImageReconstructor(
         config=scan_config,
         roi_mask=roi_mask,
@@ -103,4 +104,12 @@ def reconstruct_ptu_to_dataset(
 
     logger.log("Finalizing dataset...")
     ds = recon.finalize()
+    # tttrkit fills config.line_duration (sync counts) when it measured it.
+    if recon.config.line_duration:
+        ds.attrs["line_duration_s"] = float(
+            recon.config.line_duration / constants["repetition_rate"]
+        )
+        ds.attrs["line_duration_source"] = (
+            "measured" if line_duration_given is None else "set"
+        )
     return ds

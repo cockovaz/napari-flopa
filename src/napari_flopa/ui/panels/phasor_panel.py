@@ -1410,8 +1410,8 @@ class PhasorPanel(QWidget):
                 label_str,
                 str(pixels),
                 str(valid_px),
-                f"{mean_g:.4f}",
-                f"{mean_s:.4f}",
+                f"{mean_g:.5f}",
+                f"{mean_s:.5f}",
                 f"{mean_lt:.3f}",
                 f"{total_int:.1f}",
             ]

@@ -9,7 +9,6 @@ from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -18,6 +17,10 @@ from napari_flopa.core.processing.trace import reconstruct_trace
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import S, apply_style
 from napari_flopa.ui.utils.threading import Worker
+from napari_flopa.ui.widgets.clamp_spin import (
+    ClampDoubleSpinBox,
+    ClampSpinBox,
+)
 from napari_flopa.ui.widgets.line_plot import LinePlotWidget
 from napari_flopa.ui.widgets.status_label import StatusLabel
 
@@ -131,23 +134,46 @@ class TracePanel(QWidget):
 
         self._start_spin = self._time_spin(0.0)
         self._stop_spin = self._time_spin(10.0)
-        self._det_spin = QSpinBox()
+        self._det_spin = ClampSpinBox()
         self._det_spin.setRange(1, 64)
         self._det_spin.setValue(1)
-        self._bin_spin = QDoubleSpinBox()
+        self._bin_spin = ClampDoubleSpinBox()
         self._bin_spin.setRange(0.001, 10_000.0)
-        self._bin_spin.setDecimals(3)
+        self._bin_spin.setDecimals(4)
         self._bin_spin.setSingleStep(0.01)
         self._bin_spin.setValue(1.0)
         self._bin_spin.setToolTip("Width of one time bin, in milliseconds")
 
-        for label, widget in (
-            ("Start time (s):", self._start_spin),
-            ("Stop time (s):", self._stop_spin),
-            ("Max detector:", self._det_spin),
-            ("Bin width (ms):", self._bin_spin),
+        start_min = self._bound_button(
+            "min", "Start of the recording", self._start_spin, "min"
+        )
+        stop_max = self._bound_button(
+            "max", "End of the recording", self._stop_spin, "max"
+        )
+        bin_min = self._bound_button(
+            "min",
+            f"Finest bin: {_MAX_BINS} bins over the window",
+            self._bin_spin,
+            "min",
+        )
+        bin_max = self._bound_button(
+            "max",
+            f"Coarsest bin: {_MIN_BINS} bins over the window",
+            self._bin_spin,
+            "max",
+        )
+        for label, widget, buttons in (
+            ("Start time (s):", self._start_spin, (start_min,)),
+            ("Stop time (s):", self._stop_spin, (stop_max,)),
+            ("Max detector:", self._det_spin, ()),
+            ("Bin width (ms):", self._bin_spin, (bin_min, bin_max)),
         ):
-            form.addRow(label, widget)
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(widget, 1)
+            for btn in buttons:
+                row.addWidget(btn)
+            form.addRow(label, row)
             widget.valueChanged.connect(self._mark_stale)
         # The usable bin width depends on how long the window is.
         self._start_spin.valueChanged.connect(self._tune_bin_spin)
@@ -203,7 +229,7 @@ class TracePanel(QWidget):
         marker_row.addStretch()
         root.addLayout(marker_row)
 
-        self._plot = LinePlotWidget()
+        self._plot = LinePlotWidget(x_ticks=12)
         self._plot.selector_changed.connect(self._on_selector_moved)
         self._plot.selection_range_changed.connect(self._on_range_selected)
         self._plot.selection_cleared.connect(self._on_selection_cleared)
@@ -257,10 +283,24 @@ class TracePanel(QWidget):
         )
 
     @staticmethod
+    def _bound_button(
+        text: str, tip: str, spin: QDoubleSpinBox, bound: str
+    ) -> QPushButton:
+        """Small button that sets *spin* to its minimum or maximum."""
+        btn = QPushButton(text)
+        btn.setToolTip(tip)
+        btn.clicked.connect(
+            lambda: spin.setValue(
+                spin.minimum() if bound == "min" else spin.maximum()
+            )
+        )
+        return btn
+
+    @staticmethod
     def _time_spin(value: float) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
+        spin = ClampDoubleSpinBox()
         spin.setRange(0.0, 999.999)
-        spin.setDecimals(3)
+        spin.setDecimals(4)
         spin.setSingleStep(0.01)
         spin.setValue(value)
         return spin
@@ -469,9 +509,9 @@ class TracePanel(QWidget):
             for channel, rate in stats["channels"]
         )
         self._range_info.setText(
-            f"Selected range {start * 1_000:.4f}–{stop * 1_000:.4f} ms "
-            f"({stats['duration'] * 1_000:.4f} ms): "
-            f"{marker_text}<br>{rates}"
+            f"Selected range {start * 1_000:.4f} - {stop * 1_000:.4f} ms "
+            f"({stats['duration'] * 1_000:.4f} ms)<br>"
+            f"{marker_text} | {rates}"
         )
         self._range_info.setVisible(True)
 

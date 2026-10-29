@@ -36,8 +36,8 @@ from tttrkit.analysis.phasor import average_phasor
 
 from napari_flopa.core import provenance
 from napari_flopa.core.io.config import (
-    DEFAULT_LASER_DUTY,
     MS,
+    SCAN_DEFAULTS,
     US,
     ScanSettings,
     load_config,
@@ -711,6 +711,14 @@ class _BatchWorker(QObject):
             tcspc_channels_override=p.get("tcspc_bins"),
             chunk_size=p.get("chunk_size") or DEFAULT_CHUNK_SIZE,
         )
+        line_s = ds.attrs.get("line_duration_s")
+        if line_s:
+            self.log.emit(
+                S.LOG_INFO.format(
+                    f"  line duration {line_s / MS:.4f} ms "
+                    f"({ds.attrs.get('line_duration_source', 'measured')})"
+                )
+            )
         constants = dict(ptu_data.get("constants") or {})
         if p.get("tcspc_bins"):
             constants["tcspc_bins"] = p["tcspc_bins"]
@@ -1472,7 +1480,7 @@ class BatchPanel(QWidget):
         self._c_harmonic = QCheckBox("Harmonic")
         self._c_harmonic.setStyleSheet("font-weight: normal;")
         self._c_harmonic.setToolTip("Enable harmonic (resonant) scan handling")
-        self._c_laser_duty = QLineEdit(str(DEFAULT_LASER_DUTY))
+        self._c_laser_duty = QLineEdit(str(SCAN_DEFAULTS.laser_duty))
         self._c_laser_duty.setValidator(QDoubleValidator(0.0, 1.0, 4))
         self._c_laser_duty.setToolTip(
             "Fraction of the line period the laser is on"
@@ -1771,17 +1779,18 @@ class BatchPanel(QWidget):
             except ValueError:
                 return default
 
+        d = SCAN_DEFAULTS
         n_seqs = _num(self._c_seqs, int, 1)
         line_ms = _num(self._c_line_duration, float, 0.0)
         return ScanSettings(
-            frames=_num(self._c_frames, int, 1),
-            lines=_num(self._c_lines, int, 256),
-            pixels=_num(self._c_pixels, int, 256),
+            frames=_num(self._c_frames, int, d.frames),
+            lines=_num(self._c_lines, int, d.lines),
+            pixels=_num(self._c_pixels, int, d.pixels),
             accumulations=tuple(self._accum_list(n_seqs, strict=strict)),
-            max_detector=_num(self._c_maxdet, int, 4),
+            max_detector=_num(self._c_maxdet, int, d.max_detector),
             bidirectional=self._c_bidir.isChecked(),
             harmonic_scan=self._c_harmonic.isChecked(),
-            laser_duty=_num(self._c_laser_duty, float, DEFAULT_LASER_DUTY),
+            laser_duty=_num(self._c_laser_duty, float, d.laser_duty),
             line_start_marker_delay=(
                 _num(self._c_line_start_delay, float, 0.0) * US
             ),
@@ -1802,57 +1811,64 @@ class BatchPanel(QWidget):
         """
         return self.current_settings().to_json_dict()
 
-    def _apply_dict(self, cfg: dict):
+    def _apply_dict(self, cfg: dict, *, with_calibration: bool = True):
         """Push a config dict back into the UI.
 
-        Reads the core schema (``accumulations``: list of ints, one per
-        sequence) and still accepts the legacy batch-only ``accum_per_seq``
-        string from configs saved by earlier versions of this panel.
+        Keys the config lacks fall back to ``SCAN_DEFAULTS`` (the TCSPC bin
+        count, which comes from the files, is kept). Reads the core schema
+        (``accumulations``: list of ints, one per sequence) and still accepts
+        the legacy batch-only ``accum_per_seq`` string. Without
+        *with_calibration* the factor field is left alone.
         """
         s = cfg.get("scan", {})
+        d = SCAN_DEFAULTS
+
+        def _get(key, default):
+            value = s.get(key)
+            return default if value is None else value
+
         for key, edit in (
             ("frames", self._c_frames),
             ("lines", self._c_lines),
             ("pixels", self._c_pixels),
             ("max_detector", self._c_maxdet),
-            ("tcspc_bins", self._c_tcspc),
         ):
-            if s.get(key):
-                edit.setText(str(int(s[key])))
+            edit.setText(str(int(_get(key, getattr(d, key)))))
+        if s.get("tcspc_bins"):
+            self._c_tcspc.setText(str(int(s["tcspc_bins"])))
 
         accum = s.get("accumulations", s.get("accum_per_seq"))
         seqs = s.get("sequences")
-        if isinstance(accum, (list, tuple)):
-            if seqs is None:
-                seqs = len(accum)
+        if isinstance(accum, (list, tuple)) and accum:
             self._c_accu.setText(",".join(str(int(a)) for a in accum))
-        elif accum is not None:
+            seqs = len(accum) if seqs is None else seqs
+        elif accum:
             self._c_accu.setText(str(accum))
-        if seqs is not None:
-            self._c_seqs.setText(str(seqs))
+        else:
+            self._c_accu.setText(
+                ",".join(str(a) for a in d.accumulations * int(seqs or 1))
+            )
+        self._c_seqs.setText(str(int(seqs or len(d.accumulations))))
 
-        if "bidirectional" in s:
-            self._c_bidir.setChecked(bool(s["bidirectional"]))
-        if "harmonic_scan" in s:
-            self._c_harmonic.setChecked(bool(s["harmonic_scan"]))
-        if "laser_duty" in s:
-            self._c_laser_duty.setText(str(s["laser_duty"]))
-
+        self._c_bidir.setChecked(bool(_get("bidirectional", d.bidirectional)))
+        self._c_harmonic.setChecked(
+            bool(_get("harmonic_scan", d.harmonic_scan))
+        )
+        self._c_laser_duty.setText(str(_get("laser_duty", d.laser_duty)))
         for key, edit in (
             ("line_start_marker_delay", self._c_line_start_delay),
             ("line_stop_marker_delay", self._c_line_stop_delay),
         ):
-            if key in s:
-                edit.setText(f"{float(s[key]) / US:.3f}")
+            edit.setText(f"{float(_get(key, getattr(d, key))) / US:.3f}")
         # Absent means auto, so a config without it clears the field.
         line_s = s.get("line_duration")
         self._c_line_duration.setText(
             f"{float(line_s) / MS:.4f}" if line_s else ""
         )
 
-        c = cfg.get("calibration") or {}
-        if c.get("factor"):
-            self._cal_factor.setText(str(c["factor"]))
+        if with_calibration:
+            factor = (cfg.get("calibration") or {}).get("factor")
+            self._cal_factor.setText(str(factor) if factor else "1+0j")
 
     def _on_load_json(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -2054,7 +2070,7 @@ class BatchPanel(QWidget):
                 "Load a PTU file in the File tab first.", error=True
             )
             return
-        self._apply_dict({"scan": cfg.get("scan", {})})
+        self._apply_dict({"scan": cfg.get("scan", {})}, with_calibration=False)
         # With an auto line duration, tttrkit measures it from the first
         # chunk, so the chunk size has to match for identical results.
         chunk = self.state.file_runtime().get("chunk_size")

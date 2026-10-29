@@ -48,8 +48,10 @@ class LinePlotWidget(QWidget):
     selection_range_changed = Signal(float, float)
     selection_cleared = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, x_ticks: int = 6):
         super().__init__(parent)
+        #: Rough number of ticks along the time axis.
+        self._x_ticks = x_ticks
         self._series: list[tuple] = []
         self._marker_series: dict[str, tuple] = {}
         self._selector_time: float | None = None
@@ -93,13 +95,13 @@ class LinePlotWidget(QWidget):
         if self._top_invert is None:
             return [
                 (self._top_convert(float(t)), float(t))
-                for t in _nice_ticks(self._x_min, self._x_max)
+                for t in _nice_ticks(self._x_min, self._x_max, self._x_ticks)
             ]
         lo = self._top_convert(self._x_min)
         hi = self._top_convert(self._x_max)
         return [
             (float(t), self._top_invert(float(t)))
-            for t in _nice_ticks(min(lo, hi), max(lo, hi))
+            for t in _nice_ticks(min(lo, hi), max(lo, hi), self._x_ticks)
         ]
 
     def set_marker_visibility(self, visibility: dict):
@@ -376,7 +378,7 @@ class LinePlotWidget(QWidget):
         painter.setPen(QPen(QColor(MPL.TICK), 1))
         painter.drawLine(rect.bottomLeft(), rect.bottomRight())
         painter.drawLine(rect.bottomLeft(), rect.topLeft())
-        for tick in _nice_ticks(self._x_min, self._x_max):
+        for tick in _nice_ticks(self._x_min, self._x_max, self._x_ticks):
             x = self._x_from_time(float(tick), rect)
             painter.drawLine(x, rect.bottom(), x, rect.bottom() + 5)
             # +0.0 so a tick at negative zero prints as "0", not "-0".

@@ -31,8 +31,8 @@ from tttrkit.ptuio.utils import (
 from napari_flopa.core import provenance
 from napari_flopa.core.demo import load_demo
 from napari_flopa.core.io.config import (
-    DEFAULT_LASER_DUTY,
     MS,
+    SCAN_DEFAULTS,
     US,
     ScanSettings,
     load_config,
@@ -126,7 +126,14 @@ class PtuPanel(QWidget):
         dot = self._param_dots.get(name)
         if dot is not None:
             dot.setStyleSheet(S.PROV_DOT.get(source, ""))
-            dot.setToolTip(f"Value source: {source}")
+            dot.setToolTip(f"{name.replace('_', ' ')}: {source}")
+
+    def _make_dot(self, name: str) -> QLabel:
+        """Provenance dot for *name*, registered and starting as 'default'."""
+        dot = QLabel("●")
+        self._param_dots[name] = dot
+        self._set_param_source(name, provenance.DEFAULT)
+        return dot
 
     def _on_param_edited(self, name: str):
         """A manual spinbox edit flips the field to 'user' (ignored while auto-filling)."""
@@ -315,29 +322,26 @@ class PtuPanel(QWidget):
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.addWidget(spinbox)
-            dot = QLabel("●")
-            self._param_dots[name] = dot
-            self._set_param_source(name, provenance.DEFAULT)
             spinbox.valueChanged.connect(
                 lambda *_: self._on_param_edited(name)
             )
-            row.addWidget(dot)
+            row.addWidget(self._make_dot(name))
             row.addStretch()
             return row
 
         self.lines_spin = QSpinBox()
         self.lines_spin.setRange(1, 10000)
-        self.lines_spin.setValue(512)
+        self.lines_spin.setValue(SCAN_DEFAULTS.lines)
         form.addRow("Lines:", _spin_row("lines", self.lines_spin))
 
         self.pixels_spin = QSpinBox()
         self.pixels_spin.setRange(1, 10000)
-        self.pixels_spin.setValue(512)
+        self.pixels_spin.setValue(SCAN_DEFAULTS.pixels)
         form.addRow("Pixels:", _spin_row("pixels", self.pixels_spin))
 
         self.frames_spin = QSpinBox()
         self.frames_spin.setRange(1, 1000)
-        self.frames_spin.setValue(1)
+        self.frames_spin.setValue(SCAN_DEFAULTS.frames)
         form.addRow("Frames:", _spin_row("frames", self.frames_spin))
 
         self.tcspc_bins_spin = QSpinBox()
@@ -352,7 +356,7 @@ class PtuPanel(QWidget):
 
         self.max_detector_spin = QSpinBox()
         self.max_detector_spin.setRange(1, 128)
-        self.max_detector_spin.setValue(2)
+        self.max_detector_spin.setValue(SCAN_DEFAULTS.max_detector)
         self.max_detector_spin.setToolTip(
             "Number of detector channels to reconstruct"
         )
@@ -394,23 +398,18 @@ class PtuPanel(QWidget):
 
         accu_row = QHBoxLayout()
         accu_row.addWidget(accu_label, alignment=Qt.AlignTop)
+        accu_row.addWidget(
+            self._make_dot("accumulations"), alignment=Qt.AlignTop
+        )
         accu_row.addWidget(self.accu_scroll)
         main_layout.addLayout(accu_row)
 
         main_layout.addWidget(QLabel("Line markers delay (µs)"))
 
         delay_row = QHBoxLayout()
-        for label, attr, _tip in (
-            (
-                "Start:",
-                "line_start_delay_spin",
-                "Shift the start edge of each reconstructed line, in µs",
-            ),
-            (
-                "Stop:",
-                "line_stop_delay_spin",
-                "Shift the stop edge of each reconstructed line, in µs",
-            ),
+        for label, attr, name in (
+            ("Start:", "line_start_delay_spin", "line_start_marker_delay"),
+            ("Stop:", "line_stop_delay_spin", "line_stop_marker_delay"),
         ):
             delay_row.addWidget(QLabel(label))
             spin = QDoubleSpinBox()
@@ -419,8 +418,11 @@ class PtuPanel(QWidget):
             spin.setDecimals(3)
             spin.setValue(0.0)
             # spin.setFixedWidth(50)
-            # spin.setToolTip(tip)
             delay_row.addWidget(spin)
+            delay_row.addWidget(self._make_dot(name))
+            spin.valueChanged.connect(
+                lambda *_, n=name: self._on_param_edited(n)
+            )
             setattr(self, attr, spin)
 
         delay_row.addStretch()
@@ -438,6 +440,10 @@ class PtuPanel(QWidget):
             "the markers during reconstruction."
         )
         duration_row.addWidget(self.line_duration_spin)
+        duration_row.addWidget(self._make_dot("line_duration"))
+        self.line_duration_spin.valueChanged.connect(
+            lambda *_: self._on_param_edited("line_duration")
+        )
         duration_row.addStretch()
         main_layout.addLayout(duration_row)
 
@@ -465,6 +471,10 @@ class PtuPanel(QWidget):
             "Start plus stop delay — editing it moves the stop delay"
         )
         shift_row.addWidget(self.bidir_phase_spin, 1)
+        shift_row.addWidget(self._make_dot("bidirectional"))
+        self.bidir_group.toggled.connect(
+            lambda *_: self._on_param_edited("bidirectional")
+        )
         bidir_layout.addLayout(shift_row)
 
         self.wizard_btn = QPushButton("Alignment wizard")
@@ -503,13 +513,21 @@ class PtuPanel(QWidget):
         self.laser_duty_spin.setRange(0.0, 1.0)
         self.laser_duty_spin.setSingleStep(0.01)
         self.laser_duty_spin.setDecimals(3)
-        self.laser_duty_spin.setValue(DEFAULT_LASER_DUTY)
+        self.laser_duty_spin.setValue(SCAN_DEFAULTS.laser_duty)
         # self.laser_duty_spin.setToolTip(
         #     "Fraction of the line period the laser is on — used by the "
         #     "harmonic correction"
         # )
         duty_row.addWidget(self.laser_duty_spin)
+        duty_row.addWidget(self._make_dot("laser_duty"))
+        self.laser_duty_spin.valueChanged.connect(
+            lambda *_: self._on_param_edited("laser_duty")
+        )
         duty_row.addStretch()
+        duty_row.addWidget(self._make_dot("harmonic_scan"))
+        self.harmonic_group.toggled.connect(
+            lambda *_: self._on_param_edited("harmonic_scan")
+        )
         harmonic_layout.addLayout(duty_row)
         main_layout.addWidget(self.harmonic_group)
 
@@ -624,14 +642,21 @@ class PtuPanel(QWidget):
                 self, "Error", f"Failed to apply PTU settings:\n{e}"
             )
 
-    def _fill_geometry_from_header(self, tags: dict) -> None:
-        """Scan geometry from the header tags that carry it."""
+    def _fill_geometry_from_header(
+        self, tags: dict, only: set[str] | None = None
+    ) -> None:
+        """Scan geometry from the header tags that carry it.
+
+        *only* limits it to those field names (the ones a config lacked).
+        """
         self._autofill = True
         for tag, spin, name in (
             ("ImgHdr_PixX", self.pixels_spin, "pixels"),
             ("ImgHdr_PixY", self.lines_spin, "lines"),
             ("ImgHdr_NumberOfFrames", self.frames_spin, "frames"),
         ):
+            if only is not None and name not in only:
+                continue
             value = tags.get(tag)
             if isinstance(value, (int, float)) and value > 0:
                 spin.setValue(int(value))
@@ -719,6 +744,9 @@ class PtuPanel(QWidget):
             spin = QSpinBox()
             spin.setRange(1, 1000)
             spin.setValue(1)
+            spin.valueChanged.connect(
+                lambda *_: self._on_param_edited("accumulations")
+            )
             row_layout.addWidget(spin)
             row_layout.addStretch()
             self.accu_container_layout.addWidget(row)
@@ -958,11 +986,15 @@ class PtuPanel(QWidget):
             # auto (0) leaves it for tttrkit to measure per file.
             line_duration=(self.line_duration_spin.value() * MS) or None,
             tcspc_bins=self.tcspc_bins_spin.value(),
-            calib_factor=_fmt_factor(self.state.calib_factor),
+            # Written to the config only while the Phasor calibration is on.
+            calib_factor=(
+                _fmt_factor(self.state.calib_factor)
+                if self.state.calib_enabled
+                else "1+0j"
+            ),
             ptu_filename=(
                 self.ptu_filepath.name if self.ptu_filepath else None
             ),
-            sources=dict(self._param_source),
         )
 
     def current_config_dict(self) -> dict:
@@ -988,67 +1020,87 @@ class PtuPanel(QWidget):
     def _apply_config(self, cfg: dict, source: str = provenance.USER):
         """Apply a scan-config dict (core schema) to the widgets (UI-only).
 
-        Only the keys actually present are applied — anything missing is
-        left as it was, while a key present and false is applied as false.
-        Applied geometry fields get their provenance dot set to *source*.
-        Any ``ptu_filename`` is ignored here; loading a file is the caller's job.
+        A key present in the config is applied and its dot set to *source*.
+        A missing key falls back to the header value when the loaded file has
+        one (lines, pixels, frames), otherwise to ``SCAN_DEFAULTS``, with the
+        matching dot. The TCSPC bin count always comes from the file, and any
+        ``ptu_filename`` is ignored (loading a file is the caller's job).
         """
         scan = cfg.get("scan", {})
-        cal = cfg.get("calibration", {})
+        d = SCAN_DEFAULTS
+        sources: dict[str, str] = {}
+
+        def _pick(key, default):
+            sources[key] = source if key in scan else provenance.DEFAULT
+            value = scan.get(key)
+            return default if value is None else value
+
         self._autofill = True
         try:
-            spins = {
-                "lines": self.lines_spin,
-                "pixels": self.pixels_spin,
-                "frames": self.frames_spin,
-                "max_detector": self.max_detector_spin,
-                "sequences": self.sequences_spin,
-                "tcspc_bins": self.tcspc_bins_spin,
-            }
-            applied = []
-            for key, spin in spins.items():
-                if key in scan:
-                    spin.setValue(int(scan[key]))
-                    applied.append(key)
+            for key, spin in (
+                ("lines", self.lines_spin),
+                ("pixels", self.pixels_spin),
+                ("frames", self.frames_spin),
+                ("max_detector", self.max_detector_spin),
+            ):
+                spin.setValue(int(_pick(key, getattr(d, key))))
 
             accums = scan.get("accumulations")
-            if accums is not None:
-                # Rows always match the sequence count, so moving the spin box
-                # rebuilds them; a no-op when the count already agrees.
-                if len(self.accu_spinboxes) != len(accums):
-                    self.sequences_spin.setValue(len(accums))
-                for spin, acc in zip(
-                    self.accu_spinboxes, accums, strict=False
-                ):
-                    spin.setValue(int(acc))
+            if not accums:
+                accums = [1] * int(scan.get("sequences") or 1)
+            sources["accumulations"] = (
+                source if "accumulations" in scan else provenance.DEFAULT
+            )
+            sources["sequences"] = (
+                source
+                if "accumulations" in scan or "sequences" in scan
+                else provenance.DEFAULT
+            )
+            # Rows always match the sequence count, so moving the spin box
+            # rebuilds them; a no-op when the count already agrees.
+            self.sequences_spin.setValue(len(accums))
+            if len(self.accu_spinboxes) != len(accums):
+                self._update_accumulation_widgets()
+            for spin, acc in zip(self.accu_spinboxes, accums, strict=False):
+                spin.setValue(int(acc))
 
-            if "bidirectional" in scan:
-                self.bidir_group.setChecked(bool(scan["bidirectional"]))
-            if "harmonic_scan" in scan:
-                self.harmonic_group.setChecked(bool(scan["harmonic_scan"]))
-            if "laser_duty" in scan:
-                self.laser_duty_spin.setValue(float(scan["laser_duty"]))
-
+            self.bidir_group.setChecked(
+                bool(_pick("bidirectional", d.bidirectional))
+            )
+            self.harmonic_group.setChecked(
+                bool(_pick("harmonic_scan", d.harmonic_scan))
+            )
+            self.laser_duty_spin.setValue(
+                float(_pick("laser_duty", d.laser_duty))
+            )
             for key, spin in (
                 ("line_start_marker_delay", self.line_start_delay_spin),
                 ("line_stop_marker_delay", self.line_stop_delay_spin),
             ):
-                if key in scan:
-                    spin.setValue(float(scan[key]) / US)
+                spin.setValue(float(_pick(key, getattr(d, key))) / US)
             self._sync_shift_from_delays()
-            if "line_duration" in scan:
-                # An explicit null or 0 means auto, which shows as 0.
-                self.line_duration_spin.setValue(
-                    float(scan["line_duration"] or 0.0) / MS
-                )
+            # null, 0 or missing all mean auto, which shows as 0.
+            self.line_duration_spin.setValue(
+                float(_pick("line_duration", 0.0) or 0.0) / MS
+            )
+            if "tcspc_bins" in scan:
+                self.tcspc_bins_spin.setValue(int(scan["tcspc_bins"]))
+                sources["tcspc_bins"] = source
 
-            if cal.get("factor"):
-                self._cfg_calib_factor = complex(cal["factor"])
-
-            for name in applied:
-                self._set_param_source(name, source)
+            factor = (cfg.get("calibration") or {}).get("factor")
+            self._cfg_calib_factor = complex(factor) if factor else None
         finally:
             self._autofill = False
+
+        for name, src in sources.items():
+            self._set_param_source(name, src)
+        # Geometry the config lacks comes from the header when it has it.
+        if self.ptu_data is not None:
+            missing = {"lines", "pixels", "frames"} - set(scan)
+            if missing:
+                self._fill_geometry_from_header(
+                    self.ptu_data["header"], only=missing
+                )
 
     def _on_load_config_json(self):
         """Load a config via core, then apply the values to the widgets."""
@@ -1222,6 +1274,12 @@ class PtuPanel(QWidget):
             ds.attrs["roi_mask_source"] = mask_text
 
         self._log(f"Done. Dataset: {dict(ds.sizes)}")
+        line_s = ds.attrs.get("line_duration_s")
+        if line_s:
+            self._log(
+                f"Line duration: {line_s / MS:.4f} ms "
+                f"({ds.attrs.get('line_duration_source', 'measured')})"
+            )
         if self._cfg_calib_factor is not None:
             self.state.set_calib_factor(self._cfg_calib_factor)
             self._log(f"Calibration factor: {self._cfg_calib_factor}")
