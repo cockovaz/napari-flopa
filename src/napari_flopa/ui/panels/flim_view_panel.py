@@ -346,7 +346,7 @@ class FlimViewPanel(QWidget):
         lg.setContentsMargins(4, 2, 4, 2)
 
         self.lifetime_slider = HistogramSlider(
-            integer_mode=False, canvas_height=_CANVAS_H
+            integer_mode=False, canvas_height=_CANVAS_H, range_floor=0.0
         )
         self.lifetime_slider.setMaximumWidth(_HIST_MAX_W)
         self.lifetime_slider.setToolTip(
@@ -1023,6 +1023,9 @@ class FlimViewPanel(QWidget):
                 if on
                 else f"Lifetime ({unit})"
             )
+            # A shorter title only repaints its own rect, which leaves the
+            # tail of the longer one on screen. Repaint the whole box.
+            self._lt_group.update()
 
     def _on_lt_corrected_toggled(self, _checked: bool):
         self._update_lt_corrected_state()

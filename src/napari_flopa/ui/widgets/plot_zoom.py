@@ -106,6 +106,10 @@ class PlotZoom:
         ax = self._own(event)
         if ax is None or event.xdata is None:
             return
+        gui = getattr(event, "guiEvent", None)
+        if gui is not None:
+            # Consumed here, so the panel's scroll area does not scroll too.
+            gui.accept()
         factor = _STEP if event.button == "up" else 1 / _STEP
         zoom_x = zoom_y = True
         if self._wheel_y_only:
