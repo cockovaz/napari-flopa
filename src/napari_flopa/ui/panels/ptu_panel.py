@@ -141,8 +141,18 @@ class PtuPanel(QWidget):
             self._set_param_source(name, provenance.USER)
 
     def _build_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(2, 2, 2, 2)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(2, 2, 2, 2)
+
+        # Everything but the log scrolls, so the log stays in view below it.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        inner = QWidget()
+        main_layout = QVBoxLayout(inner)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(inner)
+        root.addWidget(scroll, 3)
 
         file_group = QGroupBox("Load Data")
         apply_style(file_group, S.GROUP_PRIMARY)
@@ -296,10 +306,7 @@ class PtuPanel(QWidget):
         self.log_text.setMinimumHeight(120)
         apply_style(self.log_text, S.LOG)
         info_layout.addWidget(self.log_text)
-        # Stretch factor 1 → the log fills the leftover panel height (growing
-        # from its 120px minimum). While it's still hidden on init, the trailing
-        # addStretch() below absorbs the space instead, so nothing balloons.
-        main_layout.addWidget(self.info_group, 1)
+        root.addWidget(self.info_group, 1)
         self.info_group.setVisible(False)
 
         main_layout.addStretch()

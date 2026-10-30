@@ -72,11 +72,14 @@ from napari_flopa.core.processing.table_filter import (
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
 from napari_flopa.ui.widgets.phasor_axes import (
-    count_outside,
+    draw_full_circle,
+    draw_grid,
     draw_lifetime_ticks,
     draw_semicircle,
     finalise_phasor_axes,
+    negative_note,
 )
+from napari_flopa.ui.widgets.plot_zoom import ZOOM_HINT, PlotZoom
 from napari_flopa.ui.widgets.status_label import StatusLabel
 
 _MAX_TABLE_ROWS = 50_000
@@ -347,6 +350,15 @@ class PhasorAnalyzerPanel(QWidget):
             "universal semicircle."
         )
         freq_row.addWidget(self._lifetimes_check)
+        self._grid_check = QCheckBox("Grid")
+        self._grid_check.setToolTip("Dashed grid behind the plot")
+        self._circle_check = QCheckBox("Full circle")
+        self._circle_check.setToolTip(
+            "Dashed unit circle, G and S from -1 to 1: the range of every\n"
+            "possible phasor (cosine / sine transform)"
+        )
+        freq_row.addWidget(self._grid_check)
+        freq_row.addWidget(self._circle_check)
         freq_row.addStretch()
         root.addLayout(freq_row)
 
@@ -506,6 +518,8 @@ class PhasorAnalyzerPanel(QWidget):
         self._canvas.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding
         )
+        self._canvas.setToolTip(ZOOM_HINT)
+        self._zoom = PlotZoom(self._canvas, lambda: self._ax)
         cw_lay.addWidget(self._canvas, stretch=1)
 
         self._legend_widget = QWidget()
@@ -552,6 +566,8 @@ class PhasorAnalyzerPanel(QWidget):
         self._categorical_check.toggled.connect(self._on_setting_changed)
         self._cmap_combo.currentTextChanged.connect(self._on_setting_changed)
         self._lifetimes_check.toggled.connect(self._on_setting_changed)
+        self._grid_check.toggled.connect(self._on_setting_changed)
+        self._circle_check.toggled.connect(self._on_setting_changed)
         self._legend_check.toggled.connect(self._on_setting_changed)
         self._size_spin.valueChanged.connect(self._on_setting_changed)
         self._frep_spin.valueChanged.connect(self._on_frep_changed)
@@ -633,6 +649,7 @@ class PhasorAnalyzerPanel(QWidget):
 
     def load_csv(self, path):
         """Read a CSV into the analyzer.  Requires ``g`` and ``s`` columns."""
+        self._zoom.forget()
         try:
             df = pd.read_csv(path)
         except Exception as e:
@@ -887,18 +904,17 @@ class PhasorAnalyzerPanel(QWidget):
             self._draw_components(ax, f_rep_hz)
 
         self._finalise_axes(ax)
+        self._zoom.after_draw()
         self._canvas.draw_idle()
-        n_out = count_outside(g_v, s_v)
-        n_vis = int(valid.sum()) - n_out
+        n_vis = int(valid.sum())
+        neg = negative_note(g_v, s_v)
         msg = (
             f"Plotted {n_vis:,} points"
             if fmask is None
             else f"Plotted {n_vis:,} of {len(valid):,} points (filtered)"
         )
-        if n_out:
-            self._status.warn(
-                f"{msg} — {n_out:,} outside the plot area (G/S beyond the axes)."
-            )
+        if neg:
+            self._status.warn(f"{msg}.{neg}")
         else:
             self._status.info(msg + ".")
 
@@ -1215,7 +1231,12 @@ class PhasorAnalyzerPanel(QWidget):
                 )
 
     def _finalise_axes(self, ax):
-        finalise_phasor_axes(ax)
+        full = self._circle_check.isChecked()
+        if full:
+            draw_full_circle(ax)
+        if self._grid_check.isChecked():
+            draw_grid(ax)
+        finalise_phasor_axes(ax, full_circle=full)
 
     def _draw_empty(self):
         self._fig.clear()
@@ -1234,6 +1255,7 @@ class PhasorAnalyzerPanel(QWidget):
             fontsize=11,
         )
         self._finalise_axes(ax)
+        self._zoom.after_draw()
         self._canvas.draw_idle()
 
     def _fill_legend_widget(self, color_map: dict, unique: list):

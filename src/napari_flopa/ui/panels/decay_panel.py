@@ -36,6 +36,7 @@ from tttrkit.analysis.decay import shift_decay
 
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
+from napari_flopa.ui.widgets.plot_zoom import ZOOM_HINT_Y, PlotZoom
 from napari_flopa.ui.widgets.status_label import StatusLabel
 
 
@@ -215,6 +216,10 @@ class DecayPanel(QWidget):
             QSizePolicy.Expanding, QSizePolicy.Expanding
         )
         self._canvas.setMaximumHeight(550)
+        self._canvas.setToolTip(ZOOM_HINT_Y)
+        self._zoom = PlotZoom(
+            self._canvas, lambda: self._ax, wheel_y_only=True
+        )
         root.addWidget(self._canvas)
         self._draw_empty()
         self._canvas.setVisible(False)  # hidden until the first plot
@@ -337,6 +342,7 @@ class DecayPanel(QWidget):
         self._save_btn.setEnabled(True)
         self._rebuild_det_buttons()
         self._rebuild_legend()
+        self._zoom.forget()
         self._redraw()
 
     def _on_from_view(self):
@@ -589,6 +595,7 @@ class DecayPanel(QWidget):
                 framealpha=0.8,
             )
 
+        self._zoom.after_draw()
         self._canvas.draw_idle()
 
         n_vis = len(visible)
@@ -624,6 +631,7 @@ class DecayPanel(QWidget):
             fontsize=11,
             transform=ax.transAxes,
         )
+        self._zoom.after_draw()
         self._canvas.draw_idle()
 
     def _rebuild_det_buttons(self):

@@ -50,15 +50,18 @@ from napari_flopa.core.processing.phasor import (
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import MPL, S, apply_style
 from napari_flopa.ui.widgets.phasor_axes import (
-    count_outside,
+    draw_full_circle,
+    draw_grid,
     draw_lifetime_ticks,
     draw_semicircle,
     finalise_phasor_axes,
+    negative_note,
 )
 from napari_flopa.ui.widgets.phasor_roi import (
     PhasorRoiSelector,
     napari_label_color,
 )
+from napari_flopa.ui.widgets.plot_zoom import ZOOM_HINT, PlotZoom
 from napari_flopa.ui.widgets.status_label import StatusLabel
 
 # Scatter subsample cap — display only; the CSV export always holds every
@@ -174,6 +177,15 @@ class PhasorPanel(QWidget):
             "universal semicircle."
         )
         tb.addWidget(self._lifetimes_check)
+        self._grid_check = QCheckBox("Grid")
+        self._grid_check.setToolTip("Dashed grid behind the plot")
+        self._circle_check = QCheckBox("Full circle")
+        self._circle_check.setToolTip(
+            "Dashed unit circle, G and S from -1 to 1: the range of every\n"
+            "possible phasor (cosine / sine transform)"
+        )
+        tb.addWidget(self._grid_check)
+        tb.addWidget(self._circle_check)
         tb.addStretch()
         self._export_combo = QComboBox()
         self._export_combo.addItem("Save plot…", "plot")
@@ -394,6 +406,14 @@ class PhasorPanel(QWidget):
         self._canvas.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding
         )
+        self._canvas.setToolTip(ZOOM_HINT)
+        # (g, s, artist, colorbar, hex, binned_view) of a Density plot
+        self._density = None
+        self._zoom = PlotZoom(
+            self._canvas,
+            lambda: self._ax,
+            on_view_changed=self._rebin_density,
+        )
         cw_lay.addWidget(self._canvas)
         splitter.addWidget(cw)
         cw.setVisible(False)  # revealed on the first successful plot
@@ -446,6 +466,8 @@ class PhasorPanel(QWidget):
             self._mask_filter_check,
             self._cmap_combo,
             self._lifetimes_check,
+            self._grid_check,
+            self._circle_check,
             self._smooth_group,
             self._smooth_spin,
             self._cal_group,
@@ -524,6 +546,8 @@ class PhasorPanel(QWidget):
             "calib_re": self._calib_factor.real,
             "calib_im": self._calib_factor.imag,
             "lifetimes": self._lifetimes_check.isChecked(),
+            "grid": self._grid_check.isChecked(),
+            "full_circle": self._circle_check.isChecked(),
             "hexbin": self._hexbin_check.isChecked(),
         }
 
@@ -537,6 +561,7 @@ class PhasorPanel(QWidget):
         self._final_plot_data = None
         self._export_data = None
         self._plot_area.setVisible(False)  # hide until (re)plotted
+        self._zoom.forget()
         self._update_cal_info(ds)
         if not has_phasor:
             self._status.info("No phasor data. Reconstruct with 'All' output.")
@@ -1046,26 +1071,25 @@ class PhasorPanel(QWidget):
         self._stale.setToolTip("Plot is up to date.")
         self._stale.setVisible(True)
         self._roi_btn.setEnabled(True)
-        # Points outside the fixed axes are drawn but not visible, so they
-        # are left out of the plotted count and reported separately.
+        # Every point is drawn (zoom reaches all of them). Points below zero
+        # are reported, since a phasor normally has G and S >= 0.
         n_plot = len(np.array(g_out).ravel())
-        n_vis = n_plot - count_outside(g_out, s_out)
         if per_object:
-            msg, warn = f"Plotted {n_vis:,} objects.", False
-            n_out = n_plot - n_vis
+            msg, warn = f"Plotted {n_plot:,} objects.", False
+            neg = negative_note(g_out, s_out)
         else:
             n_full = len(g_full)
             scope = " inside the mask" if mask_as_filter else ""
             warn = n_plot < n_full
             msg = (
-                f"Plot subsampled: {n_vis:,} of {n_full:,} valid pixels"
+                f"Plot subsampled: {n_plot:,} of {n_full:,} valid pixels"
                 f"{scope} drawn. 'Save table' still exports all of them."
                 if warn
-                else f"Plotted {n_vis:,} pixels{scope}."
+                else f"Plotted {n_plot:,} pixels{scope}."
             )
-            n_out = count_outside(g_full, s_full)
-        if n_out:
-            msg += f" {n_out:,} outside the plot area (G/S beyond the axes)."
+            neg = negative_note(g_full, s_full)
+        if neg:
+            msg += neg
             warn = True
         (self._status.warn if warn else self._status.info)(msg)
 
@@ -1093,6 +1117,7 @@ class PhasorPanel(QWidget):
         fig.clear()
         ax = fig.add_subplot(111)
         self._ax = ax
+        self._density = None
         ax.set_facecolor(MPL.AXES_BG)
         fig.patch.set_facecolor(MPL.FIG_BG)
 
@@ -1102,6 +1127,7 @@ class PhasorPanel(QWidget):
 
         if len(g) == 0:
             self._finalise_axes(ax)
+            self._zoom.after_draw()
             self._canvas.draw_idle()
             return
 
@@ -1212,6 +1238,7 @@ class PhasorPanel(QWidget):
                         fraction=0.046,
                         pad=0.12,
                     )
+                    self._density = [g, s, hb, cb, True, None]
                 else:
                     H, xedges, yedges = np.histogram2d(
                         g, s, bins=150, range=[[-0.1, 1.1], [-0.1, 0.85]]
@@ -1233,6 +1260,7 @@ class PhasorPanel(QWidget):
                         fraction=0.046,
                         pad=0.12,
                     )
+                    self._density = [g, s, im, cb, False, None]
                 cb.ax.xaxis.set_tick_params(colors=MPL.TICK, labelsize=7)
                 cb.ax.set_facecolor(MPL.AXES_BG)
                 cb.outline.set_edgecolor(MPL.SPINE)
@@ -1243,15 +1271,61 @@ class PhasorPanel(QWidget):
         # _roi_pixel_yx was set by _do_compute for these same points
         self._roi.set_points(ax, g, s, self._roi_pixel_yx)
 
+        self._zoom.after_draw()
         self._canvas.draw_idle()
 
     def _finalise_axes(self, ax):
-        finalise_phasor_axes(ax)
+        full = self._circle_check.isChecked()
+        if full:
+            draw_full_circle(ax)
+        if self._grid_check.isChecked():
+            draw_grid(ax)
+        finalise_phasor_axes(ax, full_circle=full)
+
+    def _rebin_density(self, ax) -> None:
+        """Recompute a Density plot for the visible range after a zoom.
+
+        The histogram is binned once over the whole plot, so zoomed in it
+        would only show bigger blocks. Rebinning keeps 150 bins (or the hex
+        grid) across whatever is in view.
+        """
+        if self._density is None or ax is not self._ax:
+            return
+        g, s, artist, cb, is_hex, binned = self._density
+        view = (tuple(ax.get_xlim()), tuple(ax.get_ylim()))
+        if view == binned:
+            return
+        (x0, x1), (y0, y1) = view
+        if is_hex:
+            artist.remove()
+            artist = ax.hexbin(
+                g,
+                s,
+                gridsize=60,
+                cmap=artist.get_cmap(),
+                mincnt=1,
+                extent=[x0, x1, y0, y1],
+                zorder=1,
+            )
+        else:
+            H, xe, ye = np.histogram2d(
+                g, s, bins=150, range=[[x0, x1], [y0, y1]]
+            )
+            artist.set_data(H.T)
+            artist.set_alpha((H > 0).astype(float).T)
+            artist.set_extent([xe[0], xe[-1], ye[0], ye[-1]])
+            artist.set_clim(0, max(float(H.max()), 1.0))
+        cb.update_normal(artist)
+        # set_extent / hexbin may autoscale, so the view is put back.
+        ax.set_xlim(x0, x1)
+        ax.set_ylim(y0, y1)
+        self._density = [g, s, artist, cb, is_hex, view]
 
     def _draw_empty(self):
         self._fig.clear()
         ax = self._fig.add_subplot(111)
         self._ax = ax
+        self._density = None
         ax.set_facecolor(MPL.AXES_BG)
         self._fig.patch.set_facecolor(MPL.FIG_BG)
         draw_semicircle(ax, color="#555555", alpha=1.0)
@@ -1265,6 +1339,7 @@ class PhasorPanel(QWidget):
             fontsize=11,
         )
         self._finalise_axes(ax)
+        self._zoom.after_draw()
         self._canvas.draw_idle()
 
     def _fill_table_per_object(

@@ -285,7 +285,7 @@ class MPL:  # "Plot"
     AXES_BG = C.BG_MID  # axes.facecolor
     TICK = C.TEXT  # tick label colour
     SPINE = C.TEXT_DARK  # axes spine colour
-    GRID = "#333842"  # grid line colour
+    GRID = "#3c424e"  # grid line colour
 
     # Dragged-range overlay in the trace plot
     SELECTION = C.TITLE
