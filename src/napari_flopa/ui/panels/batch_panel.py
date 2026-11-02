@@ -165,10 +165,7 @@ class _SpecRow(QWidget):
             text = edit.text().strip()
             if text.isdigit() and int(text) > v._max:
                 edit.setStyleSheet(self._STYLE_ERR)
-                edit.setToolTip(
-                    f"Index {text} exceeds max ({v._max}) — "
-                    "will be clamped at runtime"
-                )
+                edit.setToolTip(f"Index {text} exceeds max ({v._max})")
             else:
                 edit.setStyleSheet(self._STYLE_OK)
                 edit.setToolTip(self._DIM_TOOLTIP)
@@ -324,14 +321,14 @@ class _ImagesSection(_ExportSection):
         self._int_chk.setChecked(True)
         self._lt_chk.setChecked(True)
         self._flim_chk.setToolTip(
-            "Write <file>_flim.png (lifetime colour × intensity brightness)\n"
+            "Write <file>_flim.png (lifetime color × intensity brightness)\n"
             "plus <file>_flim.txt with the colormap and ranges used"
         )
         self._int_chk.setToolTip(
             "Write <file>_intensity.tif - photon counts (float32)"
         )
         self._lt_chk.setToolTip(
-            "Write <file>_lifetime.tif — mean arrival time in ns (float32)"
+            "Write <file>_lifetime.tif - mean arrival time in ns (float32)"
         )
         self._lt_corr_chk = QCheckBox("Calibrated")
         self._lt_corr_chk.setChecked(True)
@@ -380,8 +377,7 @@ class _ImagesSection(_ExportSection):
             e.setValidator(QDoubleValidator(0.0, 9999.0, 4))
             e.setToolTip(
                 f"{which} lifetime for the FLIM RGB LUT\n"
-                "ns when the header carries the TCSPC resolution, raw channels otherwise.\n"
-                f"Empty = auto ({unit} of each exported image)."
+                f"Empty = auto ({unit} of each exported image)",
             )
         for e, which, unit in (
             (self._int_lo, "Minimum", "min"),
@@ -389,8 +385,8 @@ class _ImagesSection(_ExportSection):
         ):
             e.setValidator(QDoubleValidator(0.0, 1e12, 4))
             e.setToolTip(
-                f"{which} photon count scaling the FLIM RGB brightness — "
-                f"empty = auto ({unit} of each exported image)"
+                f"{which} photon count scaling the FLIM RGB brightness\n"
+                f"Empty = auto ({unit} of each exported image)",
             )
         for text, lo, hi in (
             ("Int. range:", self._int_lo, self._int_hi),
@@ -1368,7 +1364,7 @@ class BatchPanel(QWidget):
         # self._lbl_edit.setMaximumWidth(260)
         self._lbl_edit.setPlaceholderText("Optional — labels…")
         self._lbl_edit.setToolTip(
-            "Optional — TIFF integer label files matched by PTU name prefix"
+            "Optional - TIFF label files matched by PTU name prefix"
         )
         lbl_row.addWidget(self._lbl_edit)
 
@@ -1378,8 +1374,7 @@ class BatchPanel(QWidget):
         # Also applies to picked files: their label TIFFs can sit in
         # sub-folders of the labels folder.
         self._recursive_chk.setToolTip(
-            "Also search sub-folders for label TIFFs, and for .ptu files\n"
-            "when a whole folder is the input"
+            "Also search sub-folders for label TIFFs\n"
         )
         self._recursive_chk.toggled.connect(self._update_input_label)
         dg.addWidget(self._recursive_chk, 2, 1)
@@ -1417,9 +1412,7 @@ class BatchPanel(QWidget):
         self._c_accu.setToolTip(
             "Number of line accumulations per sequence.\n"
             "• Single integer → same value for every sequence, e.g. 1\n"
-            "• Comma-separated list → one value per sequence (count must\n"
-            "  match N seqs), e.g. for 3 sequences: 1,3,3\n"
-            "Error is raised at run time if count mismatches N seqs."
+            "• Comma-separated list → one value per sequence, e.g. 1,3,3"
         )
 
         for col, (lbl, w) in enumerate(
@@ -1482,9 +1475,6 @@ class BatchPanel(QWidget):
         self._c_harmonic.setToolTip("Enable harmonic (resonant) scan handling")
         self._c_laser_duty = QLineEdit(str(SCAN_DEFAULTS.laser_duty))
         self._c_laser_duty.setValidator(QDoubleValidator(0.0, 1.0, 4))
-        self._c_laser_duty.setToolTip(
-            "Fraction of the line period the laser is on"
-        )
         duty_lbl = QLabel("Laser duty:")
         duty_lbl.setStyleSheet("font-weight: normal;")
         _follow_checkbox(self._c_harmonic, duty_lbl, self._c_laser_duty)

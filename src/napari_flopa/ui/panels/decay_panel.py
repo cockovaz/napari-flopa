@@ -40,17 +40,15 @@ from napari_flopa.ui.widgets.plot_zoom import ZOOM_HINT_Y, PlotZoom
 from napari_flopa.ui.widgets.status_label import StatusLabel
 
 
-# 60-colour palette from matplotlib's three tab20 maps
+# 60-color palette from matplotlib's three tab20 maps
 def _build_palette() -> list:
-    colours = []
+    colors = []
     for cmap_name in ("tab20", "tab20b", "tab20c"):
         cmap = _mpl_colormaps[cmap_name]
         for i in range(20):
             r, g, b, _ = cmap(i / 20)
-            colours.append(
-                f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
-            )
-    return colours
+            colors.append(f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}")
+    return colors
 
 
 _PALETTE = _build_palette()
@@ -145,7 +143,6 @@ class DecayPanel(QWidget):
         tb.addWidget(self._export_combo)
         self._save_btn = QPushButton("Save")
         self._save_btn.setEnabled(False)
-        self._save_btn.setToolTip("Save the plot or table chosen on the left")
         tb.addWidget(self._save_btn)
 
         root.addLayout(tb)
@@ -319,7 +316,7 @@ class DecayPanel(QWidget):
         if self._curves:
             self._stale.setStyleSheet(S.STALE_STALE)
             self._stale.setToolTip(
-                "Settings changed since last plot — click Plot to refresh."
+                "Settings changed since last plot, Plot to refresh."
             )
             self._stale.setVisible(True)
 
@@ -433,7 +430,7 @@ class DecayPanel(QWidget):
           label    — e.g. "F0 D1"
           time_ns  — 1-D array of bin centres in nanoseconds
           counts   — 1-D float64 photon counts
-          color    — hex colour string from _PALETTE
+          color    — hex color string from _PALETTE
           visible  — True (all visible by default)
           chan_idx — int channel index, or None when channel was aggregated
         Returns an empty list on error (message written to status bar).
@@ -851,7 +848,7 @@ class DecayPanel(QWidget):
 
 class _CurveLegendEntry(QWidget):
     """
-    Compact legend item: coloured square swatch + labelled checkbox.
+    Compact legend item: colored square swatch + labelled checkbox.
 
     Emits toggled(bool) when the checkbox state changes.  Used inside the
     scrollable legend area of DecayPanel.

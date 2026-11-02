@@ -9,10 +9,10 @@ WARN_PREFIX = "! "
 class StatusLabel(QLabel):
     """Word-wrapped status line; ``info`` / ``warn`` / ``error`` set the text.
 
-    Every panel uses this instead of styling a bare QLabel, so the colours
+    Every panel uses this instead of styling a bare QLabel, so the colors
     and the "! " warning marker stay identical everywhere. Each call
     re-applies its level's stylesheet, so a message never inherits the
-    previous one's colour::
+    previous one's color::
 
         self._status.info(f"Plotted {n:,} pixels.")
         self._status.warn(f"Only {n:,} of {total:,} pixels drawn.")  # amber

@@ -75,11 +75,11 @@ class PhasorPanel(QWidget):
     Plot rules::
 
         Per pixel, no mask   → Scatter (white) | Intensity Weighted | Density
-        Per pixel, mask      → "Labels" mode, colours from the napari layer
+        Per pixel, mask      → "Labels" mode, colors from the napari layer
         Per pixel, mask + "As filter"
                              → mask used as binary filter, sub-modes apply again
         Per object, no mask  → single centroid (white)
-        Per object, mask     → one centroid per label, napari layer colours
+        Per object, mask     → one centroid per label, napari layer colors
 
     The calibration factor is complex and applied as ``(g + i·s) · factor``;
     "Revert" restores the factor that came with the loaded config (1+0j if
@@ -133,7 +133,7 @@ class PhasorPanel(QWidget):
         self._plot_btn.setStyleSheet(S.BTN_RUN)
         self._plot_btn.setEnabled(False)
         self._plot_btn.setToolTip(
-            "Plot the phasor of the slice shown in FLIM View and fill the table"
+            "Plot the phasor of the slice shown in FLIM View"
         )
         tb.addWidget(self._plot_btn)
 
@@ -181,8 +181,7 @@ class PhasorPanel(QWidget):
         self._grid_check.setToolTip("Dashed grid behind the plot")
         self._circle_check = QCheckBox("Full circle")
         self._circle_check.setToolTip(
-            "Dashed unit circle, G and S from -1 to 1: the range of every\n"
-            "possible phasor (cosine / sine transform)"
+            "Dashed unit circle, G and S from -1 to 1"
         )
         tb.addWidget(self._grid_check)
         tb.addWidget(self._circle_check)
@@ -196,7 +195,6 @@ class PhasorPanel(QWidget):
         )
         tb.addWidget(self._export_combo)
         self._save_btn = QPushButton("Save")
-        self._save_btn.setToolTip("Save the plot or table chosen on the left")
         self._save_btn.clicked.connect(self._on_export)
         tb.addWidget(self._save_btn)
 
@@ -238,7 +236,7 @@ class PhasorPanel(QWidget):
         self._pm_intensity = QRadioButton("Intensity α")
         self._pm_density = QRadioButton("Density")
         self._pm_scatter.setChecked(True)
-        self._pm_scatter.setToolTip("Scatter plot — each pixel as a point")
+        self._pm_scatter.setToolTip("Each pixel as a point, uniform color")
         self._pm_intensity.setToolTip(
             "Scatter with alpha-channel weighted by photon count"
         )
@@ -252,10 +250,6 @@ class PhasorPanel(QWidget):
             px_row.addWidget(rb)
 
         self._hexbin_check = QCheckBox("Hex")
-        self._hexbin_check.setToolTip(
-            "Density bin shape — unchecked: square histogram (imshow); "
-            "checked: hexagonal bins (hexbin). Density mode only."
-        )
         px_row.addWidget(self._hexbin_check)
 
         # px_row.addWidget(QLabel("Cmap:"))
@@ -286,7 +280,7 @@ class PhasorPanel(QWidget):
         self._mask_combo.addItem("None")
         self._mask_combo.setMinimumWidth(100)
         self._mask_combo.setToolTip(
-            "napari Labels layer: each label is plotted in its layer colour"
+            "napari Labels layer: each label is plotted in its layer color"
         )
         # Give the combo the row's spare width (stretch factor 1) instead of an
         # addStretch() spacer, so it expands from the label to the end and shows
@@ -299,9 +293,7 @@ class PhasorPanel(QWidget):
         self._mask_filter_check = QCheckBox("As filter")
         self._mask_filter_check.setToolTip(
             "Treat the mask as binary: plot only the pixels inside it, but as "
-            "one population instead of colouring per label.\n"
-            "That makes the Per Pixel sub-modes (Intensity α, Density) usable "
-            "with a mask."
+            "one population instead of coloring per label.\n"
         )
         mask_lay.addWidget(self._mask_filter_check)
         root.addWidget(mask_box)
@@ -334,7 +326,7 @@ class PhasorPanel(QWidget):
         cal_box.setChecked(False)
         cal_box.setToolTip(
             "Apply the calibration factor to the plot\n"
-            "Enables Calibrated lifetime in FLIM View"
+            "(Enables Calibrated lifetime in FLIM View)"
         )
         cal_vlay = QVBoxLayout(cal_box)
         cal_vlay.setSpacing(2)
@@ -352,7 +344,7 @@ class PhasorPanel(QWidget):
         self._calib_display.setReadOnly(True)
         self._calib_display.setStyleSheet(S.DISPLAY)
         self._calib_display.setToolTip(
-            "Current calibration factor (complex number). Applied as: phasor × factor"
+            "Current calibration factor (complex number)"
         )
         self._calib_display.setMaximumWidth(160)
         cal_lay.addWidget(self._calib_display)
@@ -366,7 +358,7 @@ class PhasorPanel(QWidget):
 
         calc_btn = QPushButton("Calculate")
         calc_btn.setToolTip(
-            "Open dialog: enter τ_ref (ns) + measured G, S → computes factor"
+            "Compute factor by entering τ_ref (ns) + measured G, S"
         )
         calc_btn.clicked.connect(self._on_calculate_cal_dialog)
         cal_lay.addWidget(calc_btn)
@@ -501,7 +493,7 @@ class PhasorPanel(QWidget):
         self._mask_filter_check.setEnabled(per_pixel and mask_active)
         color_by_label = mask_active and not self._mask_as_filter()
 
-        # Pixel sub-modes: whenever points are not coloured per label
+        # Pixel sub-modes: whenever points are not colored per label
         sub_modes_ok = per_pixel and not color_by_label
         for rb in self._pixel_submodes:
             rb.setEnabled(sub_modes_ok)
@@ -528,7 +520,7 @@ class PhasorPanel(QWidget):
             if self._get_settings() != self._plotted_settings:
                 self._stale.setStyleSheet(S.STALE_STALE)
                 self._stale.setToolTip(
-                    "Settings changed since last plot — click Plot to refresh."
+                    "Settings changed since last plot, Plot to refresh."
                 )
                 self._stale.setVisible(True)
 
@@ -816,7 +808,7 @@ class PhasorPanel(QWidget):
         per_object = self._per_object_radio.isChecked()
         # Binary-filter mode (Per Pixel only): the mask still restricts which
         # pixels are plotted — that happens below via `valid` — but they are
-        # drawn as one population instead of coloured per label.
+        # drawn as one population instead of colored per label.
         # `mask_active` (not the combo) so a shape-mismatched mask, which was
         # just discarded above, cannot leave filter mode switched on.
         mask_as_filter = mask_active and self._mask_as_filter()

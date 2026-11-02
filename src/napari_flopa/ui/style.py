@@ -1,9 +1,9 @@
-class C:  # "Color" — raw hex colour tokens
-    """Raw hex colour tokens — single source of truth for the dark theme.
+class C:  # "Color" — raw hex color tokens
+    """Raw hex color tokens — single source of truth for the dark theme.
 
     Tuned to sit inside napari's dark blue-grey theme (background #262930,
     foreground #414851, text #f0f1f2). Token *names* are the public contract:
-    ``S`` (Qt stylesheets) and ``MPL`` (matplotlib colours) build on them.
+    ``S`` (Qt stylesheets) and ``MPL`` (matplotlib colors) build on them.
     """
 
     # Surfaces (dark → light), matching napari's blue-greys
@@ -60,8 +60,8 @@ class C:  # "Color" — raw hex colour tokens
     # Accent - pink/purple
     PINK_LINE = "#FC24DF"
 
-    # Categorical series palette (Okabe–Ito, colour-blind safe) — one entry per
-    # detector in the trace plot; cycles if there are more series than colours.
+    # Categorical series palette (Okabe–Ito, color-blind safe) — one entry per
+    # detector in the trace plot; cycles if there are more series than colors.
     SERIES = (
         "#0072B2",
         "#D55E00",
@@ -279,13 +279,13 @@ def apply_style(widget, style_string: str) -> None:
 
 
 class MPL:  # "Plot"
-    """Colour values for figure/axes styling (not Qt stylesheets)."""
+    """Color values for figure/axes styling (not Qt stylesheets)."""
 
     FIG_BG = C.BG_DARK  # figure.facecolor
     AXES_BG = C.BG_MID  # axes.facecolor
-    TICK = C.TEXT  # tick label colour
-    SPINE = C.TEXT_DARK  # axes spine colour
-    GRID = "#3c424e"  # grid line colour
+    TICK = C.TEXT  # tick label color
+    SPINE = C.TEXT_DARK  # axes spine color
+    GRID = "#3c424e"  # grid line color
 
     # Dragged-range overlay in the trace plot
     SELECTION = C.TITLE

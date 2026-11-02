@@ -18,7 +18,7 @@ class PhasorRoiSelector:
     """Lasso ROI on the phasor plot, painted into a napari Labels layer.
 
     Each closed lasso gets the next label id: the points inside it are
-    recoloured on the plot, and their pixels (per pixel) or objects (per
+    recolored on the plot, and their pixels (per pixel) or objects (per
     object) are painted into the "Phasor ROI Labels" layer.
 
     *get_context* is called on every lasso release and returns the panel
@@ -150,12 +150,12 @@ class PhasorRoiSelector:
         self._point_labels[inside] = lbl
 
         context = self._get_context()
-        # Labels layer first, so its colours exist for the scatter
+        # Labels layer first, so its colors exist for the scatter
         self._update_labels_layer(inside, lbl, context)
         self._update_scatter_colors(context["per_object"])
 
     def _update_scatter_colors(self, per_obj: bool):
-        """Recolour points: assigned → napari label colour, others → grey."""
+        """Recolor points: assigned → napari label color, others → grey."""
         if self._point_labels is None or self._labels_layer is None:
             return
         if self._scatter is not None:

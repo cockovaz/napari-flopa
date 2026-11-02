@@ -201,9 +201,6 @@ class TracePanel(QWidget):
         display = QHBoxLayout()
         display.setSpacing(6)
         self._sum_check = QCheckBox("Sum channels")
-        self._sum_check.setToolTip(
-            "Plot the sum of the checked detectors as one line"
-        )
         self._sum_check.toggled.connect(self._redraw)
         display.addWidget(self._sum_check)
         self._channel_row = QHBoxLayout()
@@ -338,7 +335,7 @@ class TracePanel(QWidget):
         if self._result is None:
             return
         self._stale.setStyleSheet(S.STALE_STALE)
-        self._stale.setToolTip("Parameters changed — click Apply to refresh.")
+        self._stale.setToolTip("Parameters changed, Apply to refresh.")
         self._stale.setVisible(True)
 
     def _mark_fresh(self):
@@ -448,12 +445,7 @@ class TracePanel(QWidget):
                 chk.blockSignals(False)
             chk.setEnabled(not crowded)
             label = chk.text()
-            chk.setToolTip(
-                f"{count} {label.lower()} in the plotted range — too dense "
-                f"to draw (limit {_MAX_MARKERS}). Narrow the range to use it."
-                if crowded
-                else f"{count} {label.lower()} in the plotted range."
-            )
+            chk.setToolTip(f"{count} {label.lower()} in the plotted range.")
 
     def _redraw(self, *_):
         """Repaint from the cached result — never re-reads the file."""

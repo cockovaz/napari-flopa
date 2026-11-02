@@ -310,13 +310,12 @@ class FlimViewPanel(QWidget):
         self.int_contrast_lbl = QLabel("Contrast:")
         int_contrast.addWidget(self.int_contrast_lbl)
         self.int_auto_btn = QPushButton("Auto-once")
-        self.int_auto_btn.setToolTip("Set contrast to [p2, p98] now")
+        self.int_auto_btn.setToolTip("Set contrast to [p2, p98]")
         int_contrast.addWidget(self.int_auto_btn)
         self.int_live_btn = QPushButton("Auto-live")
         self.int_live_btn.setCheckable(True)
         self.int_live_btn.setToolTip(
-            "Re-apply [p2, p98] on every change of frame, sequence, "
-            "detector, aggregation or smoothing. Min-Max turns it off."
+            "Re-apply [p2, p98] on every change. Min-Max turns it off."
         )
         self.int_live_btn.setStyleSheet(S.BTN_DET_OFF)
         int_contrast.addWidget(self.int_live_btn)
@@ -328,7 +327,7 @@ class FlimViewPanel(QWidget):
         self.int_mask_btn = QPushButton("→ Intensity mask")
         # self.int_mask_btn.setStyleSheet(S.BTN_DANGER)
         self.int_mask_btn.setToolTip(
-            "Create a new Labels layer from pixels inside the red intensity range."
+            "Create a new Labels layer from selected range."
         )
         self.int_mask_btn.setEnabled(False)
         int_ctrl.addWidget(self.int_mask_btn)
@@ -373,7 +372,7 @@ class FlimViewPanel(QWidget):
         self.smooth_lt_check.setToolTip(
             "Photon-weighted smoothing of the displayed lifetime"
         )
-        self.smooth_lt_spin.setToolTip("Smoothing kernel size in px (odd)")
+        self.smooth_lt_spin.setToolTip("Smoothing kernel size in px")
         lt_row1.addWidget(self.smooth_lt_spin)
         self.smooth_lt_kernel = self._kernel_combo()
         lt_row1.addWidget(self.smooth_lt_kernel)
@@ -403,13 +402,12 @@ class FlimViewPanel(QWidget):
         self.lt_text = QLabel("Contrast:")
         lt_contrast.addWidget(self.lt_text)
         self.lt_auto_btn = QPushButton("Auto-once")
-        self.lt_auto_btn.setToolTip("Set contrast to [p2, p98] now")
+        self.lt_auto_btn.setToolTip("Set contrast to [p2, p98]")
         lt_contrast.addWidget(self.lt_auto_btn)
         self.lt_live_btn = QPushButton("Auto-live")
         self.lt_live_btn.setCheckable(True)
         self.lt_live_btn.setToolTip(
-            "Re-apply [p2, p98] on every change of frame, sequence, "
-            "detector, aggregation or smoothing. Min-Max turns it off."
+            "Re-apply [p2, p98] on every change. Min-Max turns it off."
         )
         self.lt_live_btn.setStyleSheet(S.BTN_DET_OFF)
         lt_contrast.addWidget(self.lt_live_btn)
@@ -421,14 +419,13 @@ class FlimViewPanel(QWidget):
         self.lt_mask_btn = QPushButton("→ Lifetime mask")
         # self.lt_mask_btn.setStyleSheet(S.BTN_DANGER)
         self.lt_mask_btn.setToolTip(
-            "Create a new Labels layer from pixels inside the red lifetime range."
+            "Create a new Labels layer from selected range."
         )
         self.lt_mask_btn.setEnabled(False)
 
         self.combined_mask_btn = QPushButton("→ Combined mask")
         self.combined_mask_btn.setToolTip(
-            "Create a new Labels layer from pixels inside both red slider "
-            "ranges: the intensity threshold AND the lifetime threshold."
+            "Create a new Labels layer from selected ranges"
         )
         self.combined_mask_btn.setEnabled(False)
 
@@ -467,7 +464,7 @@ class FlimViewPanel(QWidget):
             "Save <name>_int.tif — the displayed intensity as float32"
         )
         self.exp_lt_chk.setToolTip(
-            "Save <name>_lt.tif — the displayed lifetime"
+            "Save <name>_lt.tif — the displayed lifetime as float32"
         )
         self.exp_flim_chk.setToolTip(
             "Save <name>_flim.png with the current contrast and colormap,\n"
@@ -518,8 +515,8 @@ class FlimViewPanel(QWidget):
         self.gen_flim_btn = QPushButton("→ RGB FLIM layer")
         self.gen_flim_btn.setEnabled(has_flim)
         self.gen_flim_btn.setToolTip(
-            "Add the current FLIM RGB composite (current view, contrast,\n"
-            "colormap and smoothing) as a static napari image layer."
+            "Add the FLIM RGB composite (current view)\n"
+            "as a napari image layer."
         )
         self.gen_flim_btn.clicked.connect(self._generate_flim_layer)
 
@@ -608,7 +605,7 @@ class FlimViewPanel(QWidget):
 
         def _int_cmap():
             # In FLIM mode (both layers shown) intensity MUST be gray so the
-            # multiplicative composite = gray_intensity x lifetime_colour.
+            # multiplicative composite = gray_intensity x lifetime_color.
             # Otherwise honour the user's intensity colormap combo.
             both = (
                 has_intensity

@@ -10,7 +10,7 @@ LETTER = {METADATA: "M", DEFAULT: "D", USER: "U", ESTIMATED: "E"}
 def letter(source: str) -> str:
     """One-letter code (M/D/U/E) for a provenance source; '?' if unknown.
 
-    Defined here so the printed summary and the UI agree; the colours live in
+    Defined here so the printed summary and the UI agree; the colors live in
     ``ui/style.py``.
     """
     return LETTER.get(source, "?")

@@ -175,7 +175,7 @@ INTENSITY_COLORMAPS = ("gray", "viridis", "magma", "hot", "cividis")
 def colormap_to_lut(cmap_name: str, n: int = 256) -> NDArray[np.uint8]:
     """Build an (n, 3) uint8 RGB lookup table from a matplotlib colormap name.
 
-    Pre-building the LUT once lets `flim_rgb` recolour interactively (a uint8
+    Pre-building the LUT once lets `flim_rgb` recolor interactively (a uint8
     index lookup) instead of evaluating the colormap on every slider move.
     """
     # `matplotlib.colormaps[name]` is the registry lookup that replaced
@@ -245,10 +245,10 @@ def flim_rgb(
     lt_range: tuple[float, float],
     int_range: tuple[float, float],
 ) -> NDArray[np.float32]:
-    """Composite a FLIM RGB image: lifetime → colour (via ``lut``) × intensity.
+    """Composite a FLIM RGB image: lifetime → color (via ``lut``) × intensity.
 
-    Lifetime is normalised into ``lt_range`` and quantised to ``len(lut)`` colour
-    bins; intensity is normalised into ``int_range`` (0..1) and scales the colour.
+    Lifetime is normalised into ``lt_range`` and quantised to ``len(lut)`` color
+    bins; intensity is normalised into ``int_range`` (0..1) and scales the color.
     NaN lifetimes map to the low end of ``lt_range``; NaN intensities map to 0.
 
     Returns an (H, W, 3) float32 array in [0, 1]. This is the single source of

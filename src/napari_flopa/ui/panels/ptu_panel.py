@@ -91,7 +91,7 @@ class PtuPanel(QWidget):
         self._syncing_shift = False
 
         # Parameter provenance: name -> 'metadata'|'default'|'user', plus the
-        # coloured dot widgets. `_autofill` guards programmatic setValue() calls
+        # colored dot widgets. `_autofill` guards programmatic setValue() calls
         # so auto-filling from the header doesn't mark fields as user-edited.
         self._param_source: dict[str, str] = {}
         self._param_dots: dict[str, object] = {}
@@ -121,7 +121,7 @@ class PtuPanel(QWidget):
         }
 
     def _set_param_source(self, name: str, source: str):
-        """Record a parameter's source and recolour its dot."""
+        """Record a parameter's source and recolor its dot."""
         self._param_source[name] = source
         dot = self._param_dots.get(name)
         if dot is not None:
@@ -255,16 +255,14 @@ class PtuPanel(QWidget):
         self.chunk_size_spin.setValue(DEFAULT_CHUNK_SIZE)
         self.chunk_size_spin.setToolTip(
             "TTTR records read per iteration "
-            f"(default {DEFAULT_CHUNK_SIZE:,}).\n"
-            "Smaller = less memory and finer progress steps; "
-            "larger = fewer iterations."
+            f"(default {DEFAULT_CHUNK_SIZE:,})"
         )
         output_row.addWidget(self.chunk_size_spin, 2)
 
         self.reconstruct_btn = QPushButton("Run")
         self.reconstruct_btn.setStyleSheet(S.BTN_RUN)
         self.reconstruct_btn.setToolTip(
-            "Reconstruct the image with these parameters and open FLIM View"
+            "Reconstruct the image and open FLIM View"
         )
         self.reconstruct_btn.clicked.connect(self._run_reconstruction)
         output_row.addWidget(self.reconstruct_btn)
@@ -281,7 +279,7 @@ class PtuPanel(QWidget):
         self._roi_mask_combo.setToolTip(
             "Optional 2D mask (lines × pixels).\n"
             "Photons outside the mask are excluded from reconstruction.\n"
-            "Select a napari Labels/Image layer, or load a .tif/.npy file."
+            "Select a napari Labels layer, or load a .tif/.npy file."
         )
         self._roi_mask_combo.currentTextChanged.connect(
             self._on_roi_mask_changed
@@ -443,7 +441,7 @@ class PtuPanel(QWidget):
         self.line_duration_spin.setSingleStep(0.1)
         self.line_duration_spin.setSpecialValueText("auto")
         self.line_duration_spin.setToolTip(
-            "How long one scan line lasts. Left at auto it is measured from "
+            "How long one scan line lasts. 'auto' = measured from "
             "the markers during reconstruction."
         )
         duration_row.addWidget(self.line_duration_spin)
@@ -474,9 +472,6 @@ class PtuPanel(QWidget):
         self.bidir_phase_spin.setSingleStep(1.0)
         self.bidir_phase_spin.setDecimals(3)
         self.bidir_phase_spin.setValue(0.0)
-        self.bidir_phase_spin.setToolTip(
-            "Start plus stop delay — editing it moves the stop delay"
-        )
         shift_row.addWidget(self.bidir_phase_spin, 1)
         shift_row.addWidget(self._make_dot("bidirectional"))
         self.bidir_group.toggled.connect(
@@ -691,7 +686,7 @@ class PtuPanel(QWidget):
         layout = QVBoxLayout(dlg)
         te = QTextEdit()
         te.setReadOnly(True)
-        apply_style(te, S.LOG)  # unify colours with the log editor
+        apply_style(te, S.LOG)  # unify colors with the log editor
         te.setPlainText(full_text)
         layout.addWidget(te)
         close_btn = QPushButton("Close")

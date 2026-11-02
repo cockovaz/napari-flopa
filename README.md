@@ -31,7 +31,7 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
   - export to TIFF/PNG
 - **Phasor**
   - per-object or per-pixel phasor plot as scatter, intensity-weighted scatter or density (square or hex bins), smoothing
-  - colour by a Labels layer or use it as a filter
+  - color by a Labels layer or use it as a filter
   - calibration from a reference lifetime or a custom factor
 - **Decay**
   - TCSPC decay curves with frame/sequence/detector aggregation, per-detector toggles, normalisation and log scale
@@ -40,7 +40,7 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
   - export of images (FLIM RGB, intensity, lifetime), phasor tables per object or per pixel and decay tables (raw or normalised), per file or merged
 - **Analyzer**
   - explore phasor CSV tables (from Phasor or Batch)
-  - colour by any column
+  - color by any column
   - per-group density contours, mean/median and covariance ellipses
   - calibration
   - compute phase and modulation lifetimes
@@ -60,12 +60,12 @@ A [napari] plugin for opening, processing and analysing FLIM (Fluorescence Lifet
     <td width="50%" align="center"><a href="docs/images/batch_panel.png"><img src="docs/images/batch_panel.png" alt="Batch: scan configuration and export passes"></a><br><sub>Batch: batch processing with configurable outputs</sub></td>
   </tr>
   <tr>
-    <td width="50%" align="center"><a href="docs/images/object_phasor.png"><img src="docs/images/object_phasor.png" alt="Phasor per object, coloured by a Labels layer"></a><br><sub>Phasor: per object, coloured by a Labels layer</sub></td>
+    <td width="50%" align="center"><a href="docs/images/object_phasor.png"><img src="docs/images/object_phasor.png" alt="Phasor per object, colored by a Labels layer"></a><br><sub>Phasor: per object, colored by a Labels layer</sub></td>
     <td width="50%" align="center"><a href="docs/images/masked_phasor.png"><img src="docs/images/masked_phasor.png" alt="Phasor per pixel as density, filtered by a mask"></a><br><sub>Phasor: per pixel (here density color-coded & filtered by a mask)</sub></td>
   </tr>
   <tr>
     <td width="50%" align="center"><a href="docs/images/analyzer2.png"><img src="docs/images/analyzer2.png" alt="Analyzer: two detectors as groups, with mean, median and 2σ ellipses"></a><br><sub>Analyzer: tabular phasor data visualization</sub></td>
-    <td width="50%" align="center"><a href="docs/images/analyzer1.png"><img src="docs/images/analyzer1.png" alt="Analyzer: 3-component fractions, coloured by f3, mean per label"></a><br><sub>Analyzer: mono-exponential lifetime component fractions</sub></td>
+    <td width="50%" align="center"><a href="docs/images/analyzer1.png"><img src="docs/images/analyzer1.png" alt="Analyzer: 3-component fractions, colored by f3, mean per label"></a><br><sub>Analyzer: mono-exponential lifetime component fractions</sub></td>
 
   </tr>
 </table>
@@ -133,35 +133,44 @@ It is recommended to use virtual environment. See examples below.
 
 ## Getting started
 
-1. **Open the plugin**  
-Start napari and choose **Plugins → FLOPA → FLIM Analysis**.
+1. **Open the plugin**
 
-2. **Load a file**  
-In the **File** tab, click **Load Demo** for the bundled demo dataset, or **Read PTU…** for your own — or drop a `.ptu` onto the napari window.
-    > Note: the coloured dot beside each field says where its value came from - file metadata, a default, an estimate, or your own edit.
+   Start napari and choose **Plugins → FLOPA → FLIM Analysis**.
 
-3. **Set the scan geometry**  
-Frames, lines, pixels, sequences and accumulations must match how the image was actually acquired, because the raw file is a stream of photon and marker events with no image shape of its own. The header contains some information, fill in the rest. **Demo dataset** is loaded with the correct configuration set up.
-**Marker Stats** inspects the marker events and suggests dimensions. For bidirectional scans, the **Alignment wizard** estimates the line-marker delays.
+2. **Load a file**
 
-4. **Reconstruct**  
-  Pick what to compute under **Output**.   Optionally pick an **ROI Mask** (a Labels layer or a mask file) to keep only the photons inside it.
-  - *Intensity* — photon-count image only, the fastest
-- *Int. + τ* — adds the mean arrival time (lifetime) image
-- *All* — adds phasor coordinates per pixel and the global TCSPC decay (enables the **Phasor** and **Decay** tabs)
+   In the **File** tab, click **Load Demo** for the bundled demo dataset, or **Read PTU…** for your own — or drop a `.ptu` onto the napari window.
 
-5. **Look at the result**   
-The **FLIM View** dock opens at the bottom, with a
-histogram for Intensity and one for Lifetime. Each has two sliders: the **cyan** one sets the display contrast, the **red** one a threshold range. **→ Generate Int./Lt.
-Mask** turns that range into a napari Labels layer. Once a calibration is enabled in the Phasor tab, **Calibrated** shows the lifetime with the IRF delay subtracted (negative values are wrapped around by one period).
-Intensity, lifetime and the FLIM RGB composite can be exported from here.
+   > Note: the colored dot beside each field says where its value came from - file metadata, a default, an estimate, or your own edit.
 
-6. **Analyze**  
-  - **Phasor** plots g/s per object or per pixel — apply a calibration factor, pick a Labels layer to colour by object or to restrict the plot to a region.
-  - **Decay** plots the global TCSPC curves per slice. **FLIM View** shows only decay of slice configuration currently shown in FLIM View.
+3. **Set the scan geometry**
 
-7. **Reuse the settings**   
-Use the **Batch** tab to run a whole folder of `.ptu` files with identical settings. Or export multiple slices of a single file. Each export pass picks frames, sequences and detectors as an index, `*` (all, one output per value) or `a` (aggregate).
+   Frames, lines, pixels, sequences and accumulations must match how the image was actually acquired, because the raw file is a stream of photon and marker events with no image shape of its own. The header contains some information, fill in the rest. **Demo dataset** is loaded with the correct configuration set up.
+
+   **Marker Stats** inspects the marker events and suggests dimensions. For bidirectional scans, the **Alignment wizard** estimates the line-marker delays.
+
+4. **Reconstruct**
+
+   Pick what to compute under **Output**. Optionally pick an **ROI Mask** (a Labels layer or a mask file) to keep only the photons inside it.
+
+   - *Intensity* — photon-count image only, the fastest
+   - *Int. + τ* — adds the mean arrival time (lifetime) image
+   - *All* — adds phasor coordinates per pixel and the global TCSPC decay (enables the **Phasor** and **Decay** tabs)
+
+5. **Look at the result**
+
+   The **FLIM View** dock opens at the bottom, with a histogram for Intensity and one for Lifetime. Each has two sliders: the **cyan** one sets the display contrast, the **red** one a threshold range. **→ Generate Int./Lt. Mask** turns that range into a napari Labels layer. Once a calibration is enabled in the Phasor tab, **Calibrated** shows the lifetime with the IRF delay subtracted (negative values are wrapped around by one period).
+
+   Intensity, lifetime and the FLIM RGB composite can be exported from here.
+
+6. **Analyze**
+
+   - **Phasor** plots g/s per object or per pixel — apply a calibration factor, pick a Labels layer to color by object or to restrict the plot to a region.
+   - **Decay** plots the global TCSPC curves per slice. **FLIM View** shows only decay of slice configuration currently shown in FLIM View.
+
+7. **Reuse the settings**
+
+   Use the **Batch** tab to run a whole folder of `.ptu` files with identical settings. Or export multiple slices of a single file. Each export pass picks frames, sequences and detectors as an index, `*` (all, one output per value) or `a` (aggregate).
 
 
 ## Data model

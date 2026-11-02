@@ -215,7 +215,7 @@ class HistogramSlider(QWidget):
     Top slider   (cyan handles) — view range for display contrast
     Bottom slider (red handles) — mask range for mask creation
 
-    Both ranges are drawn on the histogram as dashed lines in their colour.
+    Both ranges are drawn on the histogram as dashed lines in their color.
 
     All four handle values are shown as editable QLineEdit fields.
 

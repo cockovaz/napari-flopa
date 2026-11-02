@@ -101,7 +101,7 @@ _CLUSTER_PARAM_TIPS = {
 
 
 def _categorical_colors(unique: list[str], cmap_name: str) -> dict:
-    """Colour per category: qualitative maps cycle, continuous ones spread."""
+    """Color per category: qualitative maps cycle, continuous ones spread."""
     import matplotlib.pyplot as plt
 
     cmap = plt.get_cmap(cmap_name)
@@ -170,7 +170,7 @@ class PhasorAnalyzerPanel(QWidget):
         self._size_spin = QSpinBox()
         self._size_spin.setRange(1, 50)
         self._size_spin.setValue(10)
-        self._size_spin.setToolTip("Scatter point size (auto-scaled on plot)")
+        self._size_spin.setToolTip("Scatter point size")
         self._size_spin.setMaximumWidth(50)
         tb.addWidget(self._size_spin)
 
@@ -198,12 +198,10 @@ class PhasorAnalyzerPanel(QWidget):
         self._export_combo.addItem("Save plot…", "plot")
         self._export_combo.addItem("Save table…", "table")
         self._export_combo.setToolTip(
-            "Plot: PNG / SVG / PDF of the figure\n"
-            "Table: CSV of the rows that pass the filter, with every column"
+            "Plot: PNG / SVG / PDF of the figure\nTable: CSV"
         )
         tb.addWidget(self._export_combo)
         self._save_btn = QPushButton("Save")
-        self._save_btn.setToolTip("Save the plot or table chosen on the left")
         self._save_btn.clicked.connect(self._on_export)
         tb.addWidget(self._save_btn)
         root.addLayout(tb)
@@ -228,7 +226,7 @@ class PhasorAnalyzerPanel(QWidget):
         type_lay.setSpacing(4)
         self._categorical_check = QCheckBox("Cat")
         self._categorical_check.setToolTip(
-            "Colour by distinct values (categories) instead of a colour scale.\n"
+            "Color by distinct values (categories) instead of a scale.\n"
         )
         self._categorical_check.setEnabled(False)
         type_lay.addWidget(self._categorical_check)
@@ -241,7 +239,7 @@ class PhasorAnalyzerPanel(QWidget):
         self._cmap_combo = QComboBox()
         self._cmap_combo.addItems(_CMAPS)
         self._cmap_combo.setMaximumWidth(85)
-        self._cmap_combo.setToolTip("Colormap of the Color by column")
+        self._cmap_combo.setToolTip("Colormap of the 'Color by' column")
         ov_grid.addWidget(self._cmap_combo, 0, 4)
         self._legend_check = QCheckBox("Legend")
         self._legend_check.setChecked(True)
@@ -252,16 +250,13 @@ class PhasorAnalyzerPanel(QWidget):
 
         ov_lbl = QLabel("Overlays:")
         ov_lbl.setToolTip(
-            "Contours, centroids and ellipses drawn per group of the column "
-            "picked next to this label."
+            "Contours, centroids and ellipses drawn per group of the selected column"
         )
         ov_grid.addWidget(ov_lbl, 1, 0)
         self._ov_group_combo = QComboBox()
         self._ov_group_combo.addItems([_OV_SAME_AS_COLOR, _OV_ALL_POINTS])
         self._ov_group_combo.setToolTip(
-            "Column that defines the overlay groups.\n"
-            f"'{_OV_SAME_AS_COLOR}' follows Color by (all points when "
-            "coloring is None or continuous)."
+            "Column that defines the overlay groups"
         )
         self._ov_group_combo.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Fixed
@@ -271,16 +266,12 @@ class PhasorAnalyzerPanel(QWidget):
         self._ov_cmap_combo = QComboBox()
         self._ov_cmap_combo.addItems(_CMAPS)
         self._ov_cmap_combo.setMaximumWidth(85)
-        self._ov_cmap_combo.setToolTip(
-            "Colours of the overlay groups when they come from a column other "
-            "than Color by"
-        )
+        self._ov_cmap_combo.setToolTip("Colormap of the 'Overlays' column")
         ov_grid.addWidget(self._ov_cmap_combo, 1, 4)
         self._ov_legend_check = QCheckBox("Legend")
         self._ov_legend_check.setChecked(True)
         self._ov_legend_check.setToolTip(
-            "Name the overlay groups in the plot (only when they come from a "
-            "column other than Color by)"
+            "Show the category legend inside the plot"
         )
         ov_grid.addWidget(self._ov_legend_check, 1, 5)
 
@@ -354,8 +345,7 @@ class PhasorAnalyzerPanel(QWidget):
         self._grid_check.setToolTip("Dashed grid behind the plot")
         self._circle_check = QCheckBox("Full circle")
         self._circle_check.setToolTip(
-            "Dashed unit circle, G and S from -1 to 1: the range of every\n"
-            "possible phasor (cosine / sine transform)"
+            "Dashed unit circle, G and S from -1 to 1"
         )
         freq_row.addWidget(self._grid_check)
         freq_row.addWidget(self._circle_check)
@@ -367,16 +357,14 @@ class PhasorAnalyzerPanel(QWidget):
         factor_row.addWidget(QLabel("Calibration factor:"))
         self._calib_display = QLineEdit(self._fmt_complex(self._calib_factor))
         self._calib_display.setReadOnly(True)
-        self._calib_display.setToolTip(
-            "Current calibration factor (complex). Applied as (g + i·s) × factor"
-        )
+        self._calib_display.setToolTip("Current calibration factor (complex)")
         self._calib_display.setStyleSheet(S.DISPLAY)
         self._calib_display.setMaximumWidth(160)
         factor_row.addWidget(self._calib_display)
 
         calc_btn = QPushButton("Calculate")
         calc_btn.setToolTip(
-            "Enter τ_ref (ns) + measured G, S → compute factor"
+            "Compute factor by entering τ_ref (ns) + measured G, S"
         )
         calc_btn.clicked.connect(self._on_calculate_cal)
         factor_row.addWidget(calc_btn)
@@ -393,8 +381,7 @@ class PhasorAnalyzerPanel(QWidget):
 
         self._apply_cal_check = QCheckBox("Apply")
         self._apply_cal_check.setToolTip(
-            "Write calibrated_g / calibrated_s columns and use them "
-            "for plotting."
+            "Write calibrated_{g/s} columns and use them for plotting"
         )
         factor_row.addWidget(self._apply_cal_check)
         factor_row.addStretch()
@@ -403,9 +390,7 @@ class PhasorAnalyzerPanel(QWidget):
         lt_row = QHBoxLayout()
         self._lt_btn = QPushButton("Compute phase / modulation τ")
         self._lt_btn.setToolTip(
-            "Add tau_phi_ns / tau_mod_ns columns (phase and modulation "
-            "lifetimes).\nThey use calibrated G,S when Apply is on, and "
-            "follow later calibration and f_rep changes."
+            "Add phase (tau_phi_ns) and modulation (tau_mod_ns) lifetime columns"
         )
         self._lt_btn.clicked.connect(self._on_compute_lifetimes)
         lt_row.addWidget(self._lt_btn)
@@ -446,9 +431,6 @@ class PhasorAnalyzerPanel(QWidget):
         self._comp_compute_btn.clicked.connect(self._on_compute_fractions)
         tau_row.addWidget(self._comp_compute_btn)
         self._comp_show_check = QCheckBox("Show")
-        self._comp_show_check.setToolTip(
-            "Draw the component positions and their line / triangle on the plot"
-        )
         self._comp_show_check.setChecked(True)
         tau_row.addWidget(self._comp_show_check)
         comp_lay.addLayout(tau_row)
@@ -495,8 +477,8 @@ class PhasorAnalyzerPanel(QWidget):
         cl_row.addLayout(self._cl_params_lay)
         self._cl_run_btn = QPushButton("Run")
         self._cl_run_btn.setToolTip(
-            "Cluster the plotted G,S (calibrated when Apply is on), ignoring "
-            "groups.\nAdds a cluster_<method> column and colors by it."
+            "Cluster the plotted G,S - ignoring groups."
+            "\nAdds a cluster_<method> column and colors by it."
         )
         self._cl_run_btn.clicked.connect(self._on_run_clustering)
         cl_row.addStretch()
@@ -620,7 +602,7 @@ class PhasorAnalyzerPanel(QWidget):
 
         Text is always categorical (box locked). Numbers are suggested as
         categorical only when they are whole numbers with ≤ 12 values (labels,
-        cluster ids, flags); fractions and other floats default to a colour
+        cluster ids, flags); fractions and other floats default to a color
         scale even when few distinct values remain. The user can override.
         """
         col = self._color_combo.currentText()
@@ -968,7 +950,7 @@ class PhasorAnalyzerPanel(QWidget):
             return
         if not finite.all():
             # Points without a value (e.g. fractions outside the segment) stay
-            # visible as a grey layer under the colour scale.
+            # visible as a grey layer under the color scale.
             gn, sn = g[~finite], s[~finite]
             if len(gn) > _MAX_SCATTER:
                 idx = np.random.default_rng(0).choice(
@@ -1021,8 +1003,8 @@ class PhasorAnalyzerPanel(QWidget):
         """``([(name, color, member_mask), …], own_colors)`` for overlays.
 
         *n* is the number of plotted (valid) points. *own_colors* is True when
-        the groups come from a column other than the point colouring, so their
-        colours need a legend of their own.
+        the groups come from a column other than the point coloring, so their
+        colors need a legend of their own.
         """
         choice = self._ov_group_combo.currentText()
         everything = [("all", "white", np.ones(n, dtype=bool))]
@@ -1057,7 +1039,7 @@ class PhasorAnalyzerPanel(QWidget):
         self._ov_legend_check.setEnabled(own)
 
     def _draw_group_overlays(self, ax, g, s):
-        """Contours / centroids / ellipses per colour group (*g*, *s* finite)."""
+        """Contours / centroids / ellipses per color group (*g*, *s* finite)."""
         contours = self._ov_contour.isChecked()
         mean = self._ov_mean.isChecked()
         median = self._ov_median.isChecked()
@@ -1074,7 +1056,7 @@ class PhasorAnalyzerPanel(QWidget):
             )
             return
         if own_colors and self._ov_legend_check.isChecked():
-            # The overlay groups don't match the point colours, so name them.
+            # The overlay groups don't match the point colors, so name them.
             from matplotlib.lines import Line2D
 
             leg = ax.legend(
@@ -1520,7 +1502,7 @@ class PhasorAnalyzerPanel(QWidget):
         n_clusters = int(labels.max()) + 1 if labels.size else 0
         width = max(2, len(str(n_clusters)))
         # Zero-padded strings sort correctly and are always treated as
-        # categorical by the colouring, whatever the cluster count.
+        # categorical by the coloring, whatever the cluster count.
         values = np.where(
             ~finite,
             "",
@@ -1651,16 +1633,13 @@ class _DataToolsDialog(QDialog):
         e_row = QHBoxLayout()
         self._flt_expr = QLineEdit(self._panel._filter_expr)
         self._flt_expr.setPlaceholderText(
-            "expression, e.g. tau_phi_ns > 2 and grp == 'A'"
+            "expression, e.g. g > 0 and grp == 'A'"
         )
         self._flt_expr.setToolTip(
-            "pandas query expression — edit freely.\n"
-            "Combine with and / or / not and brackets. Examples:\n"
-            "  tau_phi_ns > 2 and tau_phi_ns < 4\n"
+            "pandas query expression — edit freely. Examples\n"
             "  grp == 'A' or grp == 'B'\n"
             "  photon_count_sum >= 1000\n"
-            "  dataset_name.str.contains('ctrl')\n"
-            "Column names with spaces go in `backticks`."
+            "  dataset_name.str.contains('ctrl')"
         )
         e_row.addWidget(self._flt_expr, 1)
         flt_apply = QPushButton("Apply")
@@ -1704,8 +1683,7 @@ class _DataToolsDialog(QDialog):
         self._grp_pattern_edit = QLineEdit()
         self._grp_pattern_edit.setPlaceholderText("regex, e.g. F[0-9] or F.*")
         self._grp_pattern_edit.setToolTip(
-            "Regular expression (not glob). Use .* for 'anything', "
-            "not bare *.\nExamples: F[0-9], ch\\d+, .*_accu"
+            "Regular expression (not glob)\n",
         )
         row1.addWidget(self._grp_pattern_edit, 1)
         grp_lay.addLayout(row1)
@@ -1723,7 +1701,7 @@ class _DataToolsDialog(QDialog):
         row2.addWidget(preview_btn)
         apply_btn = QPushButton("Apply")
         apply_btn.setToolTip(
-            "Add the new column (empty where the pattern does not match)"
+            "Add the new column (empty value where the pattern does not match)"
         )
         apply_btn.clicked.connect(self._on_group_apply)
         row2.addWidget(apply_btn)

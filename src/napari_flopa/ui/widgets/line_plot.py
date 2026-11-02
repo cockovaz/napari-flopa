@@ -121,19 +121,19 @@ class LinePlotWidget(QWidget):
         self.update()
 
     def set_series(self, series, *, x_min: float, x_max: float, markers=None):
-        """Plot arbitrary ``(x, y, colour, label)`` lines.
+        """Plot arbitrary ``(x, y, color, label)`` lines.
 
         The general form behind :meth:`set_values`, for callers that already
-        have plain arrays. *markers* maps a name to ``(positions, colour)``
+        have plain arrays. *markers* maps a name to ``(positions, color)``
         and draws each position as a vertical line.
         """
         self._series = [
-            (np.asarray(x), np.asarray(y), QColor(colour), label)
-            for x, y, colour, label in series
+            (np.asarray(x), np.asarray(y), QColor(color), label)
+            for x, y, color, label in series
         ]
         self._marker_series = {
-            name: (np.asarray(positions, dtype=float), QColor(colour))
-            for name, (positions, colour) in (markers or {}).items()
+            name: (np.asarray(positions, dtype=float), QColor(color))
+            for name, (positions, color) in (markers or {}).items()
         }
         self._selector_time = None
         self._selection = None
@@ -199,7 +199,7 @@ class LinePlotWidget(QWidget):
                 (self._series[0][0], summed, QColor(C.TEXT), "Sum")
             )
 
-        for name, (var_name, colour) in _MARKER_STYLE.items():
+        for name, (var_name, color) in _MARKER_STYLE.items():
             if var_name not in dataset.data_vars:
                 continue
             if marker_visibility is not None and not marker_visibility.get(
@@ -207,7 +207,7 @@ class LinePlotWidget(QWidget):
             ):
                 continue
             times = np.asarray(dataset[var_name].values, dtype=float)
-            self._marker_series[name] = (times, QColor(colour))
+            self._marker_series[name] = (times, QColor(color))
 
         self.update()
 
@@ -409,7 +409,7 @@ class LinePlotWidget(QWidget):
         painter.setClipRect(rect)
 
         # Series
-        for _index, (x_axis, y_values, colour, _label) in enumerate(
+        for _index, (x_axis, y_values, color, _label) in enumerate(
             self._series
         ):
             samples = np.asarray(x_axis, dtype=float)
@@ -420,17 +420,17 @@ class LinePlotWidget(QWidget):
                 (self._x_from_time(float(t), rect), _y(float(v)))
                 for t, v in zip(samples, y_data, strict=True)
             ]
-            painter.setPen(QPen(colour, 1))
+            painter.setPen(QPen(color, 1))
             for start, end in zip(points, points[1:], strict=False):
                 painter.drawLine(*start, *end)
 
         # Marker overlays
-        for name, (times, colour) in self._marker_series.items():
+        for name, (times, color) in self._marker_series.items():
             if name in self._marker_hidden:
                 continue
             if len(times) == 0:
                 continue
-            painter.setPen(QPen(colour, 1, Qt.PenStyle.DashLine))
+            painter.setPen(QPen(color, 1, Qt.PenStyle.DashLine))
             y_zero = _y(0.0)
             for marker_time in times:
                 if not (self._x_min <= marker_time <= self._x_max):
@@ -438,7 +438,7 @@ class LinePlotWidget(QWidget):
                 x = self._x_from_time(float(marker_time), rect)
                 painter.drawLine(x, rect.top(), x, y_zero)
 
-        for index, (_, _, colour, label) in enumerate(self._series):
+        for index, (_, _, color, label) in enumerate(self._series):
             text_x, text_y = rect.left() + 10, rect.top() + 12 + index * 16
             box = painter.fontMetrics().boundingRect(label)
             box.moveTo(text_x - 3, text_y - box.height() + 2)
@@ -446,7 +446,7 @@ class LinePlotWidget(QWidget):
             plate = QColor(MPL.LEGEND_BG)
             plate.setAlpha(min(255, MPL.LEGEND_BG_ALPHA))
             painter.fillRect(box, plate)
-            painter.setPen(QPen(colour))
+            painter.setPen(QPen(color))
             painter.drawText(text_x, text_y, label)
 
         # Selector

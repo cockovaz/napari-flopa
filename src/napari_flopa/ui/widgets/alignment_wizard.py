@@ -73,8 +73,7 @@ class AlignmentWizard(QDialog):
 
         self._fix_shift = QCheckBox("Fix shift")
         self._fix_shift.setToolTip(
-            "Hold the shift and derive the stop delay from it, instead of "
-            "editing the stop delay directly"
+            "Hold the shift and derive the stop delay from it"
         )
         shift_row = QHBoxLayout()
         shift_row.setContentsMargins(0, 0, 0, 0)
@@ -108,12 +107,8 @@ class AlignmentWizard(QDialog):
         self._pixels_spin.setToolTip(
             "Pixels per line of the probe reconstruction"
         )
-        self._chunk_spin.setToolTip(
-            "Records read for the probe; more = more complete lines, slower"
-        )
-        self._skip_spin.setToolTip(
-            "Chunks skipped first, e.g. to avoid an empty or unstable start"
-        )
+        self._chunk_spin.setToolTip("Records read for the probe")
+        self._skip_spin.setToolTip("Chunks skipped first")
         self._max_shift_spin.setToolTip(
             "Optimize searches shifts within ± this range around the current delays"
         )
