@@ -1,37 +1,3 @@
-"""
-Scan settings: one description of how a .ptu is reconstructed.
-
-``ScanSettings`` owns every value that describes a reconstruction — the ones
-tttrkit's ``ScanConfig`` takes, plus the plugin's own (TCSPC bins, calibration
-factor, source filename) and where each value came from. Everything else is
-derived from it:
-
-    widgets ─► ScanSettings ─┬─► to_scan_config()  → tttrkit ScanConfig
-                             ├─► to_json_dict()    → the .json config file
-                             └─► ds.attrs["scan_config"]
-
-That keeps tttrkit's vocabulary in exactly one method. Its own
-``ScanConfig.to_dict()`` is deliberately not used for serialisation: it renames
-the marker keys and drops ``max_detector`` and both marker delays.
-
-JSON schema (every key optional when reading)::
-
-    {
-      "ptu_filename": "scan.ptu",       # recorded for reference only
-      "scan": {
-        "frames", "lines", "pixels", "sequences",
-        "accumulations": [1, 3, ...],   # one int per sequence
-        "max_detector", "tcspc_bins",
-        "bidirectional", "harmonic_scan", "laser_duty",
-        "line_start_marker_delay", "line_stop_marker_delay",
-        "line_duration",                # omitted when tttrkit should infer it
-        "frame_start_marker", "line_start_marker", "line_stop_marker"
-      },
-      "calibration": {"factor": "1+0j"},
-      "provenance": {"frames": "metadata", ...}   # omitted when empty
-    }
-"""
-
 import json
 from dataclasses import dataclass, fields
 from os import PathLike

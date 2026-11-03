@@ -997,7 +997,6 @@ class PtuPanel(QWidget):
             ptu_filename=(
                 self.ptu_filepath.name if self.ptu_filepath else None
             ),
-            sources=dict(self._param_source),
         )
 
     def current_config_dict(self) -> dict:
