@@ -1,10 +1,11 @@
 import traceback
+from contextlib import suppress
 from pathlib import Path
 
 import numpy as np
 import xarray as xr
 from matplotlib import colormaps
-from qtpy.QtCore import Qt, QTimer, Signal, Slot
+from qtpy.QtCore import QTimer, Signal, Slot
 from qtpy.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,6 +30,10 @@ from napari_flopa.core.processing.image_utils import (
     flim_rgb,
     smooth_count,
     smooth_weighted,
+)
+from napari_flopa.core.processing.phasor import (
+    calibrate_mean_arrival_time,
+    irf_delay_from_calibration,
 )
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import S, apply_style
@@ -78,6 +83,12 @@ class FlimViewPanel(QWidget):
         # self._smooth_cache = {}  # (type, id, shape, k) → smoothed array (caching disabled)
         self._layers_created = False
         self.selectors = {}
+        self.lt_corrected = None
+        self._lt_group = None
+        self._lifetime_unit = "ch"
+        # Set when the lifetime value range shifts (correction toggled or the
+        # factor changed), so the next slice re-runs lifetime auto-contrast.
+        self._lt_recontrast = False
 
         # Debounce timer kept as instance attr so it is not GC-collected
         self._debounce = QTimer()
@@ -86,6 +97,8 @@ class FlimViewPanel(QWidget):
 
         self._build_ui()
         self.setVisible(False)
+        self.state.calib_factor_changed.connect(self._on_calib_changed)
+        self.state.calib_enabled_changed.connect(self._on_calib_changed)
 
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
@@ -98,9 +111,17 @@ class FlimViewPanel(QWidget):
         main_layout.addWidget(self.container)
         main_layout.addStretch()
 
-    # ------------------------------------------------------------------ #
-
     @Slot(object)
+    @staticmethod
+    def _kernel_combo() -> QComboBox:
+        """Box / Gaussian choice for a smoothing kernel, off until Smooth."""
+        combo = QComboBox()
+        combo.addItem("Box", "box")
+        # combo.addItem("Gaussian", "gaussian") # exist but check if correct functionality
+        combo.setEnabled(False)
+        combo.setToolTip("Kernel shape \n")
+        return combo
+
     def update_data(self, dataset: xr.Dataset):
         """
         Called after reconstruction completes.  Stores the dataset, clears
@@ -119,8 +140,6 @@ class FlimViewPanel(QWidget):
             return
         self.setVisible(True)
         self._create_controls(has_intensity, has_lifetime)
-
-    # ------------------------------------------------------------------ #
 
     def _create_controls(self, has_intensity: bool, has_lifetime: bool):
         """
@@ -178,7 +197,6 @@ class FlimViewPanel(QWidget):
         grid.setColumnStretch(3, 1)
         self.view_layout.addLayout(grid)
 
-        # ---- Col 0: slicing selectors ----
         sel_group = QGroupBox("Dims")
         apply_style(sel_group, S.GROUP_PRIMARY)
         sel_group.setFlat(True)
@@ -188,21 +206,24 @@ class FlimViewPanel(QWidget):
         frame_sel = QSpinBox()
         frame_sel.setRange(0, max(0, n_frames - 1))
         frame_sel.setMaximumWidth(50)
+        frame_sel.setToolTip("Frame to display (0-based)")
         sum_frames = QCheckBox("∑")
         sum_frames.setEnabled(n_frames > 1)
-        sum_frames.setToolTip("Sum all frames")
+        sum_frames.setToolTip("Aggregate all frames")
         seq_sel = QSpinBox()
         seq_sel.setRange(0, max(0, n_sequences - 1))
         seq_sel.setMaximumWidth(50)
+        seq_sel.setToolTip("Sequence to display (0-based)")
         sum_seqs = QCheckBox("∑")
         sum_seqs.setEnabled(n_sequences > 1)
-        sum_seqs.setToolTip("Sum all sequences")
+        sum_seqs.setToolTip("Aggregate all sequences")
         chan_sel = QSpinBox()
         chan_sel.setRange(0, max(0, n_channels - 1))
         chan_sel.setMaximumWidth(50)
+        chan_sel.setToolTip("Detector channel to display (0-based)")
         sum_chans = QCheckBox("∑")
         sum_chans.setEnabled(n_channels > 1)
-        sum_chans.setToolTip("Sum all detector channels")
+        sum_chans.setToolTip("Aggregate all detector channels")
 
         for row, (lbl, spin, chk) in enumerate(
             [
@@ -225,7 +246,6 @@ class FlimViewPanel(QWidget):
             "sum_channels": sum_chans,
         }
 
-        # ---- Col 1: Intensity ----
         int_group = QGroupBox("Intensity")
         apply_style(int_group, S.GROUP_PRIMARY)
         int_group.setEnabled(has_intensity)
@@ -251,50 +271,63 @@ class FlimViewPanel(QWidget):
 
         int_row1 = QHBoxLayout()
         int_row1.setSpacing(3)
-        self.show_intensity = QCheckBox("Show")
-        self.show_intensity.setChecked(True)
-        self.show_intensity.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        int_row1.addWidget(self.show_intensity)
-        # int_row1.addSpacing(30)
-        int_row1.addStretch()
         self.smooth_int_check = QCheckBox("Smooth")
-        self.smooth_int_check.setLayoutDirection(
-            Qt.LayoutDirection.RightToLeft
-        )
         int_row1.addWidget(self.smooth_int_check)
         self.smooth_int_spin = QSpinBox()
         self.smooth_int_spin.setRange(3, 49)
         self.smooth_int_spin.setSingleStep(2)  # odd kernel sizes only
         self.smooth_int_spin.setValue(3)
         self.smooth_int_spin.setEnabled(False)
-        self.smooth_int_check.toggled.connect(self.smooth_int_spin.setEnabled)
+        self.smooth_int_check.setToolTip(
+            "Smooth the displayed intensity (local mean)"
+        )
+        self.smooth_int_spin.setToolTip("Smoothing kernel size in px")
         int_row1.addWidget(self.smooth_int_spin)
-        int_ctrl.addLayout(int_row1)
+        self.smooth_int_kernel = self._kernel_combo()
+        int_row1.addWidget(self.smooth_int_kernel)
+        for w in (self.smooth_int_spin, self.smooth_int_kernel):
+            self.smooth_int_check.toggled.connect(w.setEnabled)
+        int_row1.addStretch()
 
         int_row2 = QHBoxLayout()
+        self.show_intensity = QCheckBox("Show")
+        self.show_intensity.setChecked(True)
+        self.show_intensity.setToolTip(
+            "Show the Intensity layer in the viewer"
+        )
+        int_row2.addWidget(self.show_intensity)
         self.int_colormap_lbl = QLabel("Colormap:")
+        int_row2.addStretch()
         int_row2.addWidget(self.int_colormap_lbl)
         self.int_colormap = QComboBox()
         self.int_colormap.addItems(INTENSITY_COLORMAPS)
         int_row2.addWidget(self.int_colormap)
         int_ctrl.addLayout(int_row2)
+        int_ctrl.addLayout(int_row1)
 
         int_contrast = QHBoxLayout()
         int_contrast.setSpacing(2)
         self.int_contrast_lbl = QLabel("Contrast:")
         int_contrast.addWidget(self.int_contrast_lbl)
-        self.int_auto_btn = QPushButton("Auto")
+        self.int_auto_btn = QPushButton("Auto-once")
         self.int_auto_btn.setToolTip("Set contrast to [p2, p98]")
         int_contrast.addWidget(self.int_auto_btn)
+        self.int_live_btn = QPushButton("Auto-live")
+        self.int_live_btn.setCheckable(True)
+        self.int_live_btn.setToolTip(
+            "Re-apply [p2, p98] on every change. Min-Max turns it off."
+        )
+        self.int_live_btn.setStyleSheet(S.BTN_DET_OFF)
+        int_contrast.addWidget(self.int_live_btn)
         self.int_minmax_btn = QPushButton("Min-Max")
         self.int_minmax_btn.setToolTip("Set contrast to full data range")
         int_contrast.addWidget(self.int_minmax_btn)
         int_ctrl.addLayout(int_contrast)
 
-        self.int_mask_btn = QPushButton("→ Generate Int. Mask")
+        self.int_mask_btn = QPushButton("→ Intensity mask")
         # self.int_mask_btn.setStyleSheet(S.BTN_DANGER)
         self.int_mask_btn.setToolTip(
-            "Create a new Labels layer from pixels within the red slider range."
+            "Create a new Labels layer from selected range."
         )
         self.int_mask_btn.setEnabled(False)
         int_ctrl.addWidget(self.int_mask_btn)
@@ -303,8 +336,8 @@ class FlimViewPanel(QWidget):
 
         grid.addWidget(int_group, 0, 1)
 
-        # ---- Col 2: Lifetime ----
         lt_group = QGroupBox(f"Lifetime ({lifetime_unit})")
+        self._lt_group = lt_group
         apply_style(lt_group, S.GROUP_PRIMARY)
         lt_group.setEnabled(has_lifetime)
         lg = QHBoxLayout(lt_group)
@@ -312,7 +345,7 @@ class FlimViewPanel(QWidget):
         lg.setContentsMargins(4, 2, 4, 2)
 
         self.lifetime_slider = HistogramSlider(
-            integer_mode=False, canvas_height=_CANVAS_H
+            integer_mode=False, canvas_height=_CANVAS_H, range_floor=0.0
         )
         self.lifetime_slider.setMaximumWidth(_HIST_MAX_W)
         self.lifetime_slider.setToolTip(
@@ -329,54 +362,70 @@ class FlimViewPanel(QWidget):
 
         lt_row1 = QHBoxLayout()
         lt_row1.setSpacing(3)
-        self.show_lifetime = QCheckBox("Show")
-        self.show_lifetime.setChecked(True)
-        self.show_lifetime.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        lt_row1.addWidget(self.show_lifetime)
         self.smooth_lt_check = QCheckBox("Smooth")
-        self.smooth_lt_check.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         lt_row1.addWidget(self.smooth_lt_check)
         self.smooth_lt_spin = QSpinBox()
         self.smooth_lt_spin.setRange(3, 49)
         self.smooth_lt_spin.setSingleStep(2)  # odd kernel sizes only
         self.smooth_lt_spin.setValue(3)
         self.smooth_lt_spin.setEnabled(False)
-        self.smooth_lt_check.toggled.connect(self.smooth_lt_spin.setEnabled)
+        self.smooth_lt_check.setToolTip(
+            "Photon-weighted smoothing of the displayed lifetime"
+        )
+        self.smooth_lt_spin.setToolTip("Smoothing kernel size in px")
         lt_row1.addWidget(self.smooth_lt_spin)
-        lt_ctrl.addLayout(lt_row1)
+        self.smooth_lt_kernel = self._kernel_combo()
+        lt_row1.addWidget(self.smooth_lt_kernel)
+        for w in (self.smooth_lt_spin, self.smooth_lt_kernel):
+            self.smooth_lt_check.toggled.connect(w.setEnabled)
+        lt_row1.addStretch()
 
         lt_row2 = QHBoxLayout()
         lt_row2.setSpacing(2)
+        self.show_lifetime = QCheckBox("Show")
+        self.show_lifetime.setChecked(True)
+        self.show_lifetime.setToolTip("Show the Lifetime layer in the viewer")
+        lt_row2.addWidget(self.show_lifetime)
+        self.lt_corrected = QCheckBox("Calibrated")
+        lt_row2.addWidget(self.lt_corrected)
         self.lt_colormap_lbl = QLabel("Colormap:")
+        lt_row2.addStretch()
         lt_row2.addWidget(self.lt_colormap_lbl)
         self.lt_colormap = QComboBox()
         self.lt_colormap.addItems(LIFETIME_COLORMAPS)
         lt_row2.addWidget(self.lt_colormap)
         lt_ctrl.addLayout(lt_row2)
+        lt_ctrl.addLayout(lt_row1)
 
         lt_contrast = QHBoxLayout()
         lt_contrast.setSpacing(2)
         self.lt_text = QLabel("Contrast:")
         lt_contrast.addWidget(self.lt_text)
-        self.lt_auto_btn = QPushButton("Auto")
+        self.lt_auto_btn = QPushButton("Auto-once")
         self.lt_auto_btn.setToolTip("Set contrast to [p2, p98]")
         lt_contrast.addWidget(self.lt_auto_btn)
+        self.lt_live_btn = QPushButton("Auto-live")
+        self.lt_live_btn.setCheckable(True)
+        self.lt_live_btn.setToolTip(
+            "Re-apply [p2, p98] on every change. Min-Max turns it off."
+        )
+        self.lt_live_btn.setStyleSheet(S.BTN_DET_OFF)
+        lt_contrast.addWidget(self.lt_live_btn)
         self.lt_minmax_btn = QPushButton("Min-Max")
         self.lt_minmax_btn.setToolTip("Set contrast to full data range")
         lt_contrast.addWidget(self.lt_minmax_btn)
         lt_ctrl.addLayout(lt_contrast)
 
-        self.lt_mask_btn = QPushButton("→ Generate Lt. Mask")
+        self.lt_mask_btn = QPushButton("→ Lifetime mask")
         # self.lt_mask_btn.setStyleSheet(S.BTN_DANGER)
         self.lt_mask_btn.setToolTip(
-            "Create a new Labels layer from pixels within the red slider range."
+            "Create a new Labels layer from selected range."
         )
         self.lt_mask_btn.setEnabled(False)
 
-        self.combined_mask_btn = QPushButton("Combined mask")
+        self.combined_mask_btn = QPushButton("→ Combined mask")
         self.combined_mask_btn.setToolTip(
-            "Create a new Labels layer from pixels inside both red slider "
-            "ranges: the intensity threshold AND the lifetime threshold."
+            "Create a new Labels layer from selected ranges"
         )
         self.combined_mask_btn.setEnabled(False)
 
@@ -390,7 +439,6 @@ class FlimViewPanel(QWidget):
 
         grid.addWidget(lt_group, 0, 2)
 
-        # ---- Col 3: Export ----
         exp_group = QGroupBox("Export")
         apply_style(exp_group, S.GROUP_PRIMARY)
         el = QVBoxLayout(exp_group)
@@ -412,6 +460,16 @@ class FlimViewPanel(QWidget):
         self.exp_flim_chk = QCheckBox("FLIM RGB")
         self.exp_flim_chk.setEnabled(has_flim)
         self.exp_flim_chk.setChecked(has_flim)
+        self.exp_int_chk.setToolTip(
+            "Save <name>_int.tif — the displayed intensity as float32"
+        )
+        self.exp_lt_chk.setToolTip(
+            "Save <name>_lt.tif — the displayed lifetime as float32"
+        )
+        self.exp_flim_chk.setToolTip(
+            "Save <name>_flim.png with the current contrast and colormap,\n"
+            "plus <name>_flim.txt describing them"
+        )
         for chk in (self.exp_int_chk, self.exp_lt_chk, self.exp_flim_chk):
             chk_row.addWidget(chk)
         el.addLayout(chk_row)
@@ -447,6 +505,9 @@ class FlimViewPanel(QWidget):
         # Row 3: Save + "→ RGB FLIM layer" side by side.
         self.export_save_btn = QPushButton("Save")
         self.export_save_btn.setEnabled(False)
+        self.export_save_btn.setToolTip(
+            "Save the checked images of the current view, asks for a base name"
+        )
         self.export_save_btn.clicked.connect(self._on_export_save)
 
         # Add the current FLIM RGB composite as a static napari layer (same
@@ -454,8 +515,8 @@ class FlimViewPanel(QWidget):
         self.gen_flim_btn = QPushButton("→ RGB FLIM layer")
         self.gen_flim_btn.setEnabled(has_flim)
         self.gen_flim_btn.setToolTip(
-            "Add the current FLIM RGB composite (current view, contrast,\n"
-            "colormap and smoothing) as a static napari image layer."
+            "Add the FLIM RGB composite (current view)\n"
+            "as a napari image layer."
         )
         self.gen_flim_btn.clicked.connect(self._generate_flim_layer)
 
@@ -471,14 +532,45 @@ class FlimViewPanel(QWidget):
 
         grid.addWidget(exp_group, 0, 3)
 
+        def _live_toggled(button, slider):
+            """Restyle the toggle and apply it at once when switched on."""
+
+            def handler(checked):
+                button.setStyleSheet(
+                    S.BTN_DET_ON if checked else S.BTN_DET_OFF
+                )
+                if checked:
+                    slider.set_auto_contrast()
+
+            return handler
+
+        def _min_max(button, slider):
+            """Min-Max is a manual choice, so it drops out of Auto-live."""
+
+            def handler():
+                button.setChecked(False)
+                slider.set_min_max()
+
+            return handler
+
         self.int_auto_btn.clicked.connect(
             self.intensity_slider.set_auto_contrast
         )
-        self.int_minmax_btn.clicked.connect(self.intensity_slider.set_min_max)
+        self.int_live_btn.toggled.connect(
+            _live_toggled(self.int_live_btn, self.intensity_slider)
+        )
+        self.int_minmax_btn.clicked.connect(
+            _min_max(self.int_live_btn, self.intensity_slider)
+        )
         self.lt_auto_btn.clicked.connect(
             self.lifetime_slider.set_auto_contrast
         )
-        self.lt_minmax_btn.clicked.connect(self.lifetime_slider.set_min_max)
+        self.lt_live_btn.toggled.connect(
+            _live_toggled(self.lt_live_btn, self.lifetime_slider)
+        )
+        self.lt_minmax_btn.clicked.connect(
+            _min_max(self.lt_live_btn, self.lifetime_slider)
+        )
 
         def _sync_int_histogram_colormap():
             """In FLIM mode intensity histogram always shows gray; otherwise follow combo."""
@@ -504,10 +596,6 @@ class FlimViewPanel(QWidget):
         )
         _sync_int_histogram_colormap()
 
-        # ------------------------------------------------------------------ #
-        # Helpers                                                              #
-        # ------------------------------------------------------------------ #
-
         def _set_visible(name: str, value: bool):
             if name in self.viewer.layers:
                 self.viewer.layers[name].visible = value
@@ -517,7 +605,7 @@ class FlimViewPanel(QWidget):
 
         def _int_cmap():
             # In FLIM mode (both layers shown) intensity MUST be gray so the
-            # multiplicative composite = gray_intensity x lifetime_colour.
+            # multiplicative composite = gray_intensity x lifetime_color.
             # Otherwise honour the user's intensity colormap combo.
             both = (
                 has_intensity
@@ -571,7 +659,11 @@ class FlimViewPanel(QWidget):
                 and self.smooth_int_check.isChecked()
             ):
                 k = self.smooth_int_spin.value()
-                s_int = smooth_count(raw_int, size=k)
+                s_int = smooth_count(
+                    raw_int,
+                    size=k,
+                    kernel=self.smooth_int_kernel.currentData(),
+                )
                 # --- smoothing cache disabled (kept for reference) ---
                 # key = ("int", id(raw_int), raw_int.shape, k)
                 # if key not in self._smooth_cache:
@@ -587,7 +679,12 @@ class FlimViewPanel(QWidget):
                 and self.smooth_lt_check.isChecked()
             ):
                 k = self.smooth_lt_spin.value()
-                s_lt, _ = smooth_weighted(raw_lt, raw_int, size=k)
+                s_lt, _ = smooth_weighted(
+                    raw_lt,
+                    raw_int,
+                    size=k,
+                    kernel=self.smooth_lt_kernel.currentData(),
+                )
                 # --- smoothing cache disabled (kept for reference) ---
                 # key = ("lt", id(raw_lt), raw_lt.shape, k)
                 # if key not in self._smooth_cache:
@@ -597,10 +694,6 @@ class FlimViewPanel(QWidget):
                 #         self._smooth_cache.pop(next(iter(self._smooth_cache)))
                 # s_lt = self._smooth_cache[key]
             return s_int, s_lt
-
-        # ------------------------------------------------------------------ #
-        # Display                                                              #
-        # ------------------------------------------------------------------ #
 
         def _display_data():
             try:
@@ -676,11 +769,6 @@ class FlimViewPanel(QWidget):
 
         _first_slice = [True]
 
-        def _reset_and_slice():
-            """Force a full contrast reset on the next slice (for smooth/aggregate changes)."""
-            _first_slice[0] = True
-            _slice()
-
         def _slice():
             try:
                 sel, dims_to_sum = _get_sel_key()
@@ -694,21 +782,48 @@ class FlimViewPanel(QWidget):
                     if s_lt is not None
                     else None
                 )
-                update_slider = (
-                    self.intensity_slider.update_data
-                    if _first_slice[0]
-                    else self.intensity_slider.update_data_keep_range
-                )
-                update_lt_slider = (
-                    self.lifetime_slider.update_data
-                    if _first_slice[0]
-                    else self.lifetime_slider.update_data_keep_range
-                )
-                if self._current_intensity is not None:
-                    update_slider(self._current_intensity)
-                if self._current_lifetime is not None:
-                    update_lt_slider(self._current_lifetime)
+                corr = self._active_lt_correction()
+                if corr is not None and self._current_lifetime is not None:
+                    counts = (
+                        np.atleast_2d(raw_int) if raw_int is not None else None
+                    )
+                    self._current_lifetime = calibrate_mean_arrival_time(
+                        self._current_lifetime, *corr, counts=counts
+                    )
+                # Contrast survives every change alike — frame, sequence,
+                # detector, aggregation, smoothing — so aggregating and
+                # un-aggregating lands back where you were. It is only
+                # recomputed on a dataset's first slice or under Auto-live.
+                # The mask threshold is never carried over: a level tuned on
+                # one view means nothing on the next.
+                first = _first_slice[0]
+                # Empty pixels hold lifetime 0 (wrapped calibration aside);
+                # they are not data, so the lifetime histogram and its
+                # auto-contrast ignore them. The layer keeps them as they are.
+                lt_hist = self._current_lifetime
+                if lt_hist is not None and raw_int is not None:
+                    lt_hist = np.where(
+                        np.atleast_2d(raw_int) > 0, lt_hist, np.nan
+                    )
+                for data, slider, live in (
+                    (
+                        self._current_intensity,
+                        self.intensity_slider,
+                        self.int_live_btn,
+                    ),
+                    (lt_hist, self.lifetime_slider, self.lt_live_btn),
+                ):
+                    if data is None:
+                        continue
+                    slider.update_data_keep_range(data)
+                    shifted = (
+                        slider is self.lifetime_slider and self._lt_recontrast
+                    )
+                    if first or live.isChecked() or shifted:
+                        slider.set_auto_contrast()
+                    slider.reset_mask_range()
                 _first_slice[0] = False
+                self._lt_recontrast = False
                 _display_data()
                 # Notify phasor/decay panels about current view settings
                 self.view_changed.emit(
@@ -806,22 +921,35 @@ class FlimViewPanel(QWidget):
                 name=_next_layer_name("Combined Mask"),
             )
 
-        # ---- wire signals ----
-        # Spinboxes → debounce → _slice (sticky contrast on navigation)
-        # Agg checkboxes → _reset_and_slice (contrast resets when aggregation changes)
-        # The view label is pure string formatting, so it updates immediately
-        # rather than waiting on the slice debounce.
+        # Everything that changes the data goes through one debounced _slice,
+        # so aggregating behaves exactly like stepping a frame. Swallow the
+        # signal's argument: QTimer.start(int) would otherwise take it as the
+        # interval. The view label is pure string formatting, so it updates
+        # immediately rather than waiting on the debounce.
+        def _queue_slice(*_):
+            self._debounce.start()
+
         for w in self.selectors.values():
             if isinstance(w, QSpinBox):
-                w.valueChanged.connect(self._debounce.start)
+                w.valueChanged.connect(_queue_slice)
                 w.valueChanged.connect(self._update_view_label)
             if isinstance(w, QCheckBox):
-                w.toggled.connect(_reset_and_slice)
+                w.toggled.connect(_queue_slice)
                 w.toggled.connect(self._update_view_label)
+        # _create_controls re-runs per dataset; without this each load would
+        # leave another _slice closure bound to the same timer.
+        with suppress(TypeError, RuntimeError):
+            self._debounce.timeout.disconnect()
+
+        # try:
+        #     self._debounce.timeout.disconnect()
+        # except (TypeError, RuntimeError):
+        #     pass
         self._debounce.timeout.connect(_slice)
 
-        self.smooth_int_check.toggled.connect(_reset_and_slice)
-        self.smooth_int_spin.valueChanged.connect(_reset_and_slice)
+        self.smooth_int_check.toggled.connect(_queue_slice)
+        self.smooth_int_spin.valueChanged.connect(_queue_slice)
+        self.smooth_int_kernel.currentIndexChanged.connect(_queue_slice)
         self.show_intensity.toggled.connect(_visibility_changed)
         self.int_colormap.currentTextChanged.connect(_update_colormaps)
         self.intensity_slider.valueChanged.connect(_fast_display)
@@ -837,9 +965,11 @@ class FlimViewPanel(QWidget):
             self.combined_mask_btn.clicked.connect(_create_combined_mask)
 
         if has_lifetime:
-            self.smooth_lt_check.toggled.connect(_reset_and_slice)
-            self.smooth_lt_spin.valueChanged.connect(_reset_and_slice)
+            self.smooth_lt_check.toggled.connect(_queue_slice)
+            self.smooth_lt_spin.valueChanged.connect(_queue_slice)
+            self.smooth_lt_kernel.currentIndexChanged.connect(_queue_slice)
             self.show_lifetime.toggled.connect(_visibility_changed)
+            self.lt_corrected.toggled.connect(self._on_lt_corrected_toggled)
             self.lt_colormap.currentTextChanged.connect(_update_colormaps)
             self.lifetime_slider.valueChanged.connect(_fast_display)
             self.lifetime_slider.sliderReleased.connect(_fast_display)
@@ -847,9 +977,63 @@ class FlimViewPanel(QWidget):
         self._lut = (
             _make_lut(self.lt_colormap.currentText()) if has_lifetime else None
         )
+        self._update_lt_corrected_state()
         _slice()
         _update_colormaps()
         self._update_view_label()
+
+    def _lt_correction(self) -> tuple[float, float] | None:
+        """``(delay, period)`` the calibration allows, ignoring the checkbox."""
+        if self.dataset is None or not self.state.calib_enabled:
+            return None
+        return irf_delay_from_calibration(
+            self.dataset, self.state.calib_factor
+        )
+
+    def _active_lt_correction(self) -> tuple[float, float] | None:
+        if self.lt_corrected is None or not self.lt_corrected.isChecked():
+            return None
+        return self._lt_correction()
+
+    def _update_lt_corrected_state(self):
+        if self.lt_corrected is None:
+            return
+        corr = self._lt_correction()
+        unit = self._lifetime_unit
+        self.lt_corrected.setEnabled(corr is not None)
+        if corr is None:
+            self.lt_corrected.setToolTip(
+                "Subtract the IRF delay derived from the phasor calibration.\n"
+                "Enable Calibration in the Phasor tab (with a factor other "
+                "than 1) to use it."
+            )
+        else:
+            self.lt_corrected.setToolTip(
+                f"Subtract IRF delay {corr[0]:.3f} {unit} (from the phasor "
+                "calibration).\nValues below 0 wrap by one laser period "
+                f"({corr[1]:.3f} {unit})."
+            )
+        if self._lt_group is not None:
+            on = corr is not None and self.lt_corrected.isChecked()
+            self._lt_group.setTitle(
+                f"Lifetime ({unit}, calibrated)"
+                if on
+                else f"Lifetime ({unit})"
+            )
+            # A shorter title only repaints its own rect, which leaves the
+            # tail of the longer one on screen. Repaint the whole box.
+            self._lt_group.update()
+
+    def _on_lt_corrected_toggled(self, _checked: bool):
+        self._update_lt_corrected_state()
+        self._lt_recontrast = True
+        self._debounce.start()
+
+    def _on_calib_changed(self, *_):
+        self._update_lt_corrected_state()
+        if self.lt_corrected is not None and self.lt_corrected.isChecked():
+            self._lt_recontrast = True
+            self._debounce.start()
 
     def _update_view_label(self):
         """Refresh the current-view line, e.g. ``View:  f0  s0  d1  l  p``.
@@ -874,10 +1058,6 @@ class FlimViewPanel(QWidget):
             else:
                 parts.append(f"{letter}: {self.selectors[dim].value()}")
         self._view_lbl.setText("Current view =  " + "  ".join(parts))
-
-    # ------------------------------------------------------------------ #
-    # Export                                                               #
-    # ------------------------------------------------------------------ #
 
     def _on_export_save(self):
         """Unified Save handler — asks for base name/directory once, saves all checked types."""
@@ -936,15 +1116,17 @@ class FlimViewPanel(QWidget):
         )
 
     def _save_intensity(self, path):
-        """Write cached intensity as actual photon counts (uint32 TIFF).
+        """Write the displayed intensity as a float32 TIFF.
 
-        Not rescaled — pixel values are the real counts (rounded when the view
-        is smoothed/aggregated), so the TIFF stays quantitative.
+        Not rescaled - summed counts stay exact, smoothed view keeps local mean.
         """
         from skimage.io import imsave
 
-        counts = np.rint(self._current_intensity).astype(np.uint32)
-        imsave(str(path), counts, check_contrast=False)
+        imsave(
+            str(path),
+            self._current_intensity.astype(np.float32),
+            check_contrast=False,
+        )
 
     def _save_lifetime(self, path):
         """Write cached lifetime as float32 TIFF (values in ns)."""
@@ -981,9 +1163,11 @@ class FlimViewPanel(QWidget):
 
     def _flim_export_info(self) -> str:
         """Human-readable mapping baked into the FLIM RGB (for the sidecar)."""
+        corr = self._active_lt_correction()
         return flim_export_info(
             self.lt_colormap.currentText(),
             self.lifetime_slider.value(),
             self.intensity_slider.value(),
-            getattr(self, "_lifetime_unit", "ch"),
+            self._lifetime_unit,
+            irf_delay=corr[0] if corr else None,
         )

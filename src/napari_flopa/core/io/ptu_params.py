@@ -20,12 +20,18 @@ TAG_PARAMS: list[TagParam] = [
     TagParam("pixels_x", "ImgHdr_PixX", None, int),
     TagParam("pixels_y", "ImgHdr_PixY", None, int),
     TagParam("frames", "ImgHdr_NumberOfFrames", None, int),
+    # Elapsed time when acquisition stopped, in ms. Unlike
+    # MeasDesc_AcquisitionTime (the *requested* time) this matches the
+    # records, so it bounds how far a trace can run.
+    TagParam(
+        "acquisition_time", "TTResult_StopAfter", None, lambda v: v / 1e3
+    ),
 ]
 
 PARAMS_BY_NAME: dict[str, TagParam] = {p.name: p for p in TAG_PARAMS}
 
 
-def read_tag(header_tags: dict, name: str):
+def read_tag(header_tags: dict, name: str) -> Any:
     """Return a single param's value from *header_tags* (value only)."""
     p = PARAMS_BY_NAME[name]
     if p.tag in header_tags:

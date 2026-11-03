@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 from qtpy.QtCore import Qt, QThreadPool, Signal, Slot
 from qtpy.QtWidgets import (
     QApplication,
@@ -30,8 +31,8 @@ from tttrkit.ptuio.utils import (
 from napari_flopa.core import provenance
 from napari_flopa.core.demo import load_demo
 from napari_flopa.core.io.config import (
-    DEFAULT_LASER_DUTY,
     MS,
+    SCAN_DEFAULTS,
     US,
     ScanSettings,
     load_config,
@@ -90,7 +91,7 @@ class PtuPanel(QWidget):
         self._syncing_shift = False
 
         # Parameter provenance: name -> 'metadata'|'default'|'user', plus the
-        # coloured dot widgets. `_autofill` guards programmatic setValue() calls
+        # colored dot widgets. `_autofill` guards programmatic setValue() calls
         # so auto-filling from the header doesn't mark fields as user-edited.
         self._param_source: dict[str, str] = {}
         self._param_dots: dict[str, object] = {}
@@ -100,41 +101,59 @@ class PtuPanel(QWidget):
         # file); pushed to the shared state when reconstruction finishes, so
         # the Phasor tab picks it up.
         self._cfg_calib_factor: complex | None = None
+        self._file_mask: np.ndarray | None = None
 
         self._build_ui()
+        self.viewer.layers.events.inserted.connect(
+            lambda _: self._refresh_roi_mask_layers()
+        )
+        self.viewer.layers.events.removed.connect(
+            lambda _: self._refresh_roi_mask_layers()
+        )
         # Let other tabs (Batch) pull these fields without a reconstruction.
         self.state.file_config_provider = self._file_config_or_none
         self.state.file_runtime_provider = lambda: {
             "ptu_path": self.ptu_filepath,
             "chunk_size": self.chunk_size_spin.value(),
+            "acquisition_time": (self.ptu_data or {})
+            .get("constants", {})
+            .get("acquisition_time"),
         }
 
-    # ------------------------------------------------------------------ #
-    # Parameter provenance                                                 #
-    # ------------------------------------------------------------------ #
-
     def _set_param_source(self, name: str, source: str):
-        """Record a parameter's source and recolour its dot."""
+        """Record a parameter's source and recolor its dot."""
         self._param_source[name] = source
         dot = self._param_dots.get(name)
         if dot is not None:
             dot.setStyleSheet(S.PROV_DOT.get(source, ""))
-            dot.setToolTip(f"Value source: {source}")
+            dot.setToolTip(f"{name.replace('_', ' ')}: {source}")
+
+    def _make_dot(self, name: str) -> QLabel:
+        """Provenance dot for *name*, registered and starting as 'default'."""
+        dot = QLabel("●")
+        self._param_dots[name] = dot
+        self._set_param_source(name, provenance.DEFAULT)
+        return dot
 
     def _on_param_edited(self, name: str):
         """A manual spinbox edit flips the field to 'user' (ignored while auto-filling)."""
         if not self._autofill:
             self._set_param_source(name, provenance.USER)
 
-    # ------------------------------------------------------------------ #
-    # UI construction                                                      #
-    # ------------------------------------------------------------------ #
-
     def _build_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(2, 2, 2, 2)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(2, 2, 2, 2)
 
-        # --- File loading ---
+        # Everything but the log scrolls, so the log stays in view below it.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        inner = QWidget()
+        main_layout = QVBoxLayout(inner)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(inner)
+        root.addWidget(scroll, 3)
+
         file_group = QGroupBox("Load Data")
         apply_style(file_group, S.GROUP_PRIMARY)
         file_layout = QVBoxLayout(file_group)
@@ -149,6 +168,9 @@ class PtuPanel(QWidget):
         )
         btn_row = QHBoxLayout()
         self.select_ptu_btn = QPushButton("Read PTU...")
+        self.select_ptu_btn.setToolTip(
+            "Open a .ptu file: reads its header and fills in the scan parameters"
+        )
         self.select_ptu_btn.clicked.connect(self._select_ptu_file)
         self.load_demo_btn = QPushButton("Load Demo")
         self.load_demo_btn.setToolTip(
@@ -162,7 +184,6 @@ class PtuPanel(QWidget):
         file_layout.addLayout(btn_row)
         main_layout.addWidget(file_group)
 
-        # --- Header info (summary only, full header via button) ---
         self.header_group = QGroupBox("Header Info")
         apply_style(self.header_group, S.GROUP_PRIMARY)
         header_layout = QVBoxLayout(self.header_group)
@@ -188,12 +209,10 @@ class PtuPanel(QWidget):
         main_layout.addWidget(self.header_group)
         self.header_group.setVisible(False)
 
-        # --- Scan configuration ---
         self.config_group = self._build_config_group()
         main_layout.addWidget(self.config_group)
         self.config_group.setVisible(False)
 
-        # --- Reconstruction ---
         self.recon_group = QGroupBox("Reconstruction")
         apply_style(self.recon_group, S.GROUP_PRIMARY)
         recon_layout = QVBoxLayout(self.recon_group)
@@ -236,17 +255,37 @@ class PtuPanel(QWidget):
         self.chunk_size_spin.setValue(DEFAULT_CHUNK_SIZE)
         self.chunk_size_spin.setToolTip(
             "TTTR records read per iteration "
-            f"(default {DEFAULT_CHUNK_SIZE:,}).\n"
-            "Smaller = less memory and finer progress steps; "
-            "larger = fewer iterations."
+            f"(default {DEFAULT_CHUNK_SIZE:,})"
         )
         output_row.addWidget(self.chunk_size_spin, 2)
 
         self.reconstruct_btn = QPushButton("Run")
         self.reconstruct_btn.setStyleSheet(S.BTN_RUN)
+        self.reconstruct_btn.setToolTip(
+            "Reconstruct the image and open FLIM View"
+        )
         self.reconstruct_btn.clicked.connect(self._run_reconstruction)
         output_row.addWidget(self.reconstruct_btn)
         recon_layout.addLayout(output_row)
+
+        mask_row = QHBoxLayout()
+        mask_row.addWidget(QLabel("ROI Mask:"))
+        self._roi_mask_combo = QComboBox()
+        self._roi_mask_combo.addItem("None")
+        self._roi_mask_combo.addItem("Load from file...")
+        self._roi_mask_combo.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed
+        )
+        self._roi_mask_combo.setToolTip(
+            "Optional 2D mask (lines × pixels).\n"
+            "Photons outside the mask are excluded from reconstruction.\n"
+            "Select a napari Labels layer, or load a .tif/.npy file."
+        )
+        self._roi_mask_combo.currentTextChanged.connect(
+            self._on_roi_mask_changed
+        )
+        mask_row.addWidget(self._roi_mask_combo, 1)
+        recon_layout.addLayout(mask_row)
 
         self.recon_progress = QProgressBar()
         self.recon_progress.setTextVisible(True)
@@ -257,7 +296,6 @@ class PtuPanel(QWidget):
         main_layout.addWidget(self.recon_group)
         self.recon_group.setVisible(False)
 
-        # --- Info / log ---
         self.info_group = QGroupBox("Log")
         apply_style(self.info_group, S.GROUP_PRIMARY)
         info_layout = QVBoxLayout(self.info_group)
@@ -266,10 +304,7 @@ class PtuPanel(QWidget):
         self.log_text.setMinimumHeight(120)
         apply_style(self.log_text, S.LOG)
         info_layout.addWidget(self.log_text)
-        # Stretch factor 1 → the log fills the leftover panel height (growing
-        # from its 120px minimum). While it's still hidden on init, the trailing
-        # addStretch() below absorbs the space instead, so nothing balloons.
-        main_layout.addWidget(self.info_group, 1)
+        root.addWidget(self.info_group, 1)
         self.info_group.setVisible(False)
 
         main_layout.addStretch()
@@ -292,41 +327,44 @@ class PtuPanel(QWidget):
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.addWidget(spinbox)
-            dot = QLabel("●")
-            self._param_dots[name] = dot
-            self._set_param_source(name, provenance.DEFAULT)
             spinbox.valueChanged.connect(
                 lambda *_: self._on_param_edited(name)
             )
-            row.addWidget(dot)
+            row.addWidget(self._make_dot(name))
             row.addStretch()
             return row
 
         self.lines_spin = QSpinBox()
         self.lines_spin.setRange(1, 10000)
-        self.lines_spin.setValue(512)
+        self.lines_spin.setValue(SCAN_DEFAULTS.lines)
         form.addRow("Lines:", _spin_row("lines", self.lines_spin))
 
         self.pixels_spin = QSpinBox()
         self.pixels_spin.setRange(1, 10000)
-        self.pixels_spin.setValue(512)
+        self.pixels_spin.setValue(SCAN_DEFAULTS.pixels)
         form.addRow("Pixels:", _spin_row("pixels", self.pixels_spin))
 
         self.frames_spin = QSpinBox()
         self.frames_spin.setRange(1, 1000)
-        self.frames_spin.setValue(1)
+        self.frames_spin.setValue(SCAN_DEFAULTS.frames)
         form.addRow("Frames:", _spin_row("frames", self.frames_spin))
 
         self.tcspc_bins_spin = QSpinBox()
         self.tcspc_bins_spin.setRange(1, 65536)
         self.tcspc_bins_spin.setValue(4096)
+        self.tcspc_bins_spin.setToolTip(
+            "Number of TCSPC time bins per laser period to reconstruct"
+        )
         form.addRow(
             "TCSPC Bins:", _spin_row("tcspc_bins", self.tcspc_bins_spin)
         )
 
         self.max_detector_spin = QSpinBox()
         self.max_detector_spin.setRange(1, 128)
-        self.max_detector_spin.setValue(2)
+        self.max_detector_spin.setValue(SCAN_DEFAULTS.max_detector)
+        self.max_detector_spin.setToolTip(
+            "Number of detector channels to reconstruct"
+        )
         form.addRow(
             "Max detectors:", _spin_row("max_detector", self.max_detector_spin)
         )
@@ -365,25 +403,18 @@ class PtuPanel(QWidget):
 
         accu_row = QHBoxLayout()
         accu_row.addWidget(accu_label, alignment=Qt.AlignTop)
+        accu_row.addWidget(
+            self._make_dot("accumulations"), alignment=Qt.AlignTop
+        )
         accu_row.addWidget(self.accu_scroll)
         main_layout.addLayout(accu_row)
 
-        # --- Line start/stop marker delays (always enabled, independent of
-        # bidirectional/harmonic scan status) ---
         main_layout.addWidget(QLabel("Line markers delay (µs)"))
 
         delay_row = QHBoxLayout()
-        for label, attr, _tip in (
-            (
-                "Start:",
-                "line_start_delay_spin",
-                "Shift the start edge of each reconstructed line, in µs",
-            ),
-            (
-                "Stop:",
-                "line_stop_delay_spin",
-                "Shift the stop edge of each reconstructed line, in µs",
-            ),
+        for label, attr, name in (
+            ("Start:", "line_start_delay_spin", "line_start_marker_delay"),
+            ("Stop:", "line_stop_delay_spin", "line_stop_marker_delay"),
         ):
             delay_row.addWidget(QLabel(label))
             spin = QDoubleSpinBox()
@@ -392,8 +423,11 @@ class PtuPanel(QWidget):
             spin.setDecimals(3)
             spin.setValue(0.0)
             # spin.setFixedWidth(50)
-            # spin.setToolTip(tip)
             delay_row.addWidget(spin)
+            delay_row.addWidget(self._make_dot(name))
+            spin.valueChanged.connect(
+                lambda *_, n=name: self._on_param_edited(n)
+            )
             setattr(self, attr, spin)
 
         delay_row.addStretch()
@@ -407,14 +441,17 @@ class PtuPanel(QWidget):
         self.line_duration_spin.setSingleStep(0.1)
         self.line_duration_spin.setSpecialValueText("auto")
         self.line_duration_spin.setToolTip(
-            "How long one scan line lasts. Left at auto it is measured from "
+            "How long one scan line lasts. 'auto' = measured from "
             "the markers during reconstruction."
         )
         duration_row.addWidget(self.line_duration_spin)
+        duration_row.addWidget(self._make_dot("line_duration"))
+        self.line_duration_spin.valueChanged.connect(
+            lambda *_: self._on_param_edited("line_duration")
+        )
         duration_row.addStretch()
         main_layout.addLayout(duration_row)
 
-        # --- Bidirectional (nested, checkable subsection) ---
         # GROUP_NESTED sets no background-color, so the box is transparent and
         # inherits the Scan Configuration tint — its content area matches the
         # surrounding box exactly.
@@ -422,6 +459,9 @@ class PtuPanel(QWidget):
         apply_style(self.bidir_group, S.GROUP_CHECKABLE)
         self.bidir_group.setCheckable(True)
         self.bidir_group.setChecked(False)
+        self.bidir_group.setToolTip(
+            "Lines are scanned in both directions, every second line is reversed"
+        )
         bidir_layout = QVBoxLayout(self.bidir_group)
         bidir_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -432,10 +472,11 @@ class PtuPanel(QWidget):
         self.bidir_phase_spin.setSingleStep(1.0)
         self.bidir_phase_spin.setDecimals(3)
         self.bidir_phase_spin.setValue(0.0)
-        self.bidir_phase_spin.setToolTip(
-            "Start plus stop delay — editing it moves the stop delay"
-        )
         shift_row.addWidget(self.bidir_phase_spin, 1)
+        shift_row.addWidget(self._make_dot("bidirectional"))
+        self.bidir_group.toggled.connect(
+            lambda *_: self._on_param_edited("bidirectional")
+        )
         bidir_layout.addLayout(shift_row)
 
         self.wizard_btn = QPushButton("Alignment wizard")
@@ -457,11 +498,13 @@ class PtuPanel(QWidget):
         )
         self.bidir_phase_spin.valueChanged.connect(self._sync_stop_from_shift)
 
-        # --- Harmonic scan ---
         self.harmonic_group = QGroupBox("Harmonic Scan")
         apply_style(self.harmonic_group, S.GROUP_CHECKABLE)
         self.harmonic_group.setCheckable(True)
         self.harmonic_group.setChecked(False)
+        self.harmonic_group.setToolTip(
+            "Enable harmonic (resonant) scan handling"
+        )
         harmonic_layout = QVBoxLayout(self.harmonic_group)
         harmonic_layout.setContentsMargins(0, 0, 0, 0)
         harmonic_layout.setSpacing(3)
@@ -472,13 +515,21 @@ class PtuPanel(QWidget):
         self.laser_duty_spin.setRange(0.0, 1.0)
         self.laser_duty_spin.setSingleStep(0.01)
         self.laser_duty_spin.setDecimals(3)
-        self.laser_duty_spin.setValue(DEFAULT_LASER_DUTY)
+        self.laser_duty_spin.setValue(SCAN_DEFAULTS.laser_duty)
         # self.laser_duty_spin.setToolTip(
         #     "Fraction of the line period the laser is on — used by the "
         #     "harmonic correction"
         # )
         duty_row.addWidget(self.laser_duty_spin)
+        duty_row.addWidget(self._make_dot("laser_duty"))
+        self.laser_duty_spin.valueChanged.connect(
+            lambda *_: self._on_param_edited("laser_duty")
+        )
         duty_row.addStretch()
+        duty_row.addWidget(self._make_dot("harmonic_scan"))
+        self.harmonic_group.toggled.connect(
+            lambda *_: self._on_param_edited("harmonic_scan")
+        )
         harmonic_layout.addLayout(duty_row)
         main_layout.addWidget(self.harmonic_group)
 
@@ -497,10 +548,6 @@ class PtuPanel(QWidget):
 
         self._update_accumulation_widgets()
         return group
-
-    # ------------------------------------------------------------------ #
-    # Helpers                                                              #
-    # ------------------------------------------------------------------ #
 
     def _log_start(self):
         """Begin accumulating a new log block."""
@@ -536,34 +583,49 @@ class PtuPanel(QWidget):
         )  # type: ignore
         if not filepath_str:
             return
-        self.ptu_filepath = Path(filepath_str)
-        self.file_label.setText(f"file: {self.ptu_filepath.name}")
+        self.load_ptu_path(Path(filepath_str))
+
+    def load_ptu_path(self, path, config: dict | None = None) -> None:
+        """Read *path* and populate every scan widget from it.
+
+        Shared by the Read PTU button, the Load Demo button and a .ptu
+        dropped on the canvas. Without *config* the geometry comes from the
+        file's own header tags; with one it comes from that config instead,
+        and the header only supplies the TCSPC bin count.
+        """
+        path = Path(path)
         try:
-            self.ptu_data = read_ptu_file(str(self.ptu_filepath), header=False)
-            tags = self.ptu_data["header"]
-            constants = self.ptu_data["constants"]
-            csrc = self.ptu_data.get("constants_source", {})
+            ptu_data = read_ptu_file(str(path), header=False)
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Error", f"Failed to read PTU header:\n{e}"
+            )
+            return
+
+        try:
+            # Commit the path only once the file has actually been read.
+            self.ptu_data = ptu_data
+            self.ptu_filepath = path
+            self.file_label.setText(f"file: {path.name}")
+
+            tags = ptu_data["header"]
+            constants = ptu_data["constants"]
+            csrc = ptu_data.get("constants_source", {})
 
             # Summary (no full header) — full header via button
-            summary = format_ptu_header(
-                tags, constants, full_header=False, constants_source=csrc
+            self.header_info.setPlainText(
+                format_ptu_header(
+                    tags, constants, full_header=False, constants_source=csrc
+                )
             )
-            self.header_info.setPlainText(summary)
 
-            # Auto-fill from header (guarded so setValue doesn't mark 'user')
+            if config is None:
+                self._fill_geometry_from_header(tags)
+            else:
+                self._apply_config(config, source=provenance.USER)
+
+            # The file wins over any config for the TCSPC bin count.
             self._autofill = True
-            px_x = tags.get("ImgHdr_PixX")
-            px_y = tags.get("ImgHdr_PixY")
-            n_frames = tags.get("ImgHdr_NumberOfFrames")
-            if isinstance(px_x, (int, float)):
-                self.pixels_spin.setValue(int(px_x))
-                self._set_param_source("pixels", provenance.METADATA)
-            if isinstance(px_y, (int, float)):
-                self.lines_spin.setValue(int(px_y))
-                self._set_param_source("lines", provenance.METADATA)
-            if isinstance(n_frames, (int, float)) and n_frames > 0:
-                self.frames_spin.setValue(int(n_frames))
-                self._set_param_source("frames", provenance.METADATA)
             self.tcspc_bins_spin.setValue(constants.get("tcspc_bins", 4096))
             self._set_param_source(
                 "tcspc_bins", csrc.get("tcspc_bins", provenance.DEFAULT)
@@ -575,16 +637,33 @@ class PtuPanel(QWidget):
             self.recon_group.setVisible(True)
             self.info_group.setVisible(True)
             self.log_text.clear()
-            # self.shift_plot_data = None
-            # self.prealign_plot_data = None
-            # self._last_shift_operation = None
-            # self.plot_shift_btn.setEnabled(False)
             self.state.notify_file_loaded()
-
         except Exception as e:
+            self._autofill = False
             QMessageBox.critical(
-                self, "Error", f"Failed to read PTU header:\n{e}"
+                self, "Error", f"Failed to apply PTU settings:\n{e}"
             )
+
+    def _fill_geometry_from_header(
+        self, tags: dict, only: set[str] | None = None
+    ) -> None:
+        """Scan geometry from the header tags that carry it.
+
+        *only* limits it to those field names (the ones a config lacked).
+        """
+        self._autofill = True
+        for tag, spin, name in (
+            ("ImgHdr_PixX", self.pixels_spin, "pixels"),
+            ("ImgHdr_PixY", self.lines_spin, "lines"),
+            ("ImgHdr_NumberOfFrames", self.frames_spin, "frames"),
+        ):
+            if only is not None and name not in only:
+                continue
+            value = tags.get(tag)
+            if isinstance(value, (int, float)) and value > 0:
+                spin.setValue(int(value))
+                self._set_param_source(name, provenance.METADATA)
+        self._autofill = False
 
     def _on_load_demo(self):
         try:
@@ -592,43 +671,7 @@ class PtuPanel(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Demo Error", str(e))
             return
-
-        try:
-            self.ptu_filepath = ptu_path
-            self.file_label.setText(f"PTU: {ptu_path.name}")
-            self.ptu_data = read_ptu_file(str(ptu_path), header=False)
-            tags = self.ptu_data["header"]
-            constants = self.ptu_data["constants"]
-            csrc = self.ptu_data.get("constants_source", {})
-            summary = format_ptu_header(
-                tags, constants, full_header=False, constants_source=csrc
-            )
-            self.header_info.setPlainText(summary)
-
-            self._apply_config(params, source=provenance.USER)
-
-            # File-derived values override the config for tcspc bins + rep. rate.
-            self._autofill = True
-            self.tcspc_bins_spin.setValue(constants.get("tcspc_bins", 4096))
-            self._set_param_source(
-                "tcspc_bins", csrc.get("tcspc_bins", provenance.DEFAULT)
-            )
-            self._autofill = False
-
-            self.header_group.setVisible(True)
-            self.config_group.setVisible(True)
-            self.recon_group.setVisible(True)
-            self.info_group.setVisible(True)
-            self.log_text.clear()
-            # self.shift_plot_data = None
-            # self.prealign_plot_data = None
-            # self._last_shift_operation = None
-            # self.plot_shift_btn.setEnabled(False)
-            self.state.notify_file_loaded()
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Demo Load Error", f"Failed to load demo PTU:\n{e}"
-            )
+        self.load_ptu_path(ptu_path, config=params)
 
     def _show_full_header(self):
         if not self.ptu_data:
@@ -643,7 +686,7 @@ class PtuPanel(QWidget):
         layout = QVBoxLayout(dlg)
         te = QTextEdit()
         te.setReadOnly(True)
-        apply_style(te, S.LOG)  # unify colours with the log editor
+        apply_style(te, S.LOG)  # unify colors with the log editor
         te.setPlainText(full_text)
         layout.addWidget(te)
         close_btn = QPushButton("Close")
@@ -703,6 +746,9 @@ class PtuPanel(QWidget):
             spin = QSpinBox()
             spin.setRange(1, 1000)
             spin.setValue(1)
+            spin.valueChanged.connect(
+                lambda *_: self._on_param_edited("accumulations")
+            )
             row_layout.addWidget(spin)
             row_layout.addStretch()
             self.accu_container_layout.addWidget(row)
@@ -942,11 +988,15 @@ class PtuPanel(QWidget):
             # auto (0) leaves it for tttrkit to measure per file.
             line_duration=(self.line_duration_spin.value() * MS) or None,
             tcspc_bins=self.tcspc_bins_spin.value(),
-            calib_factor=_fmt_factor(self.state.calib_factor),
+            # Written to the config only while the Phasor calibration is on.
+            calib_factor=(
+                _fmt_factor(self.state.calib_factor)
+                if self.state.calib_enabled
+                else "1+0j"
+            ),
             ptu_filename=(
                 self.ptu_filepath.name if self.ptu_filepath else None
             ),
-            sources=dict(self._param_source),
         )
 
     def current_config_dict(self) -> dict:
@@ -972,59 +1022,87 @@ class PtuPanel(QWidget):
     def _apply_config(self, cfg: dict, source: str = provenance.USER):
         """Apply a scan-config dict (core schema) to the widgets (UI-only).
 
-        Only the fields actually present are applied — anything missing is left
-        as-is — and applied fields get their provenance dot set to *source*.
-        Any ``ptu_filename`` is ignored here; loading a file is the caller's job.
+        A key present in the config is applied and its dot set to *source*.
+        A missing key falls back to the header value when the loaded file has
+        one (lines, pixels, frames), otherwise to ``SCAN_DEFAULTS``, with the
+        matching dot. The TCSPC bin count always comes from the file, and any
+        ``ptu_filename`` is ignored (loading a file is the caller's job).
         """
         scan = cfg.get("scan", {})
-        cal = cfg.get("calibration", {})
+        d = SCAN_DEFAULTS
+        sources: dict[str, str] = {}
+
+        def _pick(key, default):
+            sources[key] = source if key in scan else provenance.DEFAULT
+            value = scan.get(key)
+            return default if value is None else value
+
         self._autofill = True
         try:
-            spins = {
-                "lines": self.lines_spin,
-                "pixels": self.pixels_spin,
-                "frames": self.frames_spin,
-                "max_detector": self.max_detector_spin,
-                "sequences": self.sequences_spin,
-                "tcspc_bins": self.tcspc_bins_spin,
-            }
-            applied = []
-            for key, spin in spins.items():
-                if key in scan:
-                    spin.setValue(int(scan[key]))
-                    applied.append(key)
+            for key, spin in (
+                ("lines", self.lines_spin),
+                ("pixels", self.pixels_spin),
+                ("frames", self.frames_spin),
+                ("max_detector", self.max_detector_spin),
+            ):
+                spin.setValue(int(_pick(key, getattr(d, key))))
 
-            self._update_accumulation_widgets()
-            for i, acc in enumerate(scan.get("accumulations", [])):
-                if i < len(self.accu_spinboxes):
-                    self.accu_spinboxes[i].setValue(int(acc))
-
-            # self.bidir_group.setChecked(bool(scan.get("bidirectional", False)))
-            self.harmonic_group.setChecked(
-                bool(scan.get("harmonic_scan", False))
+            accums = scan.get("accumulations")
+            if not accums:
+                accums = [1] * int(scan.get("sequences") or 1)
+            sources["accumulations"] = (
+                source if "accumulations" in scan else provenance.DEFAULT
             )
-            if "laser_duty" in scan:
-                self.laser_duty_spin.setValue(float(scan["laser_duty"]))
+            sources["sequences"] = (
+                source
+                if "accumulations" in scan or "sequences" in scan
+                else provenance.DEFAULT
+            )
+            # Rows always match the sequence count, so moving the spin box
+            # rebuilds them; a no-op when the count already agrees.
+            self.sequences_spin.setValue(len(accums))
+            if len(self.accu_spinboxes) != len(accums):
+                self._update_accumulation_widgets()
+            for spin, acc in zip(self.accu_spinboxes, accums, strict=False):
+                spin.setValue(int(acc))
 
+            self.bidir_group.setChecked(
+                bool(_pick("bidirectional", d.bidirectional))
+            )
+            self.harmonic_group.setChecked(
+                bool(_pick("harmonic_scan", d.harmonic_scan))
+            )
+            self.laser_duty_spin.setValue(
+                float(_pick("laser_duty", d.laser_duty))
+            )
             for key, spin in (
                 ("line_start_marker_delay", self.line_start_delay_spin),
                 ("line_stop_marker_delay", self.line_stop_delay_spin),
             ):
-                if key in scan:
-                    spin.setValue(float(scan[key]) / US)
+                spin.setValue(float(_pick(key, getattr(d, key))) / US)
             self._sync_shift_from_delays()
-            # Absent means auto, which the spin box shows as 0.
+            # null, 0 or missing all mean auto, which shows as 0.
             self.line_duration_spin.setValue(
-                float(scan.get("line_duration") or 0.0) / MS
+                float(_pick("line_duration", 0.0) or 0.0) / MS
             )
+            if "tcspc_bins" in scan:
+                self.tcspc_bins_spin.setValue(int(scan["tcspc_bins"]))
+                sources["tcspc_bins"] = source
 
-            if cal.get("factor"):
-                self._cfg_calib_factor = complex(cal["factor"])
-
-            for name in applied:
-                self._set_param_source(name, source)
+            factor = (cfg.get("calibration") or {}).get("factor")
+            self._cfg_calib_factor = complex(factor) if factor else None
         finally:
             self._autofill = False
+
+        for name, src in sources.items():
+            self._set_param_source(name, src)
+        # Geometry the config lacks comes from the header when it has it.
+        if self.ptu_data is not None:
+            missing = {"lines", "pixels", "frames"} - set(scan)
+            if missing:
+                self._fill_geometry_from_header(
+                    self.ptu_data["header"], only=missing
+                )
 
     def _on_load_config_json(self):
         """Load a config via core, then apply the values to the widgets."""
@@ -1033,13 +1111,82 @@ class PtuPanel(QWidget):
         )
         if not path:
             return
+        self.load_config_path(Path(path))
+
+    def load_config_path(self, path) -> None:
+        """Apply the scan config at *path* to the widgets.
+
+        Shared by the Load Config button and a .json dropped on the canvas.
+        """
+        path = Path(path)
         try:
-            cfg = load_config(path)
-            self._apply_config(cfg, source=provenance.USER)
+            self._apply_config(load_config(path), source=provenance.USER)
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
             return
-        self._log(f"Loaded config: {Path(path).name}")
+        self._log(f"Loaded config: {path.name}")
+
+    def _refresh_roi_mask_layers(self):
+        cur = self._roi_mask_combo.currentText()
+        self._roi_mask_combo.blockSignals(True)
+        self._roi_mask_combo.clear()
+        self._roi_mask_combo.addItem("None")
+        for layer in self.viewer.layers:
+            if type(layer).__name__ == "Labels":
+                self._roi_mask_combo.addItem(layer.name)
+        self._roi_mask_combo.addItem("Load from file...")
+        idx = self._roi_mask_combo.findText(cur)
+        self._roi_mask_combo.setCurrentIndex(max(0, idx))
+        self._roi_mask_combo.blockSignals(False)
+
+    def _on_roi_mask_changed(self, text: str):
+        if text == "Load from file...":
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Load ROI mask",
+                "",
+                "Mask files (*.tif *.tiff *.npy);;All files (*)",
+            )
+            if path:
+                self._load_mask_file(Path(path))
+            else:
+                self._roi_mask_combo.setCurrentIndex(0)
+        else:
+            self._file_mask = None
+
+    def _load_mask_file(self, path: Path):
+        try:
+            if path.suffix == ".npy":
+                arr = np.load(str(path))
+            else:
+                from skimage.io import imread
+
+                arr = imread(str(path))
+            self._file_mask = np.asarray(arr, dtype=bool)
+            self._roi_mask_combo.blockSignals(True)
+            idx = self._roi_mask_combo.findText("Load from file...")
+            display = f"File: {path.name}"
+            self._roi_mask_combo.insertItem(idx, display)
+            self._roi_mask_combo.setCurrentText(display)
+            self._roi_mask_combo.blockSignals(False)
+            self._log(f"Loaded ROI mask: {path.name} {self._file_mask.shape}")
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Mask Error", f"Failed to load mask:\n{e}"
+            )
+            self._roi_mask_combo.setCurrentIndex(0)
+
+    def _get_roi_mask(self) -> np.ndarray | None:
+        text = self._roi_mask_combo.currentText()
+        if text in ("None", "Load from file..."):
+            return None
+        if text.startswith("File: "):
+            return self._file_mask
+        try:
+            layer = self.viewer.layers[text]
+            return np.asarray(layer.data, dtype=bool)
+        except KeyError:
+            return None
 
     def _run_reconstruction(self):
         if not self.ptu_data:
@@ -1053,6 +1200,23 @@ class PtuPanel(QWidget):
         self.recon_progress.setVisible(True)
         self._log("Starting reconstruction...")
         QApplication.processEvents()
+
+        roi_mask = self._get_roi_mask()
+        if roi_mask is not None:
+            if roi_mask.ndim > 2:
+                roi_mask = roi_mask.squeeze()
+            expected = (self.lines_spin.value(), self.pixels_spin.value())
+            if roi_mask.ndim != 2 or roi_mask.shape != expected:
+                QMessageBox.warning(
+                    self,
+                    "Mask Shape Mismatch",
+                    f"ROI mask shape {roi_mask.shape} does not match "
+                    f"scan dimensions {expected} (lines, pixels).\n"
+                    "Adjust the mask or scan settings.",
+                )
+                self.reconstruct_btn.setEnabled(True)
+                self.recon_progress.setVisible(False)
+                return
 
         scan_settings = self.current_settings()
         scan_config = scan_settings.to_scan_config(
@@ -1074,6 +1238,7 @@ class PtuPanel(QWidget):
                 logger=logger,
                 progress_callback=emit_progress,
                 chunk_size=chunk_size,
+                roi_mask=roi_mask,
             )
 
         worker = Worker(_run)
@@ -1106,8 +1271,17 @@ class PtuPanel(QWidget):
         ds.attrs["scan_config"] = scan_settings.to_json_dict()["scan"]
         if self.ptu_filepath:
             ds.attrs["source_filename"] = self.ptu_filepath.name
+        mask_text = self._roi_mask_combo.currentText()
+        if mask_text not in ("None", "Load from file..."):
+            ds.attrs["roi_mask_source"] = mask_text
 
         self._log(f"Done. Dataset: {dict(ds.sizes)}")
+        line_s = ds.attrs.get("line_duration_s")
+        if line_s:
+            self._log(
+                f"Line duration: {line_s / MS:.4f} ms "
+                f"({ds.attrs.get('line_duration_source', 'measured')})"
+            )
         if self._cfg_calib_factor is not None:
             self.state.set_calib_factor(self._cfg_calib_factor)
             self._log(f"Calibration factor: {self._cfg_calib_factor}")

@@ -1,39 +1,40 @@
-"""Locate and load the bundled demo dataset.
-
-Resolution order for the demo params file (first match wins):
-
-1. ``$NAPARI_FLOPA_DEMO`` — absolute path to a params ``.json``. For pointing at
-   an arbitrary local file.
-2. ``demo_data/demo_params.local.json`` — a git-ignored local override.
-3. ``demo_data/demo_params.json`` — the small demo shipped with the package.
-
-The ``ptu_filename`` in the params file is resolved relative to that file's own
-directory (unless it is absolute), so a local override can reference e.g.
-``"../data/big_scan.ptu"``.
-"""
-
 import json
 import os
 from pathlib import Path
 
-# demo_data lives at the package root; this module is one level down (core/).
 _DEMO_DIR = Path(__file__).parent.parent / "demo_data"
+_LOCAL_DEMO_DIR = Path(__file__).parents[3] / "data" / "ptu_demo_local"
 
 
 def demo_params_path() -> Path | None:
-    """Return the demo params ``.json`` to use, or ``None`` if none exists."""
+    """Return the demo params ``.json`` to use, or ``None`` if none exists.
+
+    First match wins:
+
+    1. ``$NAPARI_FLOPA_DEMO`` — path to any params ``.json``; only when the
+       variable is set before napari / pytest starts.
+    2. ``data/ptu_demo_local/demo_params.local.json`` — git-ignored override
+       in the repo-root ``data`` folder (for development purpose).
+    3. ``demo_data/demo_params.json`` — the small demo shipped with the
+       package.
+    """
     env = os.environ.get("NAPARI_FLOPA_DEMO")
     if env and Path(env).exists():
         return Path(env)
-    for name in ("demo_params.local.json", "demo_params.json"):
-        candidate = _DEMO_DIR / name
+    candidates = (
+        _LOCAL_DEMO_DIR / "demo_params.local.json",
+        _DEMO_DIR / "demo_params.json",
+    )
+    for candidate in candidates:
         if candidate.exists():
-            return candidate  # first one that exist
+            return candidate
     return None
 
 
 def load_demo() -> tuple[dict, Path]:
     """Return ``(params, ptu_path)`` for the demo dataset.
+
+    A relative ``ptu_filename`` is resolved against the params file.
 
     Raises:
         FileNotFoundError: if no params file or the referenced ``.ptu`` is found.

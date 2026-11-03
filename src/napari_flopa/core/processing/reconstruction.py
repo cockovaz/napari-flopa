@@ -1,3 +1,6 @@
+from collections.abc import Callable
+
+import numpy as np
 import xarray as xr
 from tttrkit.ptuio.decoder import T3OverflowCorrector
 from tttrkit.ptuio.reconstructor import ImageReconstructor, ScanConfig
@@ -17,8 +20,9 @@ def reconstruct_ptu_to_dataset(
     outputs: list | None = None,
     tcspc_channels_override: int | None = None,
     logger: ProgressLogger | None = None,
-    progress_callback=None,
+    progress_callback: Callable[[int, int], None] | None = None,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
+    roi_mask: np.ndarray | None = None,
 ) -> xr.Dataset:
     """
     Full pipeline: reconstruct from already-loaded PTU data → xarray Dataset.
@@ -34,6 +38,8 @@ def reconstruct_ptu_to_dataset(
             after each chunk (total_chunks is 0 if the record count is unknown).
         chunk_size: TTTR records read per iteration. Affects memory use and
             progress granularity only, not the reconstructed data.
+        roi_mask: Optional 2D ``(lines, pixels)`` mask; photons outside it
+            are discarded in every frame, sequence and detector.
 
     Returns:
         xr.Dataset with dimensions (frame, sequence, line, pixel, channel).
@@ -56,11 +62,16 @@ def reconstruct_ptu_to_dataset(
     else:
         requested_outputs = outputs
 
+    line_duration_given = scan_config.line_duration
     recon = ImageReconstructor(
         config=scan_config,
+        roi_mask=roi_mask,
         outputs=requested_outputs,
         laser_sync_rate=constants["repetition_rate"],
         tcspc_channels=tcspc_channels,
+        # Without it tttrkit assumes 5 ps, and omega
+        # is wrong for any other resolution.
+        tcspc_resolution=constants["tcspc_resolution"],
     )
 
     corrector = T3OverflowCorrector(wraparound=constants["wrap"])
@@ -93,4 +104,12 @@ def reconstruct_ptu_to_dataset(
 
     logger.log("Finalizing dataset...")
     ds = recon.finalize()
+    # tttrkit fills config.line_duration (sync counts) when it measured it.
+    if recon.config.line_duration:
+        ds.attrs["line_duration_s"] = float(
+            recon.config.line_duration / constants["repetition_rate"]
+        )
+        ds.attrs["line_duration_source"] = (
+            "measured" if line_duration_given is None else "set"
+        )
     return ds

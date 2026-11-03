@@ -1,40 +1,9 @@
-"""
-Centralised visual style tokens for napari-flopa widgets.
-
-Usage
------
-    from napari_flopa.ui.style import C, S, MPL, apply_style
-
-    apply_style(group_box, S.GROUP_PRIMARY)
-    apply_style(label, S.STATUS)
-    apply_style(btn, S.BTN_DANGER)
-    ax.set_facecolor(MPL.AXES_BG)
-
-All Qt stylesheet strings are module-level constants on ``S``.
-All raw hex colours are on ``C``.
-Matplotlib plot colours are on ``MPL``.
-
-Group box title variants
-------------------------
-  S.GROUP_PRIMARY — primary sections; gold title.
-                Supports the ``#plain`` object-name selector for a muted
-                gray title: ``box.setObjectName("plain")``.
-  S.GROUP_NESTED  — secondary / nested sections; amber title.
-  S.GROUP_DOCK    — top-level dock container (e.g. FLIM View); teal title.
-  S.GROUP_COMPACT — bordered compact box used in dense panel layouts.
-"""
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Colour tokens
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-class C:  # "Color" — raw hex colour tokens
-    """Raw hex colour tokens — single source of truth for the dark theme.
+class C:  # "Color" — raw hex color tokens
+    """Raw hex color tokens — single source of truth for the dark theme.
 
     Tuned to sit inside napari's dark blue-grey theme (background #262930,
-    foreground #414851, text #f0f1f2). Token *names* are the public contract
-    (S/MPL build on them); only the values changed.
+    foreground #414851, text #f0f1f2). Token *names* are the public contract:
+    ``S`` (Qt stylesheets) and ``MPL`` (matplotlib colors) build on them.
     """
 
     # Surfaces (dark → light), matching napari's blue-greys
@@ -57,6 +26,11 @@ class C:  # "Color" — raw hex colour tokens
     TEXT_DIM = "#868e93"  # status / hint text (napari `secondary`)
     TEXT_FAINT = "#6b727b"  # extra-faint hint
     TEXT_DARK = "#565e68"  # disabled / inactive
+
+    # Batch log lines
+    LOG_ERR = "#ff6060"
+    LOG_OK = "#60cc60"
+    LOG_INFO = "#aaaaaa"
 
     # Accent — cyan/teal (contrast / view slider)
     ACCENT = "#38bec9"
@@ -86,8 +60,8 @@ class C:  # "Color" — raw hex colour tokens
     # Accent - pink/purple
     PINK_LINE = "#FC24DF"
 
-    # Categorical series palette (Okabe–Ito, colour-blind safe) — one entry per
-    # detector in the trace plot; cycles if there are more series than colours.
+    # Categorical series palette (Okabe–Ito, color-blind safe) — one entry per
+    # detector in the trace plot; cycles if there are more series than colors.
     SERIES = (
         "#0072B2",
         "#D55E00",
@@ -108,15 +82,19 @@ class C:  # "Color" — raw hex colour tokens
     PROV_ESTIMATED = "#e0a53a"
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Qt stylesheet strings
-# ──────────────────────────────────────────────────────────────────────────────
-
-
 class S:  # "Style" — Qt stylesheet strings
-    """Qt stylesheet strings for common widget roles."""
+    """Qt stylesheet strings for common widget roles.
 
-    # ── Labels ────────────────────────────────────────────────────────────────
+    Used as ``apply_style(btn, S.BTN_DANGER)`` or
+    ``apply_style(group_box, S.GROUP_PRIMARY)``.
+
+    Group box title variants:
+    - ``GROUP_PRIMARY`` — primary sections, gold title; a box named
+      ``"plain"`` (``box.setObjectName("plain")``) gets a muted grey title.
+    - ``GROUP_NESTED`` — secondary / nested sections, amber title.
+    - ``GROUP_DOCK`` — top-level dock container (FLIM View), teal title.
+    - ``GROUP_COMPACT`` — bordered compact box for dense layouts.
+    """
 
     # Provenance dot, keyed by source
     PROV_DOT = {
@@ -135,17 +113,11 @@ class S:  # "Style" — Qt stylesheet strings
     WARNING = f"color: {C.WARNING}; font-size: 9px; font-weight: normal;"
     SEPARATOR = f"color: {C.BORDER};"
 
-    # ── Stale indicator (● dot label) ─────────────────────────────────────────
-
     STALE_INACTIVE = f"color: {C.STALE_INACTIVE}; font-size: 16px;"
     STALE_STALE = f"color: {C.STALE_STALE};    font-size: 16px;"
     STALE_FRESH = f"color: {C.STALE_FRESH};    font-size: 16px;"
 
-    # ── Read-only display ─────────────────────────────────────────────────────
-
     DISPLAY = f"color: {C.TEXT_MUTED}; font-family: monospace;"
-
-    # ── Buttons ───────────────────────────────────────────────────────────────
 
     BTN_DANGER = (
         f"QPushButton {{ color: {C.DANGER_TEXT}; }}"
@@ -158,26 +130,22 @@ class S:  # "Style" — Qt stylesheet strings
 
     BTN_STOP = f"QPushButton {{ color: {C.DANGER_TEXT}; min-width: 50px;}}"
 
-    BTN_SMALL = "font-size: 10px;"
-
     BTN_DET_ON = (
         f"QPushButton {{ background: {C.ACCENT_BG}; color: {C.ACCENT}; "
         f"border: 1px solid {C.ACCENT_DIM}; border-radius: 3px; "
-        f"padding: 1px 6px; font-size: 10px; }}"
+        f"padding: 1px 6px; }}"
         f"QPushButton:hover {{ background: {C.ACCENT_BG_HOV}; }}"
     )
     BTN_DET_OFF = (
         f"QPushButton {{ background: {C.BG_MID}; color: {C.TEXT_DARK}; "
         f"border: 1px solid {C.BORDER}; border-radius: 3px; "
-        f"padding: 1px 6px; font-size: 10px; }}"
+        f"padding: 1px 6px; }}"
     )
     BTN_DET_DISABLED = (
         f"QPushButton {{ background: {C.BG_DEEP}; color: {C.TEXT_DARK}; "
         f"border: 1px solid {C.BORDER_SOFT}; border-radius: 3px; "
-        f"padding: 1px 6px; font-size: 10px; }}"
+        f"padding: 1px 6px; }}"
     )
-
-    # ── Input fields ──────────────────────────────────────────────────────────
 
     LINE_EDIT = (
         f"QLineEdit {{ background: {C.BG_MID}; color: {C.TEXT}; "
@@ -185,8 +153,6 @@ class S:  # "Style" — Qt stylesheet strings
         f"padding: 1px 2px; font-size: 9px; }}"
         f"QLineEdit:focus {{ border: 1px solid #888888; }}"
     )
-
-    # ── Sliders ───────────────────────────────────────────────────────────────
 
     SLIDER_VIEW = (
         f"QSlider::groove:horizontal {{ background: {C.BG_RAISED}; height: 4px; border-radius: 2px; }}"
@@ -201,8 +167,6 @@ class S:  # "Style" — Qt stylesheet strings
         f" margin: -3px 0; border-radius: 5px; }}"
         f"QSlider::sub-page:horizontal {{ background: {C.DANGER_DIM}; border-radius: 2px; }}"
     )
-
-    # ── Group boxes ───────────────────────────────────────────────────────────
 
     GROUP_PRIMARY = f"""
     QGroupBox {{
@@ -298,18 +262,15 @@ class S:  # "Style" — Qt stylesheet strings
     }}
     """
 
-    # ── Log / console / header views ──────────────────────────────────────────
-
     LOG = (
         f"QPlainTextEdit, QTextEdit {{ background: {C.BG_DEEP}; color: {C.TEXT_MUTED}; "
         f"border: 1px solid {C.BORDER_SOFT}; font-family: Courier, monospace; "
         f"font-size: 8pt; }}"
     )
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Helper
-# ──────────────────────────────────────────────────────────────────────────────
+    # Rich-text line templates for a log QTextEdit: S.LOG_ERR.format(msg)
+    LOG_ERR = f'<span style="color:{C.LOG_ERR}">{{}}</span>'
+    LOG_OK = f'<span style="color:{C.LOG_OK}">{{}}</span>'
+    LOG_INFO = f'<span style="color:{C.LOG_INFO}">{{}}</span>'
 
 
 def apply_style(widget, style_string: str) -> None:
@@ -317,19 +278,14 @@ def apply_style(widget, style_string: str) -> None:
     widget.setStyleSheet(style_string)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Plot theme
-# ──────────────────────────────────────────────────────────────────────────────
-
-
 class MPL:  # "Plot"
-    """Colour values for figure/axes styling (not Qt stylesheets)."""
+    """Color values for figure/axes styling (not Qt stylesheets)."""
 
     FIG_BG = C.BG_DARK  # figure.facecolor
     AXES_BG = C.BG_MID  # axes.facecolor
-    TICK = C.TEXT  # tick label colour
-    SPINE = C.TEXT_DARK  # axes spine colour
-    GRID = "#333842"  # grid line colour
+    TICK = C.TEXT  # tick label color
+    SPINE = C.TEXT_DARK  # axes spine color
+    GRID = "#3c424e"  # grid line color
 
     # Dragged-range overlay in the trace plot
     SELECTION = C.TITLE

@@ -73,8 +73,7 @@ class AlignmentWizard(QDialog):
 
         self._fix_shift = QCheckBox("Fix shift")
         self._fix_shift.setToolTip(
-            "Hold the shift and derive the stop delay from it, instead of "
-            "editing the stop delay directly"
+            "Hold the shift and derive the stop delay from it"
         )
         shift_row = QHBoxLayout()
         shift_row.setContentsMargins(0, 0, 0, 0)
@@ -104,6 +103,18 @@ class AlignmentWizard(QDialog):
         self._steps_spin.setRange(3, 101)
         self._steps_spin.setSingleStep(2)
         self._steps_spin.setValue(11)
+
+        self._pixels_spin.setToolTip(
+            "Pixels per line of the probe reconstruction"
+        )
+        self._chunk_spin.setToolTip("Records read for the probe")
+        self._skip_spin.setToolTip("Chunks skipped first")
+        self._max_shift_spin.setToolTip(
+            "Optimize searches shifts within ± this range around the current delays"
+        )
+        self._steps_spin.setToolTip(
+            "Number of shifts tested between −max and +max"
+        )
 
         form = QFormLayout()
         form.setContentsMargins(6, 2, 6, 4)
@@ -431,7 +442,7 @@ class AlignmentWizard(QDialog):
 
     @Slot(object)
     def _on_profiles_result(self, result):
-        forward, backward, time_axis = result
+        forward, backward, time_axis, line_duration_s = result
         time_us = np.asarray(time_axis, dtype=float) / US
 
         # Pixel index is a linear relabelling of the same axis, so the second
@@ -451,8 +462,11 @@ class AlignmentWizard(QDialog):
             lambda t: (t - first) / step,
             lambda px: first + px * step,
         )
+
         self._show_profiles(
-            time_us, [(forward, "forward"), (backward, "backward")]
+            time_us,
+            [(forward, "forward"), (backward, "backward")],
+            np.array([line_duration_s / US]),
         )
         self._tabs.setCurrentWidget(self._alignment_plot)
         self._status.info(

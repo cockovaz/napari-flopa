@@ -1,26 +1,3 @@
-"""
-Batch analysis panel.
-
-Reconstructs a directory of .ptu files — or a hand-picked subset of it — with
-a shared ScanConfig + calibration factor and writes any combination of:
-  • FLIM RGB / Intensity / Lifetime  TIFF images
-  • Phasor CSV tables  (per-object or per-pixel)
-  • Decay CSV tables
-
-Each export type has independent aggregation passes: add multiple rows to
-run e.g. "no aggregation" AND "sum-frames + sum-detectors" in one batch.
-
-Labels (optional): integer TIFFs in a separate folder matched by PTU name
-prefix (0 = background).  Multiple label files per PTU are merged into one
-per-file table; 'labels_file' is a column in every row.
-
-Output: written to  <ptu_dir>/batch_<timestamp>/
-Processing: sequential in a QThread — UI stays responsive; Stop aborts
-between files.
-
-Scan config + calibration can be saved/loaded.
-"""
-
 import csv
 import datetime
 import itertools
@@ -33,6 +10,7 @@ from qtpy.QtGui import (
     QDoubleValidator,
     QIntValidator,
     QRegularExpressionValidator,
+    QValidator,
 )
 from qtpy.QtWidgets import (
     QButtonGroup,
@@ -54,9 +32,12 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from tttrkit.analysis.phasor import average_phasor
 
+from napari_flopa.core import provenance
 from napari_flopa.core.io.config import (
-    DEFAULT_LASER_DUTY,
+    MS,
+    SCAN_DEFAULTS,
     US,
     ScanSettings,
     load_config,
@@ -69,6 +50,11 @@ from napari_flopa.core.processing.image_utils import (
     flim_export_info,
     flim_rgb,
 )
+from napari_flopa.core.processing.phasor import (
+    apply_calibration,
+    calibrate_mean_arrival_time,
+    irf_delay_from_calibration,
+)
 from napari_flopa.core.processing.reconstruction import (
     DEFAULT_CHUNK_SIZE,
     MIN_CHUNK_SIZE,
@@ -76,25 +62,47 @@ from napari_flopa.core.processing.reconstruction import (
 from napari_flopa.ui.state import FlopaState
 from napari_flopa.ui.style import S, apply_style
 
-# ── log colour helpers ────────────────────────────────────────────────────
-_ERR = '<span style="color:#ff6060">{}</span>'
-_OK = '<span style="color:#60cc60">{}</span>'
-_INFO = '<span style="color:#aaaaaa">{}</span>'
+
+class _DimValidator(QValidator):
+    """Accepts ``*``, ``a``, or an integer in ``[0, max_index]``."""
+
+    def __init__(self, max_index: int = 0, parent=None):
+        super().__init__(parent)
+        self._max = max(0, max_index)
+
+    def set_max(self, n: int):
+        self._max = max(0, n)
+
+    def validate(self, text: str, pos: int):
+        text = text.strip()
+        if text in ("", "*", "a"):
+            return QValidator.Acceptable, text, pos
+        if not text.isdigit():
+            return QValidator.Invalid, text, pos
+        val = int(text)
+        if val > self._max:
+            return QValidator.Intermediate, text, pos
+        return QValidator.Acceptable, text, pos
 
 
-class _AggRow(QWidget):
-    """
-    One aggregation pass: F / S / D checkboxes plus kind-specific extras.
+class _SpecRow(QWidget):
+    """One export pass with per-dimension spec edits.
 
-    kind='images'  → no extras
-    kind='phasor'  → no extras
-    kind='decay'   → + Norm checkbox
+    Each dimension (F, S, D) has a small text field accepting an integer
+    index (0…N-1), ``*`` (iterate all), or ``a`` (aggregate).
 
-
+    kind='decay' adds a Norm checkbox.
     Emits remove_requested(self) when × is clicked.
     """
 
     remove_requested = Signal(object)
+
+    _DIM_TOOLTIP = (
+        "Integer index, * (all), or a (aggregate)\n"
+        "  index → select that one\n"
+        "  *     → one export per value\n"
+        "  a     → sum across this dimension"
+    )
 
     def __init__(
         self, kind: str = "phasor", removable: bool = True, parent=None
@@ -102,20 +110,30 @@ class _AggRow(QWidget):
         super().__init__(parent)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(2, 1, 2, 1)
-        lay.setSpacing(6)
+        lay.setSpacing(4)
 
-        self.frames_chk = QCheckBox("F")
-        self.frames_chk.setToolTip("Sum all frames")
-        self.seqs_chk = QCheckBox("S")
-        self.seqs_chk.setToolTip("Sum all sequences")
-        self.dets_chk = QCheckBox("D")
-        self.dets_chk.setToolTip("Sum all detectors")
-        for w in (self.frames_chk, self.seqs_chk, self.dets_chk):
-            lay.addWidget(w)
+        self._edits: dict[str, QLineEdit] = {}
+        self._validators: dict[str, _DimValidator] = {}
+        for key, label in (
+            ("frame", "F"),
+            ("sequence", "S"),
+            ("channel", "D"),
+        ):
+            v = _DimValidator(0)
+            e = QLineEdit("*")
+            e.setFixedWidth(28)
+            e.setValidator(v)
+            e.setToolTip(self._DIM_TOOLTIP)
+            e.textChanged.connect(lambda _: self._revalidate())
+            self._edits[key] = e
+            self._validators[key] = v
+            lay.addWidget(e)
+            lbl = QLabel(label)
+            lbl.setStyleSheet("font-weight: normal;")
+            lay.addWidget(lbl)
+            lay.addSpacing(2)
 
-        self.smooth_chk = self.smooth_spin = None
-        self.shift_spin = self.norm_chk = None
-
+        self.norm_chk = None
         if kind == "decay":
             lay.addWidget(_vsep())
             self.norm_chk = QCheckBox("Norm")
@@ -127,23 +145,37 @@ class _AggRow(QWidget):
         lay.addStretch()
         if removable:
             rm = QPushButton("×")
-            rm.setFixedSize(18, 18)
-            rm.setStyleSheet(
-                "QPushButton { color: #888; border: none; font-size: 11px; }"
-            )
+            rm.setStyleSheet("QPushButton { color: #888; border: none; }")
             rm.setToolTip("Remove this pass")
             rm.clicked.connect(lambda: self.remove_requested.emit(self))
             lay.addWidget(rm)
 
+    _STYLE_OK = "font-weight: normal;"
+    _STYLE_ERR = "font-weight: normal; color: #ff4444;"
+
+    def set_dims(self, frames: int, sequences: int, detectors: int):
+        self._validators["frame"].set_max(max(0, frames - 1))
+        self._validators["sequence"].set_max(max(0, sequences - 1))
+        self._validators["channel"].set_max(max(0, detectors - 1))
+        self._revalidate()
+
+    def _revalidate(self):
+        for key, edit in self._edits.items():
+            v = self._validators[key]
+            text = edit.text().strip()
+            if text.isdigit() and int(text) > v._max:
+                edit.setStyleSheet(self._STYLE_ERR)
+                edit.setToolTip(f"Index {text} exceeds max ({v._max})")
+            else:
+                edit.setStyleSheet(self._STYLE_OK)
+                edit.setToolTip(self._DIM_TOOLTIP)
+
     def to_dict(self) -> dict:
-        d = dict(
-            agg_frames=self.frames_chk.isChecked(),
-            agg_seqs=self.seqs_chk.isChecked(),
-            agg_dets=self.dets_chk.isChecked(),
-        )
-        if self.smooth_chk is not None:
-            d["smooth"] = self.smooth_chk.isChecked()
-            d["smooth_kernel"] = self.smooth_spin.value()
+        d = {
+            "spec_frame": self._edits["frame"].text().strip() or "*",
+            "spec_seq": self._edits["sequence"].text().strip() or "*",
+            "spec_det": self._edits["channel"].text().strip() or "*",
+        }
         if self.norm_chk is not None:
             d["norm"] = self.norm_chk.isChecked()
         return d
@@ -193,17 +225,10 @@ def _first_set(typed, derived) -> float:
     return float(derived if typed is None else typed)
 
 
-def _transparent(widget: QWidget, name: str) -> QWidget:
-    """Let the surrounding group box's tint show through a container widget."""
-    widget.setObjectName(name)
-    widget.setStyleSheet(f"QWidget#{name} {{ background: transparent; }}")
-    return widget
-
-
 class _ExportSection(QGroupBox):
     """
     Checkable QGroupBox for one export type.
-    Contains type-specific controls followed by a list of _AggRow passes.
+    Contains type-specific controls followed by a list of _SpecRow passes.
     """
 
     def __init__(self, title: str, kind: str, parent=None):
@@ -212,7 +237,8 @@ class _ExportSection(QGroupBox):
         self.setChecked(False)
         apply_style(self, S.GROUP_PRIMARY)
         self._kind = kind
-        self._rows: list[_AggRow] = []
+        self._rows: list[_SpecRow] = []
+        self._dims = (1, 1, 1)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 4, 8, 6)
@@ -226,7 +252,7 @@ class _ExportSection(QGroupBox):
         lay.addWidget(sep)
 
         hint = QLabel(
-            "Aggregation passes — one export per row  (F=Frames S=Seq D=Det):"
+            "Export passes — per index (0,1,…), all (*), or aggregate (a):"
         )
         hint.setStyleSheet(S.HINT)
         lay.addWidget(hint)
@@ -238,23 +264,28 @@ class _ExportSection(QGroupBox):
         lay.addWidget(self._rows_widget)
 
         add_btn = QPushButton("+")
-        add_btn.setFixedWidth(28)
         add_btn.setToolTip("Add another export pass")
         add_btn.clicked.connect(lambda: self._add_row(removable=True))
-        lay.addWidget(add_btn)
+        lay.addWidget(add_btn, alignment=Qt.AlignLeft)
 
         self._add_row(removable=False)  # default first row (not removable)
 
     def _add_type_widgets(self, lay: QVBoxLayout):
         """Override in subclasses to insert type-specific widgets above agg rows."""
 
+    def set_dims(self, frames: int, sequences: int, detectors: int):
+        self._dims = (frames, sequences, detectors)
+        for row in self._rows:
+            row.set_dims(frames, sequences, detectors)
+
     def _add_row(self, *, removable: bool = True):
-        row = _AggRow(kind=self._kind, removable=removable)
+        row = _SpecRow(kind=self._kind, removable=removable)
+        row.set_dims(*self._dims)
         row.remove_requested.connect(self._remove_row)
         self._rows.append(row)
         self._rows_lay.addWidget(row)
 
-    def _remove_row(self, row: _AggRow):
+    def _remove_row(self, row: _SpecRow):
         if len(self._rows) <= 1:
             return
         self._rows.remove(row)
@@ -278,8 +309,6 @@ class _ImagesSection(_ExportSection):
 
     def __init__(self, parent=None):
         super().__init__("Images", kind="images", parent=parent)
-        # Apply the initial widget states.
-        self._on_mode_toggled(self._sf_radio.isChecked())
         self._on_flim_toggled(self._flim_chk.isChecked())
 
     def _add_type_widgets(self, lay):
@@ -291,11 +320,36 @@ class _ImagesSection(_ExportSection):
         self._flim_chk.setChecked(True)
         self._int_chk.setChecked(True)
         self._lt_chk.setChecked(True)
-        for w in (self._flim_chk, self._int_chk, self._lt_chk):
+        self._flim_chk.setToolTip(
+            "Write <file>_flim.png (lifetime color × intensity brightness)\n"
+            "plus <file>_flim.txt with the colormap and ranges used"
+        )
+        self._int_chk.setToolTip(
+            "Write <file>_intensity.tif - photon counts (float32)"
+        )
+        self._lt_chk.setToolTip(
+            "Write <file>_lifetime.tif - mean arrival time in ns (float32)"
+        )
+        self._lt_corr_chk = QCheckBox("Calibrated")
+        self._lt_corr_chk.setChecked(True)
+        self._lt_corr_chk.setToolTip(
+            "Subtract the IRF delay derived from the calibration factor in the "
+            "config\nfrom lifetime and FLIM RGB images (values below 0 wrap by "
+            "one period).\nNo effect when the factor is 1. Adds '_cal' to the "
+            "file names."
+        )
+        for w in (
+            self._flim_chk,
+            self._int_chk,
+            self._lt_chk,
+            self._lt_corr_chk,
+        ):
             row1.addWidget(w)
             w.setStyleSheet("font-weight: normal;")
         row1.addStretch()
         lay.addLayout(row1)
+        self._lt_chk.toggled.connect(self._update_lt_corr_enabled)
+        self._flim_chk.toggled.connect(self._update_lt_corr_enabled)
 
         # FLIM RGB colormap + contrast
         row2 = QHBoxLayout()
@@ -304,13 +358,12 @@ class _ImagesSection(_ExportSection):
         row2.addWidget(lbl2)
         self._cmap_combo = QComboBox()
         self._cmap_combo.addItems(LIFETIME_COLORMAPS)
-        # self._cmap_combo.setMaximumWidth(90)
         self._cmap_combo.setStyleSheet("font-weight: normal;")
+        self._cmap_combo.setToolTip("Lifetime colormap of the FLIM RGB image")
         row2.addWidget(self._cmap_combo)
         row2.addStretch()
         lay.addLayout(row2)
 
-        # Row 3 — the two LUT ranges, side by side under the colormap.
         row3 = QHBoxLayout()
         row3.setSpacing(3)
         self._lt_lo = QLineEdit()
@@ -324,8 +377,7 @@ class _ImagesSection(_ExportSection):
             e.setValidator(QDoubleValidator(0.0, 9999.0, 4))
             e.setToolTip(
                 f"{which} lifetime for the FLIM RGB LUT\n"
-                "ns when the header carries the TCSPC resolution, raw channels otherwise.\n"
-                f"Empty = auto ({unit} of each exported image)."
+                f"Empty = auto ({unit} of each exported image)",
             )
         for e, which, unit in (
             (self._int_lo, "Minimum", "min"),
@@ -333,8 +385,8 @@ class _ImagesSection(_ExportSection):
         ):
             e.setValidator(QDoubleValidator(0.0, 1e12, 4))
             e.setToolTip(
-                f"{which} photon count scaling the FLIM RGB brightness — "
-                f"empty = auto ({unit} of each exported image)"
+                f"{which} photon count scaling the FLIM RGB brightness\n"
+                f"Empty = auto ({unit} of each exported image)",
             )
         for text, lo, hi in (
             ("Int. range:", self._int_lo, self._int_hi),
@@ -344,7 +396,6 @@ class _ImagesSection(_ExportSection):
             lbl.setStyleSheet(S.MUTED)
             row3.addWidget(lbl)
             for e in (lo, hi):
-                # e.setMaximumWidth(55)
                 e.setPlaceholderText("auto")
             row3.addWidget(lo)
             row3.addWidget(QLabel("–"))
@@ -352,7 +403,6 @@ class _ImagesSection(_ExportSection):
             row3.addSpacing(3)
         row3.addStretch()
         lay.addLayout(row3)
-        # Colormap and both ranges only shape the FLIM RGB composite.
         self._flim_chk.toggled.connect(self._on_flim_toggled)
 
         # Smoothing
@@ -362,55 +412,27 @@ class _ImagesSection(_ExportSection):
         self._sm_int_spin = self._kernel_spin()
         self._sm_lt_chk = QCheckBox("Smooth Lt.")
         self._sm_lt_spin = self._kernel_spin()
+        self._sm_int_chk.setToolTip(
+            "Box-smooth the intensity image (local mean);\n"
+            "adds _smInt<k> to the file names"
+        )
+        self._sm_lt_chk.setToolTip(
+            "Photon-weighted smoothing of the lifetime image;\n"
+            "adds _smLt<k> to the file names"
+        )
         for chk, spin in (
-            (
-                self._sm_int_chk,
-                self._sm_int_spin,
-            ),
-            (
-                self._sm_lt_chk,
-                self._sm_lt_spin,
-            ),
+            (self._sm_int_chk, self._sm_int_spin),
+            (self._sm_lt_chk, self._sm_lt_spin),
         ):
             chk.setStyleSheet("font-weight: normal;")
             spin.setEnabled(False)
+            spin.setToolTip("Smoothing kernel size in px")
             chk.toggled.connect(spin.setEnabled)
             row_sm.addWidget(chk)
             row_sm.addWidget(spin)
             row_sm.addSpacing(24)
         row_sm.addStretch()
         lay.addLayout(row_sm)
-
-        # Export mode: aggregation passes OR single-frame pick
-        row3 = QHBoxLayout()
-        self._mode_grp = QButtonGroup(self)
-        self._all_radio = QRadioButton("Configure sets")
-        self._sf_radio = QRadioButton("Single slice")
-        self._sf_radio.setChecked(True)
-        for r in (self._sf_radio, self._all_radio):
-            self._mode_grp.addButton(r)
-            r.setStyleSheet("font-weight: normal;")
-            row3.addWidget(r)
-        row3.addStretch()
-        lay.addLayout(row3)
-
-        # Single-slice selector; its visibility follows the radio above
-        self._sf_widget = _transparent(QWidget(), "sfRow")
-        sf_lay = QHBoxLayout(self._sf_widget)
-        sf_lay.setContentsMargins(0, 0, 0, 0)
-        sf_lay.setSpacing(4)
-        for txt in ("Frame:", "Seq:", "Det:"):
-            sf_lay.addWidget(QLabel(txt))
-            sp = QSpinBox()
-            sp.setRange(0, 9999)
-            sp.setFixedWidth(52)
-            sp.setStyleSheet("font-weight: normal;")
-            sf_lay.addWidget(sp)
-            setattr(self, f"_sf_{txt[:-1].lower()}", sp)
-        sf_lay.addStretch()
-        lay.addWidget(self._sf_widget)
-
-        self._sf_radio.toggled.connect(self._on_mode_toggled)
 
     @staticmethod
     def _kernel_spin() -> QSpinBox:
@@ -419,21 +441,15 @@ class _ImagesSection(_ExportSection):
         sp.setRange(3, 19)
         sp.setSingleStep(2)
         sp.setValue(3)
-        sp.setFixedWidth(46)
         sp.setStyleSheet("font-weight: normal;")
         return sp
 
-    def set_dims(self, frames: int, sequences: int, detectors: int):
-        """Cap the single-slice pickers at what the scan config declares."""
-        for spin, n in (
-            (self._sf_frame, frames),
-            (self._sf_seq, sequences),
-            (self._sf_det, detectors),
-        ):
-            spin.setMaximum(max(0, int(n) - 1))
+    def _update_lt_corr_enabled(self, *_):
+        self._lt_corr_chk.setEnabled(
+            self._lt_chk.isChecked() or self._flim_chk.isChecked()
+        )
 
     def _on_flim_toggled(self, on: bool):
-        """Colormap and ranges are diasbled unless RGB composite is wanted."""
         for w in (
             self._cmap_combo,
             self._lt_lo,
@@ -443,47 +459,26 @@ class _ImagesSection(_ExportSection):
         ):
             w.setEnabled(on)
 
-    def _on_mode_toggled(self, single: bool):
-        self._sf_widget.setVisible(single)
-        self._rows_widget.setEnabled(not single)
-
-    def get_configs(self) -> list[dict]:
-        if not self.isChecked():
-            return []
-        base = self._type_config()
-        if base.get("single_frame"):
-            return [base]
-        return [{**base, **row.to_dict()} for row in self._rows]
-
     def _type_config(self):
         def _opt(edit) -> float | None:
-            """Typed value, or None meaning 'derive it from the image'."""
             txt = edit.text().strip()
             return float(txt) if txt else None
 
-        cfg = dict(
+        return dict(
             export_flim=self._flim_chk.isChecked(),
             export_int=self._int_chk.isChecked(),
             export_lt=self._lt_chk.isChecked(),
+            lt_corrected=self._lt_corr_chk.isChecked(),
             lt_ns_lo=_opt(self._lt_lo),
             lt_ns_hi=_opt(self._lt_hi),
             int_lo=_opt(self._int_lo),
             int_hi=_opt(self._int_hi),
             cmap=self._cmap_combo.currentText(),
-            # Section-level, so single-slice and every set share them.
             smooth_int=self._sm_int_chk.isChecked(),
             smooth_int_k=self._sm_int_spin.value(),
             smooth_lt=self._sm_lt_chk.isChecked(),
             smooth_lt_k=self._sm_lt_spin.value(),
-            single_frame=self._sf_radio.isChecked(),
         )
-        if self._sf_radio.isChecked():
-            cfg.update(
-                sf_frame=self._sf_frame.value(),
-                sf_seq=self._sf_seq.value(),
-                sf_det=self._sf_det.value(),
-            )
-        return cfg
 
 
 class _PhasorSection(_ExportSection):
@@ -498,6 +493,15 @@ class _PhasorSection(_ExportSection):
         self._obj_radio = QRadioButton("Per object")
         self._px_radio = QRadioButton("Per pixel")
         self._obj_radio.setChecked(True)
+        self._obj_radio.setToolTip(
+            "One row per label (whole image without labels): photon-weighted\n"
+            "mean G, S and mean_arrival_time_ns (IRF-corrected when the\n"
+            "calibration factor ≠ 1), photon_count, area_pixels (label size)\n"
+            "and n_valid_pixels (pixels with photons)"
+        )
+        self._px_radio.setToolTip(
+            "One row per valid pixel (G, S, photon_count, mean_arrival_time_ns)"
+        )
         for r in (self._obj_radio, self._px_radio):
             self._grp.addButton(r)
             r.setStyleSheet("font-weight: normal;")
@@ -518,8 +522,12 @@ class _PhasorSection(_ExportSection):
         self._smooth_spin.setRange(3, 19)
         self._smooth_spin.setSingleStep(2)
         self._smooth_spin.setValue(3)
-        self._smooth_spin.setFixedWidth(46)
         self._smooth_spin.setEnabled(False)
+        self._smooth_spin.setToolTip("Smoothing kernel size in px (odd)")
+        self._smooth_chk.setToolTip(
+            "Photon-weighted smoothing of G and S before averaging;\n"
+            "adds _sm<k> to the agg column"
+        )
         self._smooth_chk.setStyleSheet("font-weight: normal;")
         self._smooth_chk.toggled.connect(self._smooth_spin.setEnabled)
         row2.addWidget(self._smooth_chk)
@@ -540,11 +548,6 @@ class _DecaySection(_ExportSection):
 
     def __init__(self, parent=None):
         super().__init__("Decay table (CSV)", kind="decay", parent=parent)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# _BatchWorker  — runs in QThread
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class _BatchWorker(QObject):
@@ -586,13 +589,13 @@ class _BatchWorker(QObject):
             glob = "**/*.ptu" if p.get("recursive") else "*.ptu"
             ptu_files = sorted(ptu_dir.glob(glob))
         if not ptu_files:
-            self.log.emit(_ERR.format("No .ptu files found."))
+            self.log.emit(S.LOG_ERR.format("No .ptu files found."))
             self.finished.emit("No files processed.")
             return
 
         wanted = _needed_outputs(p)
         self.log.emit(
-            _INFO.format(
+            S.LOG_INFO.format(
                 "Reconstructing: "
                 + (", ".join(wanted) if wanted else "all outputs")
             )
@@ -607,11 +610,11 @@ class _BatchWorker(QObject):
 
         for i, path in enumerate(ptu_files):
             if self._stop:
-                self.log.emit(_INFO.format("Stopped by user."))
+                self.log.emit(S.LOG_INFO.format("Stopped by user."))
                 break
             self.progress.emit(i, len(ptu_files))
             self.log.emit(
-                _INFO.format(f"[{i+1}/{len(ptu_files)}]  {path.name}")
+                S.LOG_INFO.format(f"[{i+1}/{len(ptu_files)}]  {path.name}")
             )
             try:
                 ph_rows, d_time, d_cols = self._process_one(
@@ -623,7 +626,7 @@ class _BatchWorker(QObject):
                         decay_time = d_time
                     elif d_time.size != decay_time.size:
                         self.log.emit(
-                            _ERR.format(
+                            S.LOG_ERR.format(
                                 f"  ! {path.name}: {d_time.size} TCSPC bins vs "
                                 f"{decay_time.size} in the merged table — "
                                 "columns padded/truncated to match"
@@ -635,10 +638,10 @@ class _BatchWorker(QObject):
                         col[: min(n, counts.size)] = counts[:n]
                         decay_merged[f"{path.stem}_{lbl}"] = col
                 n_ok += 1
-                self.log.emit(_OK.format("  ✓"))
+                self.log.emit(S.LOG_OK.format("  ✓"))
             except Exception as exc:
                 n_err += 1
-                self.log.emit(_ERR.format(f"  ✗  {exc}"))
+                self.log.emit(S.LOG_ERR.format(f"  ✗  {exc}"))
                 traceback.print_exc()
 
         self.progress.emit(len(ptu_files), len(ptu_files))
@@ -647,7 +650,7 @@ class _BatchWorker(QObject):
         if p.get("single_table") and phasor_merged and p.get("phasor_configs"):
             _write_csv(out_dir / "phasor_all.csv", phasor_merged)
             self.log.emit(
-                _OK.format(
+                S.LOG_OK.format(
                     f"Merged phasor table: {out_dir / 'phasor_all.csv'}"
                 )
             )
@@ -659,7 +662,7 @@ class _BatchWorker(QObject):
                 out_dir / "decay_all.csv", decay_time, decay_merged
             )
             self.log.emit(
-                _OK.format(
+                S.LOG_OK.format(
                     f"Merged decay table: {out_dir / 'decay_all.csv'} "
                     f"({len(decay_merged)} curves)"
                 )
@@ -668,7 +671,7 @@ class _BatchWorker(QObject):
         summary = (
             f"Done: {n_ok} succeeded, {n_err} failed.  Output → {out_dir}"
         )
-        self.log.emit((_OK if n_err == 0 else _ERR).format(summary))
+        self.log.emit((S.LOG_OK if n_err == 0 else S.LOG_ERR).format(summary))
         self.finished.emit(summary)
 
     def _process_one(
@@ -691,6 +694,7 @@ class _BatchWorker(QObject):
         outputs = _needed_outputs(p)
 
         ptu_data = read_ptu_file(str(ptu_path))
+        self._warn_header_defaults(ptu_path, ptu_data)
         # Marker delays convert to sync counts, so each file is configured
         # with its own repetition rate rather than one rate for the batch.
         scan_config = p["scan_settings"].to_scan_config(
@@ -703,6 +707,14 @@ class _BatchWorker(QObject):
             tcspc_channels_override=p.get("tcspc_bins"),
             chunk_size=p.get("chunk_size") or DEFAULT_CHUNK_SIZE,
         )
+        line_s = ds.attrs.get("line_duration_s")
+        if line_s:
+            self.log.emit(
+                S.LOG_INFO.format(
+                    f"  line duration {line_s / MS:.4f} ms "
+                    f"({ds.attrs.get('line_duration_source', 'measured')})"
+                )
+            )
         constants = dict(ptu_data.get("constants") or {})
         if p.get("tcspc_bins"):
             constants["tcspc_bins"] = p["tcspc_bins"]
@@ -715,17 +727,18 @@ class _BatchWorker(QObject):
         if cal != (1 + 0j) and "phasor_g" in ds and "phasor_s" in ds:
             import xarray as xr
 
-            raw = ds["phasor_g"].values + 1j * ds["phasor_s"].values
-            cal_result = raw * cal
+            g_cal, s_cal = apply_calibration(
+                ds["phasor_g"].values, ds["phasor_s"].values, cal
+            )
             ds = ds.assign(
                 {
                     "phasor_g": xr.DataArray(
-                        cal_result.real,
+                        g_cal,
                         dims=ds["phasor_g"].dims,
                         coords=ds["phasor_g"].coords,
                     ),
                     "phasor_s": xr.DataArray(
-                        cal_result.imag,
+                        s_cal,
                         dims=ds["phasor_s"].dims,
                         coords=ds["phasor_s"].coords,
                     ),
@@ -749,10 +762,10 @@ class _BatchWorker(QObject):
         phasor_file_rows: list[dict] = []
 
         for cfg in p.get("image_configs", []):
-            self._export_images(ds, cfg, stem, out_dir)
+            self._export_images(ds, cfg, stem, out_dir, cal)
 
         for cfg in p.get("phasor_configs", []):
-            rows = self._extract_phasor(ds, cfg, stem, lbl_paths, lbl_dir)
+            rows = self._extract_phasor(ds, cfg, stem, lbl_paths, lbl_dir, cal)
             phasor_file_rows.extend(rows)
 
         if p.get("per_file_table") and phasor_file_rows:
@@ -769,7 +782,9 @@ class _BatchWorker(QObject):
             for lbl, counts in curves.items():
                 if lbl in decay_cols:
                     self.log.emit(
-                        _INFO.format(f"  duplicate decay column {lbl} skipped")
+                        S.LOG_INFO.format(
+                            f"  duplicate decay column {lbl} skipped"
+                        )
                     )
                     continue
                 decay_cols[lbl] = counts
@@ -780,9 +795,40 @@ class _BatchWorker(QObject):
 
         return phasor_file_rows, decay_time, decay_cols
 
+    def _warn_header_defaults(self, ptu_path: Path, ptu_data: dict) -> None:
+        """Log constants the header lacked, which fell back to a default.
+
+        The file is still processed, but its phasor and lifetime rest on a
+        guessed value, so the log should say so.
+        """
+        src = ptu_data.get("constants_source", {})
+        c = ptu_data["constants"]
+        if src.get("tcspc_resolution") == provenance.DEFAULT:
+            self.log.emit(
+                S.LOG_ERR.format(
+                    f"  ! {ptu_path.name}: TCSPC resolution not in header, "
+                    f"default {c['tcspc_resolution'] * 1e9:g} ns used "
+                    "(phasor/lifetime unreliable)"
+                )
+            )
+        if src.get("repetition_rate") == provenance.DEFAULT:
+            self.log.emit(
+                S.LOG_ERR.format(
+                    f"  ! {ptu_path.name}: repetition rate not in header, "
+                    f"default {c['repetition_rate'] / 1e6:g} MHz used "
+                    "(phasor/lifetime unreliable)"
+                )
+            )
+
     # image export
-    def _export_images(self, ds, cfg: dict, stem: str, out_dir: Path):
-        """Write TIFF images for one aggregation config pass."""
+    def _export_images(
+        self, ds, cfg: dict, stem: str, out_dir: Path, cal: complex
+    ):
+        """Write TIFF images for one aggregation config pass.
+
+        With ``lt_corrected`` (default on), lifetimes have the IRF delay from
+        the calibration factor *cal* subtracted, wrapped by one period.
+        """
         from napari_flopa.core.processing.image_utils import (
             aggregate_dataset,
             smooth_count,
@@ -801,25 +847,18 @@ class _BatchWorker(QObject):
         res_ns = float(ip.get("tcspc_resolution_ns", 1.0))
         lt_unit = ip.get("resolution_unit", "ch")
 
-        if cfg.get("single_frame"):
-            _sh = {"frame": "F", "sequence": "S", "channel": "D"}
-            sel = {}
-            for dim, key in (
-                ("frame", "sf_frame"),
-                ("sequence", "sf_seq"),
-                ("channel", "sf_det"),
-            ):
-                if dim in ds.sizes:
-                    sel[dim] = min(cfg.get(key, 0), ds.sizes[dim] - 1)
-            suffix = "_".join(f"{_sh[k]}{v}" for k, v in sel.items())
-            free_combos = [(sel, suffix)]
-            sum_dims = []
-        else:
-            sum_dims, free_combos = _agg_combos(ds, cfg)
+        spec = _read_spec(cfg)
+        sum_dims, free_combos = _spec_combos(ds, spec)
 
         lt_lut = None
         if cfg.get("export_flim") and "mean_arrival_time" in ds:
             lt_lut = colormap_to_lut(cfg.get("cmap", "rainbow"))
+
+        lt_corr = (
+            irf_delay_from_calibration(ds, cal)
+            if cfg.get("lt_corrected", True)
+            else None
+        )
 
         for combo, suffix in free_combos:
             sliced = ds.isel(**combo) if combo else ds
@@ -836,6 +875,7 @@ class _BatchWorker(QObject):
                 else None
             )
 
+            raw_ci = ci
             sm_tag = ""
             if cfg.get("smooth_lt") and cl is not None and ci is not None:
                 k_lt = cfg.get("smooth_lt_k", 3)
@@ -846,30 +886,36 @@ class _BatchWorker(QObject):
                 ci = smooth_count(ci, size=k_int)
                 sm_tag += f"_smInt{k_int}"
 
+            cl_ns = cl.astype(np.float32) * res_ns if cl is not None else None
+            if lt_corr is not None and cl_ns is not None:
+                cl_ns = calibrate_mean_arrival_time(
+                    cl_ns, *lt_corr, counts=raw_ci
+                )
+                sm_tag += "_cal"
+
             pfx = f"{stem}_{suffix}{sm_tag}" if suffix else f"{stem}{sm_tag}"
 
             if cfg.get("export_int") and ci is not None:
-                counts = np.rint(ci).astype(np.uint32)
+                counts = ci.astype(np.float32)
                 imsave(
                     out_dir / f"{pfx}_intensity.tif",
                     counts,
                     check_contrast=False,
                 )
 
-            if cfg.get("export_lt") and cl is not None:
+            if cfg.get("export_lt") and cl_ns is not None:
                 imsave(
                     out_dir / f"{pfx}_lifetime.tif",
-                    (cl * res_ns).astype(np.float32),
+                    cl_ns,
                     check_contrast=False,
                 )
 
             if (
                 cfg.get("export_flim")
                 and ci is not None
-                and cl is not None
+                and cl_ns is not None
                 and lt_lut is not None
             ):
-                cl_ns = cl.astype(np.float32) * res_ns
                 ci_f = ci.astype(np.float32)
                 lt_auto = auto_range(cl_ns)
                 int_auto = auto_range(ci_f)
@@ -893,6 +939,7 @@ class _BatchWorker(QObject):
                         (lt_lo, lt_hi),
                         (int_lo, int_hi),
                         unit=lt_unit,
+                        irf_delay=lt_corr[0] if lt_corr else None,
                     ),
                     encoding="utf-8",
                 )
@@ -900,19 +947,42 @@ class _BatchWorker(QObject):
     # phasor extraction
 
     def _extract_phasor(
-        self, ds, cfg: dict, stem: str, lbl_paths: list, lbl_dir=None
+        self,
+        ds,
+        cfg: dict,
+        stem: str,
+        lbl_paths: list,
+        lbl_dir=None,
+        cal: complex = 1 + 0j,
     ) -> list[dict]:
-        """Extract phasor summary rows for one aggregation config."""
+        """Extract phasor summary rows for one aggregation config.
+
+        ``mean_arrival_time_ns`` follows the G/S calibration: with a factor
+        other than 1 the IRF delay is subtracted. Object means are taken on
+        the raw lifetime and corrected once, as in the Phasor tab.
+        """
         if "phasor_g" not in ds or "phasor_s" not in ds:
             return []
         from napari_flopa.core.processing.image_utils import aggregate_dataset
 
         per_pixel = cfg.get("per_pixel", False)
         rows: list[dict] = []
-        sum_dims, free_combos = _agg_combos(ds, cfg)
+        spec = _read_spec(cfg)
+        sum_dims, free_combos = _spec_combos(ds, spec)
 
         smooth = cfg.get("smooth", False)
         smooth_k = cfg.get("smooth_kernel", 3)
+
+        ip = ds.attrs.get("instrument_params", {})
+        res_ns = float(ip.get("tcspc_resolution_ns", 1.0))
+        lt_corr = irf_delay_from_calibration(ds, cal)
+
+        def _cal_tau(value: float) -> float:
+            if lt_corr is None or not np.isfinite(value):
+                return value
+            return float(
+                calibrate_mean_arrival_time(np.asarray(value), *lt_corr)
+            )
 
         for combo, agg_label in free_combos:
             sliced = ds.isel(**combo) if combo else ds
@@ -923,6 +993,12 @@ class _BatchWorker(QObject):
             pc2d = (
                 agg["photon_count"].values.squeeze()
                 if "photon_count" in agg
+                else None
+            )
+            lt2d = (
+                agg["mean_arrival_time"].values.squeeze().astype(np.float64)
+                * res_ns
+                if "mean_arrival_time" in agg
                 else None
             )
 
@@ -938,7 +1014,7 @@ class _BatchWorker(QObject):
                 smooth_k, smoothed = k, True
             elif smooth:
                 self.log.emit(
-                    _ERR.format(
+                    S.LOG_ERR.format(
                         "  ! smoothing skipped — needs photon_count as weights"
                     )
                 )
@@ -954,7 +1030,8 @@ class _BatchWorker(QObject):
                         from skimage.io import imread
 
                         lbl_arr = imread(str(lbl_path)).astype(np.int32)
-                        # ("mask1.tif" vs "sub/mask1.tif").
+                        # The relative path keeps same-named masks in
+                        # sub-folders apart ("mask1.tif" vs "sub/mask1.tif").
                         lbl_name = (
                             lbl_path.relative_to(lbl_dir).as_posix()
                             if lbl_dir is not None
@@ -992,7 +1069,16 @@ class _BatchWorker(QObject):
                         continue
 
                     if per_pixel:
-                        for gi, si, pci in zip(g_m, s_m, pc_m, strict=True):
+                        lt_m = (
+                            lt2d[valid]
+                            if lt2d is not None
+                            else np.full(g_m.size, np.nan)
+                        )
+                        if lt_corr is not None:
+                            lt_m = calibrate_mean_arrival_time(lt_m, *lt_corr)
+                        for gi, si, pci, lti in zip(
+                            g_m, s_m, pc_m, lt_m, strict=True
+                        ):
                             rows.append(
                                 dict(
                                     ptu_file=stem,
@@ -1002,21 +1088,37 @@ class _BatchWorker(QObject):
                                     g=float(gi),
                                     s=float(si),
                                     photon_count=float(pci),
+                                    mean_arrival_time_ns=float(lti),
                                 )
                             )
                     else:
-                        w = pc_m
-                        ws = w.sum() or 1.0
+                        weights = (
+                            pc2d if pc2d is not None else np.ones(g2d.shape)
+                        )
+                        avg = average_phasor(
+                            g2d + 1j * s2d, weights, mask=mask
+                        )
+                        tau = (
+                            _cal_tau(
+                                float(
+                                    average_phasor(lt2d, weights, mask=valid)
+                                )
+                            )
+                            if lt2d is not None
+                            else float("nan")
+                        )
                         rows.append(
                             dict(
                                 ptu_file=stem,
                                 labels_file=lbl_name,
                                 agg=agg_label_full,
                                 label_id=int(lid),
-                                g=float((g_m * w).sum() / ws),
-                                s=float((s_m * w).sum() / ws),
-                                photon_count=float(ws),
-                                area_pixels=int(valid.sum()),
+                                g=float(avg.real),
+                                s=float(avg.imag),
+                                mean_arrival_time_ns=tau,
+                                photon_count=float(pc_m.sum()),
+                                area_pixels=int(mask.sum()),
+                                n_valid_pixels=int(valid.sum()),
                             )
                         )
         return rows
@@ -1026,10 +1128,10 @@ class _BatchWorker(QObject):
     def _extract_decay(
         self, ds, cfg: dict
     ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
-        """Curves for one aggregation set, as ``(time_ns, {label: counts})``.
+        """Curves for one spec set, as ``(time_ns, {label: counts})``.
 
-        Every label names all three dimensions the dataset has, with ``∑`` for
-        the aggregated ones — ``F0S0D1``, ``F∑S0D0`` — so columns from
+        Every label names all three dimensions the dataset has, with ``a`` for
+        the aggregated ones — ``F0S0D1``, ``FaS0D0`` — so columns from
         different sets stay distinguishable when merged into one table.
         Normalisation is per set, applied to each curve's own peak.
         """
@@ -1037,21 +1139,13 @@ class _BatchWorker(QObject):
             return np.empty(0), {}
         da = ds["tcspc_histogram"]
 
-        _short = {"frame": "F", "sequence": "S", "channel": "D"}
-        agg_keys = {
-            "frame": "agg_frames",
-            "sequence": "agg_seqs",
-            "channel": "agg_dets",
-        }
-
+        spec = _read_spec(cfg)
         present = [d for d in ("frame", "sequence", "channel") if d in da.dims]
-        summed = [d for d in present if cfg.get(agg_keys[d])]
+        summed = [d for d in present if spec.get(d) == "a"]
         for dim in summed:
             da = da.sum(dim)
         free_dims = [d for d in present if d not in summed]
 
-        # tttrkit carries the time axis as a coordinate in seconds, which
-        # already accounts for any TCSPC bin factor.
         time_ns = np.asarray(da["tcspc_time"].values, dtype=float) * 1e9
         norm = cfg.get("norm", False)
 
@@ -1059,19 +1153,29 @@ class _BatchWorker(QObject):
             parts = []
             for d in present:
                 parts.append(
-                    f"{_short[d]}∑" if d in summed else f"{_short[d]}{sel[d]}"
+                    f"{_SHORT[d]}a" if d in summed else f"{_SHORT[d]}{sel[d]}"
                 )
-            return "".join(parts)
+            tag = "".join(parts)
+            if norm:
+                tag += "_norm"
+            return tag
+
+        free_ranges: dict[str, list[int]] = {}
+        for d in free_dims:
+            val = spec.get(d, "*")
+            if val == "*":
+                free_ranges[d] = list(range(da.sizes[d]))
+            else:
+                idx = min(int(val), da.sizes[d] - 1)
+                free_ranges[d] = [max(0, idx)]
 
         curves: dict[str, np.ndarray] = {}
         combos = (
             [{}]
-            if not free_dims
+            if not free_ranges
             else [
-                dict(zip(free_dims, vals, strict=True))
-                for vals in itertools.product(
-                    *[range(da.sizes[d]) for d in free_dims]
-                )
+                dict(zip(free_ranges.keys(), vals, strict=True))
+                for vals in itertools.product(*free_ranges.values())
             ]
         )
         for sel in combos:
@@ -1085,41 +1189,59 @@ class _BatchWorker(QObject):
 # Helpers
 
 
-def _agg_combos(ds, cfg: dict) -> tuple[list[str], list[tuple[dict, str]]]:
+_SHORT = {"frame": "F", "sequence": "S", "channel": "D"}
+
+_SPEC_DIMS = (
+    ("frame", "F"),
+    ("sequence", "S"),
+    ("channel", "D"),
+)
+
+
+def _read_spec(cfg: dict) -> dict[str, str]:
+    """Extract per-dimension spec from a config dict.
+
+    Keys ``spec_frame``, ``spec_seq``, ``spec_det`` map to the xarray dimension
+    names.  Missing keys default to ``"*"`` (iterate all).
     """
-    Return (sum_dims, free_combos) where free_combos is a list of
-    (sel_dict, label_suffix) for every combination of non-aggregated dims.
+    return {
+        "frame": cfg.get("spec_frame", "*") or "*",
+        "sequence": cfg.get("spec_seq", "*") or "*",
+        "channel": cfg.get("spec_det", "*") or "*",
+    }
+
+
+def _spec_combos(ds, spec: dict) -> tuple[list[str], list[tuple[dict, str]]]:
+    """Expand a parsed spec into ``(sum_dims, free_combos)``.
+
+    Each free_combo is ``(sel_dict, suffix_str)`` for one output.
     """
     sum_dims: list[str] = []
     free: dict[str, list[int]] = {}
-    for dim, key in (
-        ("frame", "agg_frames"),
-        ("sequence", "agg_seqs"),
-        ("channel", "agg_dets"),
-    ):
+
+    for dim, _short in _SPEC_DIMS:
         if dim not in ds.sizes:
             continue
-        if cfg.get(key):
+        val = spec.get(dim, "*")
+        if val == "a":
             sum_dims.append(dim)
-        else:
+        elif val == "*":
             free[dim] = list(range(ds.sizes[dim]))
+        else:
+            idx = min(int(val), ds.sizes[dim] - 1)
+            free[dim] = [max(0, idx)]
 
-    _short = {"frame": "F", "sequence": "S", "channel": "D"}
     if not free:
-        suffix = (
-            ("Sum" + "".join(d[0].upper() for d in sum_dims))
-            if sum_dims
-            else ""
-        )
-        return sum_dims, [({}, suffix)]
+        agg_tag = "".join(f"{_SHORT[d]}a" for d in sum_dims)
+        return sum_dims, [({}, agg_tag or "all")]
 
     combos = []
     for vals in itertools.product(*free.values()):
         sel = dict(zip(free.keys(), vals, strict=True))
-        suffix = "_".join(f"{_short.get(k,'?')}{v}" for k, v in sel.items())
+        parts = [f"{_SHORT[k]}{v}" for k, v in sel.items()]
         if sum_dims:
-            suffix += "_Sum" + "".join(d[0].upper() for d in sum_dims)
-        combos.append((sel, suffix))
+            parts.extend(f"{_SHORT[d]}a" for d in sum_dims)
+        combos.append((sel, "_".join(parts)))
     return sum_dims, combos
 
 
@@ -1166,15 +1288,20 @@ def _write_decay_csv(
 
 class BatchPanel(QWidget):
     """
-    Tab 3 — Batch analysis.
+    Batch tab - batch analysis.
 
-    All .ptu files in a chosen directory are reconstructed with a shared
-    ScanConfig + calibration factor.  Enabled export sections run for every
-    file; each section supports multiple aggregation passes (one CSV/TIFF set
-    per pass per file).
+    The .ptu files of a directory (or a hand-picked subset) are reconstructed
+    with a shared ScanConfig + calibration factor, writing any combination of
+    FLIM RGB PNGs, intensity / lifetime TIFFs, phasor CSVs (per object or per
+    pixel) and decay CSVs. Each export section takes several aggregation
+    passes (one CSV/TIFF set per pass per file).
 
-    Scan config + calibration are saved/loaded as JSON.
-    Processing runs in a QThread; UI stays responsive.
+    Labels (optional): integer TIFFs in a separate folder matched by PTU name
+    prefix (0 = background). Several label files per PTU are merged into one
+    per-file table, with ``labels_file`` as a column.
+
+    Output goes to ``<ptu_dir>/batch_<timestamp>/``. Files are processed one
+    by one in a QThread, Stop aborts between files.
     """
 
     def __init__(self, state: FlopaState, viewer, parent=None):
@@ -1203,7 +1330,6 @@ class BatchPanel(QWidget):
         scroll.setWidget(inner)
         root.addWidget(scroll, stretch=1)
 
-        # ── 1. Directories ─────────────────────────────────────────────
         dir_box = QGroupBox("Directories")
         apply_style(dir_box, S.GROUP_PRIMARY)
         dir_box.setStyleSheet(S.GROUP_PRIMARY)
@@ -1231,32 +1357,35 @@ class BatchPanel(QWidget):
         lbl_row = QHBoxLayout()
         lbl_row.setSpacing(6)
         lb = QPushButton("…")
-        lb.setFixedWidth(28)
+        lb.setToolTip("Choose the folder with label TIFFs")
         lb.clicked.connect(self._browse_lbl)
         lbl_row.addWidget(lb)
         self._lbl_edit = QLineEdit()
         # self._lbl_edit.setMaximumWidth(260)
         self._lbl_edit.setPlaceholderText("Optional — labels…")
         self._lbl_edit.setToolTip(
-            "Optional — TIFF integer label files matched by PTU name prefix"
+            "Optional - TIFF label files matched by PTU name prefix"
         )
         lbl_row.addWidget(self._lbl_edit)
 
         # lbl_row.addStretch()
         dg.addLayout(lbl_row, 1, 1)
         self._recursive_chk = QCheckBox("Include sub-folders")
+        # Also applies to picked files: their label TIFFs can sit in
+        # sub-folders of the labels folder.
+        self._recursive_chk.setToolTip(
+            "Also search sub-folders for label TIFFs\n"
+        )
         self._recursive_chk.toggled.connect(self._update_input_label)
         dg.addWidget(self._recursive_chk, 2, 1)
         ilay.addWidget(dir_box)
 
-        # ── 2. Scan config + calibration ───────────────────────────────
         cfg_box = QGroupBox("Scan configuration && Calibration")
         apply_style(cfg_box, S.GROUP_PRIMARY)
         cfg_vlay = QVBoxLayout(cfg_box)
         cfg_vlay.setSpacing(10)
         cfg_vlay.setContentsMargins(6, 4, 6, 6)
 
-        # ── fields ──────────────────────────────────────────────────
         cg = QGridLayout()
         cg.setSpacing(3)
         cg.setContentsMargins(0, 2, 0, 2)
@@ -1277,15 +1406,13 @@ class BatchPanel(QWidget):
         # self._c_accu.setMaximumWidth(110)
         self._c_accu.setValidator(
             QRegularExpressionValidator(
-                QRegularExpression(r"\d+(\s*,\s*\d+)*")
+                QRegularExpression(r"[1-9]\d*(\s*,\s*[1-9]\d*)*")
             )
         )
         self._c_accu.setToolTip(
             "Number of line accumulations per sequence.\n"
             "• Single integer → same value for every sequence, e.g. 1\n"
-            "• Comma-separated list → one value per sequence (count must\n"
-            "  match N seqs), e.g. for 3 sequences: 1,3,3\n"
-            "Error is raised at run time if count mismatches N seqs."
+            "• Comma-separated list → one value per sequence, e.g. 1,3,3"
         )
 
         for col, (lbl, w) in enumerate(
@@ -1346,11 +1473,8 @@ class BatchPanel(QWidget):
         self._c_harmonic = QCheckBox("Harmonic")
         self._c_harmonic.setStyleSheet("font-weight: normal;")
         self._c_harmonic.setToolTip("Enable harmonic (resonant) scan handling")
-        self._c_laser_duty = QLineEdit(str(DEFAULT_LASER_DUTY))
+        self._c_laser_duty = QLineEdit(str(SCAN_DEFAULTS.laser_duty))
         self._c_laser_duty.setValidator(QDoubleValidator(0.0, 1.0, 4))
-        self._c_laser_duty.setToolTip(
-            "Fraction of the line period the laser is on"
-        )
         duty_lbl = QLabel("Laser duty:")
         duty_lbl.setStyleSheet("font-weight: normal;")
         _follow_checkbox(self._c_harmonic, duty_lbl, self._c_laser_duty)
@@ -1389,12 +1513,21 @@ class BatchPanel(QWidget):
         cg.addWidget(QLabel("Calibration:"), 2, 2)
         cg.addWidget(self._cal_factor, 2, 3, 1, 3)
 
+        self._c_line_duration = QLineEdit()
+        self._c_line_duration.setPlaceholderText("auto")
+        self._c_line_duration.setValidator(QDoubleValidator(0.0, 10_000.0, 4))
+        self._c_line_duration.setToolTip(
+            "How long one scan line lasts, in ms. Left empty (auto) it is "
+            "measured from the markers during reconstruction."
+        )
+
         cg.addWidget(QLabel("Chunk size:"), 5, 0)
         cg.addWidget(self._c_chunk, 5, 1, 1, 3)
+        cg.addWidget(QLabel("Line dur. (ms):"), 5, 4)
+        cg.addWidget(self._c_line_duration, 5, 5)
 
         cfg_vlay.addLayout(cg)
 
-        # ── action buttons, in a row under the fields ────────────────
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
 
@@ -1409,7 +1542,7 @@ class BatchPanel(QWidget):
 
         self._load_scan_btn = QPushButton("↓ Scan cfg")
         self._load_scan_btn.setToolTip(
-            "Copy the scan config currently set in the File tab"
+            "Copy the scan config and chunk size currently set in the File tab"
         )
         self._load_cal_btn = QPushButton("↓ Calibration")
         self._load_cal_btn.setToolTip(
@@ -1423,6 +1556,12 @@ class BatchPanel(QWidget):
 
         self._load_cfg_btn = QPushButton("Load cfg...")
         self._save_cfg_btn = QPushButton("Save cfg...")
+        self._load_cfg_btn.setToolTip(
+            "Load scan config + calibration factor from a JSON file"
+        )
+        self._save_cfg_btn.setToolTip(
+            "Save scan config + calibration factor to a JSON file"
+        )
         for b in (self._load_cfg_btn, self._save_cfg_btn):
             btn_row.addWidget(b)
 
@@ -1430,14 +1569,12 @@ class BatchPanel(QWidget):
         cfg_vlay.addLayout(btn_row)
         ilay.addWidget(cfg_box)
 
-        # ── 3. Export sections ─────────────────────────────────────────
         self._images_sec = _ImagesSection()
         self._phasor_sec = _PhasorSection()
         self._decay_sec = _DecaySection()
         for sec in (self._images_sec, self._phasor_sec, self._decay_sec):
             ilay.addWidget(sec)
 
-        # ── 4. Output options ──────────────────────────────────────────
         out_box = QGroupBox("Output options")
         apply_style(out_box, S.GROUP_PRIMARY)
         out_box.setStyleSheet(S.GROUP_PRIMARY)
@@ -1447,6 +1584,13 @@ class BatchPanel(QWidget):
         self._per_file_chk = QCheckBox("Per file table")
         self._single_tbl_chk = QCheckBox("Single merged table")
         self._per_file_chk.setChecked(True)
+        self._per_file_chk.setToolTip(
+            "Write <file>_phasor.csv and <file>_decay.csv for every .ptu"
+        )
+        self._single_tbl_chk.setToolTip(
+            "Write phasor_all.csv (rows of every file stacked) and\n"
+            "decay_all.csv (one column per file × curve)"
+        )
         tr.addWidget(self._per_file_chk)
         tr.addWidget(self._single_tbl_chk)
         tr.addStretch()
@@ -1460,7 +1604,6 @@ class BatchPanel(QWidget):
 
         ilay.addStretch()
 
-        # ── 5. Run controls ────────────────────────────────────────────
         run_box = QGroupBox()
         apply_style(run_box, S.GROUP_PLAIN)
         run_row = QHBoxLayout(run_box)
@@ -1474,6 +1617,10 @@ class BatchPanel(QWidget):
         self._stop_btn = QPushButton("Stop")
         self._stop_btn.setEnabled(False)
         self._stop_btn.setStyleSheet(S.BTN_STOP)
+        self._run_btn.setToolTip(
+            "Process every selected .ptu into batch_<timestamp>/"
+        )
+        self._stop_btn.setToolTip("Stop after the current file finishes")
         run_row.addWidget(self._run_btn, 1)
         run_row.addSpacing(10)
         run_row.addWidget(self._stop_btn, 1)
@@ -1502,14 +1649,12 @@ class BatchPanel(QWidget):
         self.state.file_loaded.connect(self._update_copy_enabled)
         self.state.dataset_changed.connect(self._on_dataset_changed)
         for edit in (self._c_frames, self._c_seqs, self._c_maxdet):
-            edit.textChanged.connect(self._sync_slice_limits)
-        self._sync_slice_limits()
+            edit.textChanged.connect(self._sync_dim_limits)
+        self._sync_dim_limits()
         self._update_input_label()
 
-    # ── directory pickers ────────────────────────────────────────────────
-
-    def _sync_slice_limits(self):
-        """Push the scan config's extents into the single-slice pickers."""
+    def _sync_dim_limits(self):
+        """Push scan config extents into the spec row validators."""
 
         def _n(edit, default: int) -> int:
             try:
@@ -1517,11 +1662,13 @@ class BatchPanel(QWidget):
             except ValueError:
                 return default
 
-        self._images_sec.set_dims(
+        f, s, d = (
             _n(self._c_frames, 1),
             _n(self._c_seqs, 1),
             _n(self._c_maxdet, 1),
         )
+        for sec in (self._images_sec, self._phasor_sec, self._decay_sec):
+            sec.set_dims(f, s, d)
 
     def _browse_ptu(self):
         """Pick a folder — every .ptu inside it is processed."""
@@ -1574,15 +1721,12 @@ class BatchPanel(QWidget):
         else:
             self._input_lbl.setText("Nothing selected")
             self._input_lbl.setToolTip("")
-        self._recursive_chk.setEnabled(not self._selected_files)
         self._update_populate_enabled()
 
     def _browse_lbl(self):
         d = QFileDialog.getExistingDirectory(self, "Select Labels folder")
         if d:
             self._lbl_edit.setText(d)
-
-    # ── Config JSON ──────────────────────────────────────────────────────
 
     def _accum_list(self, n_seqs: int, *, strict: bool) -> list[int]:
         """Parse Accum/seq into one int per sequence.
@@ -1625,22 +1769,25 @@ class BatchPanel(QWidget):
             except ValueError:
                 return default
 
+        d = SCAN_DEFAULTS
         n_seqs = _num(self._c_seqs, int, 1)
+        line_ms = _num(self._c_line_duration, float, 0.0)
         return ScanSettings(
-            frames=_num(self._c_frames, int, 1),
-            lines=_num(self._c_lines, int, 256),
-            pixels=_num(self._c_pixels, int, 256),
+            frames=_num(self._c_frames, int, d.frames),
+            lines=_num(self._c_lines, int, d.lines),
+            pixels=_num(self._c_pixels, int, d.pixels),
             accumulations=tuple(self._accum_list(n_seqs, strict=strict)),
-            max_detector=_num(self._c_maxdet, int, 4),
+            max_detector=_num(self._c_maxdet, int, d.max_detector),
             bidirectional=self._c_bidir.isChecked(),
             harmonic_scan=self._c_harmonic.isChecked(),
-            laser_duty=_num(self._c_laser_duty, float, DEFAULT_LASER_DUTY),
+            laser_duty=_num(self._c_laser_duty, float, d.laser_duty),
             line_start_marker_delay=(
                 _num(self._c_line_start_delay, float, 0.0) * US
             ),
             line_stop_marker_delay=(
                 _num(self._c_line_stop_delay, float, 0.0) * US
             ),
+            line_duration=line_ms * MS if line_ms > 0 else None,
             tcspc_bins=_num(self._c_tcspc, int, 4096),
             calib_factor=self._cal_factor.text().strip() or "1+0j",
         )
@@ -1654,52 +1801,64 @@ class BatchPanel(QWidget):
         """
         return self.current_settings().to_json_dict()
 
-    def _apply_dict(self, cfg: dict):
+    def _apply_dict(self, cfg: dict, *, with_calibration: bool = True):
         """Push a config dict back into the UI.
 
-        Reads the core schema (``accumulations``: list of ints, one per
-        sequence) and still accepts the legacy batch-only ``accum_per_seq``
-        string from configs saved by earlier versions of this panel.
+        Keys the config lacks fall back to ``SCAN_DEFAULTS`` (the TCSPC bin
+        count, which comes from the files, is kept). Reads the core schema
+        (``accumulations``: list of ints, one per sequence) and still accepts
+        the legacy batch-only ``accum_per_seq`` string. Without
+        *with_calibration* the factor field is left alone.
         """
         s = cfg.get("scan", {})
+        d = SCAN_DEFAULTS
+
+        def _get(key, default):
+            value = s.get(key)
+            return default if value is None else value
+
         for key, edit in (
             ("frames", self._c_frames),
             ("lines", self._c_lines),
             ("pixels", self._c_pixels),
             ("max_detector", self._c_maxdet),
-            ("tcspc_bins", self._c_tcspc),
         ):
-            if s.get(key):
-                edit.setText(str(int(s[key])))
+            edit.setText(str(int(_get(key, getattr(d, key)))))
+        if s.get("tcspc_bins"):
+            self._c_tcspc.setText(str(int(s["tcspc_bins"])))
 
         accum = s.get("accumulations", s.get("accum_per_seq"))
         seqs = s.get("sequences")
-        if isinstance(accum, (list, tuple)):
-            if seqs is None:
-                seqs = len(accum)
+        if isinstance(accum, (list, tuple)) and accum:
             self._c_accu.setText(",".join(str(int(a)) for a in accum))
-        elif accum is not None:
+            seqs = len(accum) if seqs is None else seqs
+        elif accum:
             self._c_accu.setText(str(accum))
-        if seqs is not None:
-            self._c_seqs.setText(str(seqs))
+        else:
+            self._c_accu.setText(
+                ",".join(str(a) for a in d.accumulations * int(seqs or 1))
+            )
+        self._c_seqs.setText(str(int(seqs or len(d.accumulations))))
 
-        if "bidirectional" in s:
-            self._c_bidir.setChecked(bool(s["bidirectional"]))
-        if "harmonic_scan" in s:
-            self._c_harmonic.setChecked(bool(s["harmonic_scan"]))
-        if "laser_duty" in s:
-            self._c_laser_duty.setText(str(s["laser_duty"]))
-
+        self._c_bidir.setChecked(bool(_get("bidirectional", d.bidirectional)))
+        self._c_harmonic.setChecked(
+            bool(_get("harmonic_scan", d.harmonic_scan))
+        )
+        self._c_laser_duty.setText(str(_get("laser_duty", d.laser_duty)))
         for key, edit in (
             ("line_start_marker_delay", self._c_line_start_delay),
             ("line_stop_marker_delay", self._c_line_stop_delay),
         ):
-            if key in s:
-                edit.setText(f"{float(s[key]) / US:.3f}")
+            edit.setText(f"{float(_get(key, getattr(d, key))) / US:.3f}")
+        # Absent means auto, so a config without it clears the field.
+        line_s = s.get("line_duration")
+        self._c_line_duration.setText(
+            f"{float(line_s) / MS:.4f}" if line_s else ""
+        )
 
-        c = cfg.get("calibration") or {}
-        if c.get("factor"):
-            self._cal_factor.setText(str(c["factor"]))
+        if with_calibration:
+            factor = (cfg.get("calibration") or {}).get("factor")
+            self._cal_factor.setText(str(factor) if factor else "1+0j")
 
     def _on_load_json(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1724,8 +1883,6 @@ class BatchPanel(QWidget):
             self._log_line(f"Saved: {Path(path).name}")
         except Exception as e:
             self._log_line(f"Save error: {e}", error=True)
-
-    # ── run ──────────────────────────────────────────────────────────────
 
     def _cal_complex(self) -> complex:
         """Parse the calibration factor field."""
@@ -1817,8 +1974,6 @@ class BatchPanel(QWidget):
         self._progress.setRange(0, 1)
         self._progress.setValue(1)
 
-    # ── load-from-current helpers ────────────────────────────────────────
-
     def _update_copy_enabled(self):
         """The ↓ buttons copy the File tab's fields — useless before a load."""
         available = self.state.file_config() is not None
@@ -1905,18 +2060,21 @@ class BatchPanel(QWidget):
                 "Load a PTU file in the File tab first.", error=True
             )
             return
-        self._apply_dict({"scan": cfg.get("scan", {})})
-        self._log_line("Scan config copied from the File tab.")
+        self._apply_dict({"scan": cfg.get("scan", {})}, with_calibration=False)
+        # With an auto line duration, tttrkit measures it from the first
+        # chunk, so the chunk size has to match for identical results.
+        chunk = self.state.file_runtime().get("chunk_size")
+        if chunk:
+            self._c_chunk.setValue(int(chunk))
+        self._log_line("Scan config and chunk size copied from the File tab.")
 
     def _on_load_calibration(self):
         """Copy the calibration factor set in the Phasor tab."""
-        factor = self.state.calib_factor
-        self._cal_factor.setText(
-            f"{factor.real:.6g}+{factor.imag:.6g}j"
-            if factor.imag >= 0
-            else f"{factor.real:.6g}{factor.imag:.6g}j"
-        )
+        factor = complex(self.state.calib_factor)
+        # Full precision (repr), so Batch uses exactly the Phasor tab factor.
+        sign = "+" if factor.imag >= 0 else "-"
+        self._cal_factor.setText(f"{factor.real!r}{sign}{abs(factor.imag)!r}j")
         self._log_line(f"Calibration copied: factor {factor}")
 
     def _log_line(self, msg: str, *, error: bool = False):
-        self._log.appendHtml((_ERR if error else _INFO).format(msg))
+        self._log.appendHtml((S.LOG_ERR if error else S.LOG_INFO).format(msg))

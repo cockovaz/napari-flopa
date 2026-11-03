@@ -1,18 +1,43 @@
+from collections.abc import Sequence
+
 import numpy as np
 import xarray as xr
 from numpy.typing import NDArray
 from scipy.signal import convolve2d
+from scipy.signal.windows import gaussian
+
+#: Smoothing kernel shapes accepted by smooth_weighted / smooth_count.
+SMOOTH_KERNELS = ("box", "gaussian")
+
+
+def smoothing_kernel(size: int, kind: str = "box") -> NDArray[np.float32]:
+    """Square 2-D kernel of side *size* (made odd), peak value 1.
+
+    ``"box"`` is all ones. ``"gaussian"`` has sigma = (size - 1) / 6, so the
+    window is cut at 3 sigma (size 7 gives sigma 1). The scale does not
+    matter to the callers, which divide by the same kernel's weight sum.
+    """
+    if size % 2 == 0:  # even kernel has no centre → mode="same" shifts by ½px
+        size += 1
+    if kind == "box":
+        return np.ones((size, size), dtype=np.float32)
+    if kind == "gaussian":
+        g = gaussian(size, std=max((size - 1) / 6, 1e-6))
+        return np.outer(g, g).astype(np.float32)
+    raise ValueError(f"kernel must be one of {SMOOTH_KERNELS}, not {kind!r}")
 
 
 def smooth_weighted(
     array: NDArray[np.floating],
     count: NDArray[np.integer],
     size: int = 3,
+    kernel: str = "box",
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
     """
-    Apply photon-weighted box smoothing to a real-valued 2-D scalar field.
+    Apply photon-weighted smoothing to a real-valued 2-D scalar field.
 
-    Smooths `array` using a uniform square kernel of side `size`, weighting
+    Smooths `array` with a square kernel of side `size` (`kernel` is "box" or
+    "gaussian", see :func:`smoothing_kernel`), weighting
     each pixel by `count`.  Invalid entries (NaN, Inf, or zero/negative count)
     are excluded from both numerator and denominator so they do not bleed into
     neighbouring pixels.  Output pixels with no valid kernel contribution are
@@ -32,29 +57,29 @@ def smooth_weighted(
     ), "array and count must have the same shape"
     if not (isinstance(size, int) and size > 0):
         raise ValueError("kernel size must be a positive integer")
-    if size % 2 == 0:  # even kernel has no centre → mode="same" shifts by ½px
-        size += 1
-    kernel = np.ones((size, size), dtype=np.float32)
+    k = smoothing_kernel(size, kernel)
     valid = np.isfinite(array) & (count > 0)
     num = convolve2d(
         np.where(valid, array * count, 0).astype(np.float32),
-        kernel,
+        k,
         mode="same",
     )
     den = convolve2d(
-        np.where(valid, count, 0).astype(np.float32), kernel, mode="same"
+        np.where(valid, count, 0).astype(np.float32), k, mode="same"
     )
     out = np.full_like(array, np.nan, dtype=np.float32)
     mask = den > 0
     out[mask] = num[mask] / den[mask]
-    return out, np.asarray(den, dtype=np.uint32)
+    return out, np.rint(den).astype(np.uint32)
 
 
 def smooth_count(
-    count: NDArray[np.integer], size: int = 3
+    count: NDArray[np.integer], size: int = 3, kernel: str = "box"
 ) -> NDArray[np.float32]:
     """
-    Edge-corrected box-*mean* smoothing of a photon-count array.
+    Edge-corrected *mean* smoothing of a photon-count array.
+
+    `kernel` is "box" or "gaussian" (see :func:`smoothing_kernel`).
 
     Each window is normalised by the number of in-bounds pixels, so border
     pixels are NOT darkened by zero-padding — the same den-normalisation that
@@ -64,15 +89,22 @@ def smooth_count(
     count = np.asarray(count, dtype=np.float32)
     if count.ndim != 2:
         raise ValueError("count must be a 2D array")
-    if size % 2 == 0:  # keep the kernel centred (odd); even shifts by ½px
-        size += 1
-    kernel = np.ones((size, size), dtype=np.float32)
-    total = convolve2d(count, kernel, mode="same")
-    norm = convolve2d(np.ones_like(count), kernel, mode="same")
+    k = smoothing_kernel(size, kernel)
+    total = convolve2d(count, k, mode="same")
+    norm = convolve2d(np.ones_like(count), k, mode="same")
     return np.asarray(total / norm, dtype=np.float32)
 
 
-def aggregate_dataset(ds: xr.Dataset, dims) -> xr.Dataset:
+def aggregate_dataset(ds: xr.Dataset, dims: str | Sequence[str]) -> xr.Dataset:
+    """Collapse *dims* to size 1, keeping them in the result.
+
+    ``photon_count`` and ``tcspc_histogram`` are summed; ``mean_arrival_time``
+    and the phasor are photon-weighted means over valid pixels (NaN where no
+    photons). Other variables are dropped; attrs are not copied.
+
+    Raises:
+        ValueError: If a dim is not in *ds*.
+    """
     if isinstance(dims, str):
         dims = [dims]
     if not dims:
@@ -101,9 +133,8 @@ def aggregate_dataset(ds: xr.Dataset, dims) -> xr.Dataset:
             )
 
     if "tcspc_histogram" in ds:
-        # tcspc_histogram is a global decay (frame, channel, tcspc_channel) and
-        # does not carry the spatial dims (sequence/line/pixel) the other
-        # variables do — only reduce over the dims it actually has.
+        # tcspc_histogram (frame, sequence, channel, tcspc_time) has no
+        # line/pixel dims - reduce over the dims it actually has.
         hist = ds["tcspc_histogram"]
         hist_dims = [d for d in dims if d in hist.dims]
         out["tcspc_histogram"] = (
@@ -144,7 +175,7 @@ INTENSITY_COLORMAPS = ("gray", "viridis", "magma", "hot", "cividis")
 def colormap_to_lut(cmap_name: str, n: int = 256) -> NDArray[np.uint8]:
     """Build an (n, 3) uint8 RGB lookup table from a matplotlib colormap name.
 
-    Pre-building the LUT once lets `flim_rgb` recolour interactively (a uint8
+    Pre-building the LUT once lets `flim_rgb` recolor interactively (a uint8
     index lookup) instead of evaluating the colormap on every slider move.
     """
     # `matplotlib.colormaps[name]` is the registry lookup that replaced
@@ -160,19 +191,27 @@ def flim_export_info(
     lt_range: tuple[float, float],
     int_range: tuple[float, float],
     unit: str = "ch",
+    irf_delay: float | None = None,
 ) -> str:
     """Sidecar text describing how a FLIM RGB image was composited.
 
     An exported RGB is not quantitative on its own — these are the numbers
     needed to read it back. Shared by the interactive and batch exports so the
-    two sidecars stay comparable.
+    two sidecars stay comparable. *irf_delay* is the delay subtracted from the
+    lifetime, or None when it is uncorrected.
     """
     lt_lo, lt_hi = lt_range
     int_lo, int_hi = int_range
+    corr = (
+        "none"
+        if irf_delay is None
+        else f"IRF delay {irf_delay:.4g} {unit} subtracted (wrapped by period)"
+    )
     return (
         "FLIM RGB export\n"
         f"lifetime colormap : {cmap}\n"
         f"lifetime range    : {lt_lo:.4g} .. {lt_hi:.4g} {unit}\n"
+        f"lifetime correct. : {corr}\n"
         f"intensity range   : {int_lo:.4g} .. {int_hi:.4g} photon counts\n"
     )
 
@@ -206,10 +245,10 @@ def flim_rgb(
     lt_range: tuple[float, float],
     int_range: tuple[float, float],
 ) -> NDArray[np.float32]:
-    """Composite a FLIM RGB image: lifetime → colour (via ``lut``) × intensity.
+    """Composite a FLIM RGB image: lifetime → color (via ``lut``) × intensity.
 
-    Lifetime is normalised into ``lt_range`` and quantised to ``len(lut)`` colour
-    bins; intensity is normalised into ``int_range`` (0..1) and scales the colour.
+    Lifetime is normalised into ``lt_range`` and quantised to ``len(lut)`` color
+    bins; intensity is normalised into ``int_range`` (0..1) and scales the color.
     NaN lifetimes map to the low end of ``lt_range``; NaN intensities map to 0.
 
     Returns an (H, W, 3) float32 array in [0, 1]. This is the single source of
